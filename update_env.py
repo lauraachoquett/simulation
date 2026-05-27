@@ -21,7 +21,7 @@ respawn_jit = jit(respawn)
 
 
 @partial(jax.jit, static_argnames=("cfg"))
-def resources_growth(carry, cfg, kernel):
+def resources_growth(carry, cfg):
     grid_resources, key = carry
     
     key, key_env = jax.random.split(key)

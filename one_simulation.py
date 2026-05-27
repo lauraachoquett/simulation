@@ -11,32 +11,17 @@ from jax import grad, jit, vmap, pmap
 from jax import lax
 
 from jax import random
+from functools import partial
 
-from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from EcoEvoJax.source.agent import metaRNNPolicyState_bcppr
-from simulation.utils import init_state
 from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 
-def simulation_resources_scan_agents_dying_nn(key, cfg, kernel):
-    keys = random.split(key, cfg.generations)
-    model = MetaRnnPolicy_bcppr(input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2), hidden_dim=4,
-                                         output_dim=4, encoder_layers=[], hidden_layers=[8])
-    initial_state, key = init_state(key, cfg,model)
+
+@partial(jax.jit, static_argnames=['cfg','model'])
+def run_simulation_chunk(state,model,keys, cfg):
     
-    key, key_env = jax.random.split(key)
-
-    grid_agents =initial_state.grid[1]
-    init_carry = (initial_state.grid[0], key_env)
-
-    final_grid_res, _ = jax.lax.fori_loop(
-        0,
-        cfg.pre_growth_step,
-        lambda i, carry: resources_growth(carry, cfg,kernel),
-        init_carry
-    )
-    new_initial_state = initial_state.replace(grid = jnp.stack((final_grid_res, grid_agents)))
 
     def step(state, subkey):
         grid         = state.grid
@@ -83,7 +68,7 @@ def simulation_resources_scan_agents_dying_nn(key, cfg, kernel):
         grid_resources = grid_resources.at[pos[:, 0], pos[:, 1]].set(local_resources * (1 - survives_int))
 
         # Resources spread via convolution
-        grid_resources,_ = resources_growth((grid_resources,key_env),cfg,kernel)
+        grid_resources,_ = resources_growth((grid_resources,key_env),cfg)
 
 
         # ------- 4. Reproduction -------
@@ -154,9 +139,8 @@ def simulation_resources_scan_agents_dying_nn(key, cfg, kernel):
         
         return new_state, state
 
-    state_final, outputs = lax.scan(step, new_initial_state, keys)
+    state_final, outputs = lax.scan(step, state, keys)
 
     return state_final, outputs
 
-sim_scan_agents_dying_jit_nn = jit(simulation_resources_scan_agents_dying_nn, static_argnums=[1])
 
