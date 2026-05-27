@@ -28,7 +28,6 @@ class SimState:
 
 class Config(NamedTuple):
     n: int
-    generations: int
     prob_init_resources: float
     energy_decay: float
     n_agents_max: int
@@ -41,6 +40,10 @@ class Config(NamedTuple):
     mutation_var : float
     starting_energy : int
     agent_view : int
+    chunk_size : int
+    num_chunks : int
+    checkpoint_freq : int
+    video_freq : int
 
 
 
