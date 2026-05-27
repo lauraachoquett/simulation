@@ -5,73 +5,72 @@ import matplotlib.colors as mcolors
 import jax
 from jax import random
 import jax.numpy as jnp
+
 from simulation.data_class import AgentState,SimState
 from simulation.agent_mov import get_obs_vector
+from simulation.update_env import resources_growth
 
-def plot_evolution(outputs, exp_dir,name_fig = ''):
-    # Préparation des données
-    # Population : somme des agents vivants à chaque pas de temps
-    pop_history = np.array(outputs.agents.alive.sum(axis=1))
-    # Ressources : somme de la grille (canal 0) à chaque pas de temps
-    res_history = np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2)))
+import numpy as np
+import graphviz
+import matplotlib.pyplot as plt
+
+import pickle
+
+    
+def plot_evolution(pop_history, res_history, exp_dir, name_fig=''):
+    """Plot population and resource dynamics over time."""
     generations = np.arange(len(pop_history))
 
-    # Configuration de la figure (Evolution à gauche : ratio 3, Initiale à droite : ratio 1)
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [3, 1]})
-    
-    # --- 1. AXE GAUCHE : ÉVOLUTION (axes[0]) ---
-    ax_evo_agents = axes[0]
+    fig, ax_evo_agents = plt.subplots(figsize=(12, 6))
+
     color_agents = 'tab:red'
-    ax_evo_agents.set_xlabel('Générations')
-    ax_evo_agents.set_ylabel('Nombre d’agents', color=color_agents)
+    ax_evo_agents.set_xlabel('Steps')
+    ax_evo_agents.set_ylabel('Population size', color=color_agents)
     ax_evo_agents.plot(generations, pop_history, color=color_agents, linewidth=2, label='Agents')
     ax_evo_agents.tick_params(axis='y', labelcolor=color_agents)
     ax_evo_agents.grid(True, alpha=0.3)
 
-    # Second axe Y pour les ressources
     ax_evo_res = ax_evo_agents.twinx()
     color_res = 'tab:green'
     ax_evo_res.set_ylabel('Quantité de ressources', color=color_res)
     ax_evo_res.plot(generations, res_history, color=color_res, linewidth=2, label='Ressources')
     ax_evo_res.tick_params(axis='y', labelcolor=color_res)
-    
+
     ax_evo_agents.set_title('Dynamique de la simulation')
 
-    # --- 2. AXE DROIT : CONFIGURATION INITIALE (axes[1]) ---
-    ax_init = axes[1]
+    plt.tight_layout()
+    path_save_fig = os.path.join(exp_dir, 'fig')
+    os.makedirs(path_save_fig, exist_ok=True)
+    plt.savefig(os.path.join(path_save_fig, f'plot_evo_{name_fig}.png'))
+    plt.close()
+
+
+def plot_initial_config(initial_grid, pos_init, alive_init, exp_dir, name_fig=''):
+    """Plot the initial grid configuration with agent positions."""
+    fig, ax = plt.subplots(figsize=(5, 5))
+
     cmap_res = mcolors.ListedColormap(["white", "#4CAF50"])
-    
-    # Affichage de la grille de ressources à t=0
-    initial_grid = outputs.grid[0, 0, :, :]
-    ax_init.imshow(initial_grid, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
-    
-    # Calcul de la taille des marqueurs basée sur la géométrie de l'axe
+    ax.imshow(initial_grid, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
+
     fig.canvas.draw()
-    bbox = ax_init.get_window_extent()
+    bbox = ax.get_window_extent()
     grid_h, grid_w = initial_grid.shape
     cell_px = min(bbox.width / grid_w, bbox.height / grid_h)
     cell_pts = cell_px * 72 / fig.dpi
 
-    # Affichage des agents à t=0
-    # On récupère les positions (pos_history attendu en [temps, agent, coord])
-    # et l'état de vie à t=0
-    pos_init = outputs.agents.position[0] 
-    alive_init = outputs.agents.alive[0]
-    
     for i in range(len(alive_init)):
         if alive_init[i]:
-            # Inversion (y, x) pour imshow/plot : pos[0]=row, pos[1]=col
-            ax_init.plot(pos_init[i, 1], pos_init[i, 0], 's', 
-                         color="purple" if i == 1 else "red", 
-                         markersize=cell_pts)
+            ax.plot(pos_init[i, 1], pos_init[i, 0], 's',
+                    color="purple" if i == 1 else "red",
+                    markersize=cell_pts)
 
-    ax_init.set_title('Configuration initiale ($t=0$)')
-    ax_init.axis("off")
+    ax.set_title('Configuration initiale ($t=0$)')
+    ax.axis("off")
 
     plt.tight_layout()
-    path_save_fig = os.path.join(exp_dir,'fig')
-    os.makedirs(path_save_fig,exist_ok=True)
-    plt.savefig(os.path.join(path_save_fig,f'plot_sim_{name_fig}.png'))
+    path_save_fig = os.path.join(exp_dir, 'fig')
+    os.makedirs(path_save_fig, exist_ok=True)
+    plt.savefig(os.path.join(path_save_fig, f'plot_init_{name_fig}.png'))
     plt.close()
     
 def plot_several_sim_seeds(output_seeds,cfg,exp_dir):
@@ -121,6 +120,20 @@ def init_state(key, cfg, model):
     pos = agents.position
     obs = get_obs_vector(grid, pos,cfg.agent_view)
     # 4. État final
+    
+    key, key_env = jax.random.split(key)
+
+    init_carry = (grid_resources, key_env)
+
+    grid_resources_grown, _ = jax.lax.fori_loop(
+        0,
+        cfg.pre_growth_step,
+        lambda i, carry: resources_growth(carry, cfg),
+        init_carry
+    )
+    
+    grid = jnp.stack((grid_resources_grown, grid_agents))
+
     state = SimState(
         grid=grid,
         agents=agents,
@@ -130,12 +143,8 @@ def init_state(key, cfg, model):
         rewards=jnp.zeros((cfg.n_agents_max, 1))
     )
     
-    return state, key
+    return state
 
-import numpy as np
-import graphviz
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 
 def plot_full_genealogy_robust(agents_state_history):
     parent_ids = np.array(agents_state_history.parent_id)
@@ -229,3 +238,18 @@ def plot_full_genealogy_robust(agents_state_history):
     dot.render('arbre_genealogique_complet', view=True)
     return dot
 
+
+
+def save_checkpoint(state, filepath):
+    """Sauvegarde l'état de la simulation sur le disque."""
+    # Convertit le PyTree JAX en PyTree NumPy
+    state_np = jax.tree_util.tree_map(np.asarray, state)
+    with open(filepath, 'wb') as f:
+        pickle.dump(state_np, f)
+
+def load_checkpoint(filepath):
+    """Charge l'état de la simulation depuis le disque."""
+    with open(filepath, 'rb') as f:
+        state_np = pickle.load(f)
+    # Reconvertit le PyTree NumPy en PyTree JAX
+    return jax.tree_util.tree_map(jnp.asarray, state_np)
