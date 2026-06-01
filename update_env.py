@@ -31,8 +31,17 @@ def resources_growth(carry, cfg):
     left  = jnp.roll(grid_resources, shift=1,  axis=1)
     right = jnp.roll(grid_resources, shift=-1, axis=1)
     
-    res_growth = grid_resources + up + down + left + right
+    # ---------------------KERNEL USED-----------------------
+    # kernel = [
+    #     [0, 0, 0, 0, 0],
+    #     [0, 0, 1, 0, 0],
+    #     [0, 1, 1, 1, 0],
+    #     [0, 0, 1, 0, 0],
+    #     [0, 0, 0, 0, 0],
+    # ]
     # -----------------------------------------------------------
+    
+    res_growth = grid_resources + up + down + left + right
     
     res_growth = res_growth * (1.0 - grid_resources)
     new_plants = respawn_jit(res_growth, key_env, cfg.prob_factor)
