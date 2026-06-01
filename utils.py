@@ -49,22 +49,22 @@ def plot_evolution(pop_history, res_history, exp_dir,start_step=0, name_fig=''):
     plt.close()
 
 
-def plot_initial_config(initial_grid, pos_init, alive_init, exp_dir, name_fig=''):
+def plot_current_config(current_grid_res, pos, alive, exp_dir, name_fig=''):
     """Plot the initial grid configuration with agent positions."""
     fig, ax = plt.subplots(figsize=(5, 5))
 
     cmap_res = mcolors.ListedColormap(["white", "#4CAF50"])
-    ax.imshow(initial_grid, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
+    ax.imshow(current_grid_res, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
 
     fig.canvas.draw()
     bbox = ax.get_window_extent()
-    grid_h, grid_w = initial_grid.shape
+    grid_h, grid_w = current_grid_res.shape
     cell_px = min(bbox.width / grid_w, bbox.height / grid_h)
     cell_pts = cell_px * 72 / fig.dpi
 
-    for i in range(len(alive_init)):
-        if alive_init[i]:
-            ax.plot(pos_init[i, 1], pos_init[i, 0], 's',
+    for i in range(len(alive)):
+        if alive[i]:
+            ax.plot(pos[i, 1], pos[i, 0], 's',
                     color="purple" if i == 1 else "red",
                     markersize=cell_pts)
 
@@ -72,9 +72,9 @@ def plot_initial_config(initial_grid, pos_init, alive_init, exp_dir, name_fig=''
     ax.axis("off")
 
     plt.tight_layout()
-    path_save_fig = os.path.join(exp_dir, 'fig')
+    path_save_fig = os.path.join(exp_dir, 'fig/sim_grid/')
     os.makedirs(path_save_fig, exist_ok=True)
-    plt.savefig(os.path.join(path_save_fig, f'plot_init_{name_fig}.png'))
+    plt.savefig(os.path.join(path_save_fig, f'plot_sim_chunk_{name_fig}.png'))
     plt.close()
     
 def plot_several_sim_seeds(output_seeds,cfg,exp_dir):
@@ -284,11 +284,10 @@ def _video_worker(outputs_np, vid_path, fps, scale):
     return vid_path
 
 
-def create_exp_file():
+def create_exp_file(dir):
     now = datetime.now()
-    date_dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    exp_dir = os.path.join(date_dir, timestamp)
+    exp_dir = os.path.join(dir, timestamp)
     os.makedirs(exp_dir, exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "videos"), exist_ok=True)
