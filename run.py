@@ -8,22 +8,40 @@ import jax
 import os
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils import plot_evolution,plot_initial_config,save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
+from simulation.utils import plot_evolution,plot_current_config,save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
 import multiprocessing as mp
 import time
-
+from datetime import datetime
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    
+import optuna
+import logging
+import sys
+
+import os
+
+def get_next_dir(base_path=".", prefix="try_"):
+    """
+    Trouve le prochain dossier disponible avec le préfixe donné et le crée.
+    """
+    i = 1
+    while True:
+        dir_path = os.path.join(base_path, f"{prefix}{i}")
+        if not os.path.exists(dir_path):
+            # Création immédiate pour réserver l'emplacement
+            os.makedirs(dir_path)
+            return dir_path
+        i += 1
+        
 def classify_outcome(pop_full, res_full, cfg):
     """
     Returns 'extinction', 'overpopulation', 'depletion', or 'interesting'.
     """
-    n_chunks = 15
+    n_chunks = 20
     if pop_full[-1] == 0:
         return 'extinction'
     
@@ -40,48 +58,91 @@ def classify_outcome(pop_full, res_full, cfg):
     
     return 'interesting'
 
-
-def make_harder(cfg, factor=1.3):
-    """Rend la survie plus difficile : moins de ressources, plus de dépense énergétique."""
-    return cfg._replace(
-        prob_factor=max(cfg.prob_factor / factor, 1e-3),
-        energy_decay=min(cfg.energy_decay * factor, 0.5),
+def objective(trial, base_cfg, base_key,current_dir):
+    # 1. Définition de l'espace de recherche à 5 dimensions
+    prob_factor = trial.suggest_float("prob_factor", 0.01, 1.0, log=True)
+    energy_decay = trial.suggest_float("energy_decay", 0.001, 0.1, log=True)
+    
+    # Nouveaux paramètres (les bornes sont à ajuster selon ton modèle physique)
+    time_to_die = trial.suggest_int("time_to_die", 10, 100)
+    time_above_repr = trial.suggest_int("time_above_repr", 5, 50)
+    min_energy_repr = trial.suggest_float("min_energy_repr", 0.0, 2.0)
+    
+    trial_cfg = base_cfg._replace(
+        prob_factor=prob_factor,
+        energy_decay=energy_decay,
+        time_to_die=time_to_die,
+        time_above_repr=time_above_repr,
+        min_energy_repr=min_energy_repr
     )
+    
+    # 2. Vérification des contraintes d'intégrité (Sanity Check enrichi)
+    a = trial_cfg.starting_energy - trial_cfg.energy_decay * trial_cfg.time_above_repr
+    b = trial_cfg.min_energy_repr
+    
+    # On ajoute une vérification logique : le temps nécessaire avant reproduction 
+    # doit être strictement inférieur au temps de vie total sans manger.
+    if b <= a or trial_cfg.time_to_die <= trial_cfg.time_above_repr:
+        raise optuna.TrialPruned("Contraintes physiques ou temporelles non respectées.")
 
-
-def make_easier(cfg, factor=1.3):
-    """Rend la survie plus facile : plus de ressources, moins de dépense énergétique."""
-    return cfg._replace(
-        prob_factor=min(cfg.prob_factor * factor, 5.0),
-        energy_decay=max(cfg.energy_decay / factor, 1e-3),
-    )
-
-
-def parameter_search(key, cfg, n_trials=10, n_video_workers=1):
-    rng = np.random.default_rng(int(jax.random.bits(key)))
-    for trial in range(n_trials):
-        print(f"\n=== Trial {trial+1}/{n_trials} | prob_factor={cfg.prob_factor:.4f} | energy_decay={cfg.energy_decay:.4f} ===")
-
-        key, subkey = jax.random.split(key)
-        _, _, exp_dir, outcome = launch_simulation_chunked(subkey, cfg, n_video_workers=n_video_workers)
-
-        print(f"  → Outcome : {outcome} | Expérience : {exp_dir}")
-
-        if outcome == 'interesting':
-            print("Paramètres intéressants trouvés !")
-            return cfg, exp_dir
-
-        factor = rng.uniform(1.1, 1.7)
-        cfg = make_easier(cfg, factor) if outcome == ('extinction' or 'depletion') else make_harder(cfg, factor)
-
-    print("Recherche terminée sans trouver de dynamique intéressante.")
-    return cfg, None
+    # 3. Lancement de la simulation
+    trial_key, _ = jax.random.split(base_key)
     
     
-def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0):
+    try:
+        state, outputs, exp_dir, outcome = launch_simulation_chunked(
+            trial_key, trial_cfg, resume_exp=None, n_video_workers=1, dir=current_dir
+        )
+    except Exception as e:
+        raise optuna.TrialPruned(f"Erreur d'exécution: {e}")
+
+    # 4. Calcul du score continu
+    pop_full = outputs_to_numpy(outputs.agents.alive).sum(axis=1)
+    chunks_survived = len(pop_full) // trial_cfg.chunk_size
+    
+    final_pop = pop_full[-1] if len(pop_full) > 0 else 0
+    pop_ratio = final_pop / trial_cfg.n_agents_max
+    
+    score = chunks_survived + pop_ratio
+    
+    if outcome == 'overpopulation':
+        score -= 5.0 
+        
+    return score
+
+def run_optuna_search(cfg, key, n_trials=50):
+    """
+    Configure et lance l'étude d'optimisation.
+    """
+    # Pour réduire la verbosité d'Optuna dans la console
+    optuna.logging.get_logger("optuna").setLevel(logging.INFO)
+    
+    study = optuna.create_study(
+        study_name="ecoevo_hyperopt",
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42) # Arbre de Parzen pour l'optimisation bayésienne
+    )
+    
+    # Passage des arguments fixes via une fonction lambda
+    current_dir = get_next_dir(base_path="exp/", prefix="try_")
+    study.optimize(lambda trial: objective(trial, cfg, key,current_dir), n_trials=n_trials)
+    
+    print("\n=== Recherche Optuna terminée ===")
+    print(f"Meilleur score : {study.best_value}")
+    print(f"Meilleurs paramètres : {study.best_params}")
+    
+    # Retourne la configuration optimale
+    best_cfg = cfg._replace(**study.best_params)
+    return best_cfg, study
+    
+    
+def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,dir=''):
 
     start_time_sim = time.time()
-    exp_dir = create_exp_file()
+    if dir == '':
+        now = datetime.now()
+        dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
+    exp_dir = create_exp_file(dir)
     num_chunks_exp = cfg.num_chunks + chunk_id
 
     if resume_exp is not None and os.path.exists(resume_exp):
@@ -113,9 +174,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     pop_history = []
     res_history = []
-    initial_grid = state.grid[0, :, :]
+    initial_grid_res = state.grid[0, :, :]
     
-    plot_initial_config(initial_grid, state.agents.position, state.agents.alive, exp_dir)
+    plot_current_config(initial_grid_res, state.agents.position, state.agents.alive, exp_dir,name_fig=f'{start_chunk}')
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
@@ -139,7 +200,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} START  @ {time.strftime('%H:%M:%S')}")
             state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} DONE   @ {time.strftime('%H:%M:%S')}")
-
+            
             # --- Plots (CPU léger, synchrone) ---
             pop_history.append(np.array(outputs.agents.alive.sum(axis=1)))
             res_history.append(np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2))))
@@ -151,6 +212,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             )
             pop_full = np.concatenate(pop_history)
             res_full = np.concatenate(res_history)
+            
+            plot_current_config(state.grid[0, :, :], state.agents.position, state.agents.alive, exp_dir,name_fig=f'{chunk_idx}')
             
             current_sim_state = classify_outcome(pop_full, res_full, cfg)
             if current_sim_state != 'interesting':
@@ -191,19 +254,19 @@ if __name__ =='__main__':
         n=200,
 
         chunk_size = 1000,
-        num_chunks = 100,
-        checkpoint_freq = 10,
-        video_freq = 50,
+        num_chunks = 400,
+        checkpoint_freq = 50,
+        video_freq = 400,
 
         energy_decay=0.03,
-        n_agents_max=(500),
+        n_agents_max=(770),
         n_agents_init=200,
         time_to_die=30,
         time_above_repr = 15,
         min_energy_repr = 1.5,
-        prob_factor = 0.05,
+        prob_factor = 0.045,
         pre_growth_step = 5000,
-        mutation_var = 0.02,
+        mutation_var = 0.01,
         starting_energy= 1,
         agent_view = 5,
         prob_init_resources=0.05,
@@ -223,8 +286,19 @@ if __name__ =='__main__':
     
     print(jax.devices())
 
-    # cfg, exp_dir = parameter_search(key, cfg, n_trials=20, n_video_workers=1)
+    #Recherche des paramètres
+    print("Démarrage de la recherche de paramètres avec Optuna...")
+    best_cfg, study = run_optuna_search(cfg, key, n_trials=40)
     
-    resume_exp = 'exp/2026-05-29_10-30-59'
-    chunk_id=50
-    state_final, output, exp_dir,_ = launch_simulation_chunked(key,cfg,n_video_workers = 1,resume_exp=resume_exp,chunk_id=chunk_id)
+    # Lancement de la vraie simulation avec la meilleure config trouvée
+    print("\nLancement de la simulation finale avec les meilleurs paramètres...")
+    best_cfg._replace(video_freq = 150)
+    state_final, output, exp_dir, _ = launch_simulation_chunked(
+        key, best_cfg, n_video_workers=1
+    )
+    
+    
+    # Classic simulation : 
+    # resume_exp = 'exp/2026-05-29_10-30-59'
+    # chunk_id=50
+    state_final, output, exp_dir,_ = launch_simulation_chunked(key,cfg,n_video_workers = 1)
