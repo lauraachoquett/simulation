@@ -9,17 +9,21 @@ import jax.numpy as jnp
 from simulation.data_class import AgentState,SimState
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
+from simulation.data_class import Config
 
 import numpy as np
 import graphviz
 import matplotlib.pyplot as plt
-
+from simulation.utils_video import save_chunk_video
+import json
+from datetime import datetime
+import time
 import pickle
 
     
-def plot_evolution(pop_history, res_history, exp_dir, name_fig=''):
+def plot_evolution(pop_history, res_history, exp_dir,start_step=0, name_fig=''):
     """Plot population and resource dynamics over time."""
-    generations = np.arange(len(pop_history))
+    generations = np.arange(start_step,start_step+len(pop_history))
 
     fig, ax_evo_agents = plt.subplots(figsize=(12, 6))
 
@@ -247,9 +251,70 @@ def save_checkpoint(state, filepath):
     with open(filepath, 'wb') as f:
         pickle.dump(state_np, f)
 
-def load_checkpoint(filepath):
+def load_checkpoint(resume_exp,chunk_id):
     """Charge l'état de la simulation depuis le disque."""
-    with open(filepath, 'rb') as f:
+    path = os.path.join(resume_exp,f'checkpoints/state_chunk_{chunk_id}.pkl')
+    with open(path, 'rb') as f:
         state_np = pickle.load(f)
     # Reconvertit le PyTree NumPy en PyTree JAX
     return jax.tree_util.tree_map(jnp.asarray, state_np)
+
+
+
+def sec_to_minutes(secondes):
+    minutes, secondes_restantes = divmod(secondes, 60)
+    return minutes, secondes_restantes
+
+# --- Sérialiseur : convertit outputs JAX → numpy avant envoi inter-process ---
+def outputs_to_numpy(outputs):
+    """
+    Descend récursivement dans le pytree et convertit chaque feuille en np.array.
+    À adapter selon la structure de ton SimOutputs.
+    """
+    import jax
+    return jax.tree_util.tree_map(np.array, outputs)
+
+
+# --- Wrapper picklable pour le worker ---
+def _video_worker(outputs_np, vid_path, fps, scale):
+    t0 = time.time()
+    print(f"  [video | PID {os.getpid()}] START  {vid_path}  @ {time.strftime('%H:%M:%S')}")
+    save_chunk_video(outputs_np, vid_path, fps=fps, scale=scale)
+    print(f"  [video | PID {os.getpid()}] DONE   {vid_path}  ({time.time()-t0:.2f}s)")
+    return vid_path
+
+
+def create_exp_file():
+    now = datetime.now()
+    date_dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+    exp_dir = os.path.join(date_dir, timestamp)
+    os.makedirs(exp_dir, exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, "checkpoints"), exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, "videos"), exist_ok=True)
+    return exp_dir
+
+def save_config(cfg,subkeys,exp_dir):
+    cfg_dict = cfg._asdict()
+    cfg_dict["seeds"] = [int(k[0]) for k in subkeys]
+    cfg_dict["seeds_full"] = [k.tolist() for k in subkeys]
+    with open(os.path.join(exp_dir, "config.json"), "w") as f:
+        json.dump(cfg_dict, f, indent=2)
+
+def load_config(resume_exp):
+    with open(os.path.join(resume_exp, 'config.json'), 'r') as f:
+        cfg_dict = json.load(f)
+    seeds_full = [jnp.array(s, dtype=jnp.uint32) for s in cfg_dict.pop("seeds_full")]
+    cfg_dict.pop("seeds", None)
+    return Config(**cfg_dict), seeds_full
+
+def print_params(params, prefix="", total=0):
+    for name, value in params.items():
+        full_name = f"{prefix}/{name}" if prefix else name
+        if hasattr(value, 'items'):   # duck typing — FrozenDict et dict
+            total = print_params(value, prefix=full_name, total=total)
+        else:
+            n_p = int(np.prod(value.shape))
+            total += n_p
+            print(f"{full_name:<55} {str(value.shape):<20} {n_p:>10,}")
+    return total

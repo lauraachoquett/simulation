@@ -65,7 +65,9 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # ------- 3. Environment dynamic -------
         # Agents consume resources on the grid
-        grid_resources = grid_resources.at[pos[:, 0], pos[:, 1]].set(local_resources * (1 - survives_int))
+        # Use max() instead of set() to avoid non-determinism with repeated indices on GPU
+        consumed = jnp.zeros_like(grid_resources).at[pos[:, 0], pos[:, 1]].max(survives_int)
+        grid_resources = grid_resources * (1 - consumed)
 
         # Resources spread via convolution
         grid_resources,_ = resources_growth((grid_resources,key_env),cfg)
