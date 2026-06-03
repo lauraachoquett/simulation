@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 from jax import lax,vmap
 from simulation.data_class import AgentState
+import jax 
 
 def action_depl_theta(action_id):
     actions = jnp.array([
@@ -18,15 +19,14 @@ def action_depl_theta(action_id):
 def update_agent_position(agent: AgentState, action_id, n):
     dtheta, dist = action_depl_theta(action_id)
     
-    new_ori = agent.orientation + dtheta
-    
-    move = jnp.array([
+    new_ori = jnp.mod(agent.orientation + dtheta, 2 * jnp.pi)
+    move = jnp.round(jnp.array([
         dist * jnp.cos(new_ori),
-        dist * jnp.sin(new_ori)
-    ]).astype(jnp.int32)
+        dist * jnp.sin(new_ori),
+    ])).astype(jnp.int32)
     
     new_pos = lax.clamp(0, agent.position + move, n - 1)
-    
+
     return agent.replace(orientation=new_ori, position=new_pos)
 
 
@@ -38,12 +38,17 @@ def vmap_update_agents_position(agents_state,actions_id,n):
     
 def get_single_obs(grid, pos, radius):
     side = 2 * radius + 1
-    
     padding = ((0, 0), (radius, radius), (radius, radius))
-    padded_grid = jnp.pad(grid, padding)
-    
+    padded_grid = jnp.pad(grid, padding, mode='constant', constant_values=-1)
     obs = lax.dynamic_slice(padded_grid, (0, pos[0], pos[1]), (2, side, side))
+    obs_t = jnp.transpose(obs, (1, 2, 0))
     
-    return jnp.transpose(obs, (1, 2, 0))
+    res_channel = obs_t[:, :, 0]
+    
+    mask = res_channel != -1
+    mean_val = jnp.sum(res_channel * mask) / jnp.maximum(jnp.sum(mask), 1)
+    res_centered = jnp.where(mask, res_channel - mean_val, -1)
+    
+    return obs_t.at[:, :, 0].set(res_centered)
 
 get_obs_vector = vmap(get_single_obs, in_axes=(None, 0, None))
