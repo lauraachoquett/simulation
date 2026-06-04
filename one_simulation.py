@@ -105,7 +105,11 @@ def run_simulation_chunk(state,model,keys, cfg):
         
         final_alive_without_0 = final_alive.at[0].set(0)
         
-        mutation = cfg.mutation_var* random.normal(key_params, shape = (1,agents.params.shape[1]))
+        key_child_param_mutate,key_params = random.split(key_mut)
+        
+        parameters_to_mutate = random.bernoulli(key_child_param_mutate, p=cfg.param_mutate, shape=(cfg.n_agents_max, agents.params.shape[1])).astype(jnp.int32)
+        
+        mutation = cfg.mutation_var * random.normal(key_params, shape=(cfg.n_agents_max, agents.params.shape[1]))
         final_params = agents.params.at[free_indices].set(
                     agents.params[parent_indices] +mutation)
         

@@ -44,6 +44,7 @@ class Config(NamedTuple):
     num_chunks : int
     checkpoint_freq : int
     video_freq : int
+    param_mutate : float
 
 
 
