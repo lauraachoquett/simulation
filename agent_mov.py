@@ -38,17 +38,12 @@ def vmap_update_agents_position(agents_state,actions_id,n):
     
 def get_single_obs(grid, pos, radius):
     side = 2 * radius + 1
+    
     padding = ((0, 0), (radius, radius), (radius, radius))
-    padded_grid = jnp.pad(grid, padding, mode='constant', constant_values=-1)
+    padded_grid = jnp.pad(grid, padding)
+    
     obs = lax.dynamic_slice(padded_grid, (0, pos[0], pos[1]), (2, side, side))
-    obs_t = jnp.transpose(obs, (1, 2, 0))
     
-    res_channel = obs_t[:, :, 0]
-    
-    mask = res_channel != -1
-    mean_val = jnp.sum(res_channel * mask) / jnp.maximum(jnp.sum(mask), 1)
-    res_centered = jnp.where(mask, res_channel - mean_val, -1)
-    
-    return obs_t.at[:, :, 0].set(res_centered)
+    return jnp.transpose(obs, (1, 2, 0))
 
 get_obs_vector = vmap(get_single_obs, in_axes=(None, 0, None))
