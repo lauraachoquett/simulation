@@ -8,7 +8,8 @@ import jax
 import os
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils import plot_evolution,plot_current_config,save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
+from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
+from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk, compute_resources_consumed_chunk,plot_mean_movement,plot_resources_consumed
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
