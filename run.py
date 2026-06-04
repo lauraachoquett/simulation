@@ -25,6 +25,25 @@ import sys
 
 import os
 
+
+def save_script(exp_dir):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Liste des fichiers à sauvegarder
+    files_to_save = ["run.py", "update_env.py", "one_simulation.py",'agent_mov.py']
+
+    for file_name in files_to_save:
+        source_path = os.path.join(current_dir, file_name)
+        destination_path = os.path.join(exp_dir, file_name)
+
+        # Vérifie si le fichier existe avant de le copier
+        if os.path.exists(source_path):
+            shutil.copy2(source_path, destination_path)
+        else:
+            print(
+                f"Attention : Le fichier {source_path} n'a pas pu être trouvé."
+            )
+            
 def get_next_dir(base_path=".", prefix="try_"):
     """
     Trouve le prochain dossier disponible avec le préfixe donné et le crée.
@@ -153,6 +172,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         now = datetime.now()
         dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
     exp_dir = create_exp_file(dir)
+    save_script(exp_dir)
+    
     num_chunks_exp = cfg.num_chunks + chunk_id
 
     if resume_exp is not None and os.path.exists(resume_exp):
