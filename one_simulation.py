@@ -120,7 +120,7 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # Update spatial grid with agents positions
         grid_agents = jnp.zeros_like(grid_resources, dtype=jnp.int32)
-        grid_agents = grid_agents.at[final_pos[:, 0], final_pos[:, 1]].add(final_alive)
+        grid_agents = grid_agents.at[final_pos[:, 0], final_pos[:, 1]].add(final_alive_without_0)
         
         new_agents = agents.replace(
             position=final_pos,
