@@ -5,7 +5,6 @@ os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
 from jax import random
 import jax.numpy as jnp
 import jax
-import os
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
@@ -18,11 +17,10 @@ import time
 from datetime import datetime
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import shutil
 import optuna
 import logging
-import sys
-
+import json
 import os
 
 
@@ -166,7 +164,7 @@ def run_optuna_search(cfg, key, n_trials=50):
     
     
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,dir=''):
-
+    
     start_time_sim = time.time()
     if dir == '':
         now = datetime.now()
@@ -187,12 +185,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         start_chunk = chunk_id
         model = MetaRnnPolicy_bcppr(
             input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
-            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
+            hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
         )
     else:
         model = MetaRnnPolicy_bcppr(
             input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
-            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
+            hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
         )
         key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey = jax.random.split(key)
@@ -205,13 +203,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     pop_history = []
     res_history = []
+    mov_history = []
+    consumed_history = []
+
     initial_grid_res = state.grid[0, :, :]
+    chunks_survived = 0
     
-    plot_current_config(initial_grid_res, state.agents.position, state.agents.alive, exp_dir,name_fig=f'{start_chunk}')
+    plot_current_config(initial_grid_res, state.agents.position, state.agents.alive, exp_dir,name_fig=f'init')
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
-    
     with ProcessPoolExecutor(max_workers=n_video_workers,mp_context=ctx) as executor:
         for chunk_idx in range(start_chunk, num_chunks_exp):
             
@@ -235,6 +236,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # --- Plots (CPU léger, synchrone) ---
             pop_history.append(np.array(outputs.agents.alive.sum(axis=1)))
             res_history.append(np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2))))
+            mov_history.append(compute_mean_movement_chunk(outputs, cfg.n))
+            consumed_history.append(compute_resources_consumed_chunk(outputs))
             plot_evolution(
                 np.concatenate(pop_history, axis=0),
                 np.concatenate(res_history, axis=0),
@@ -251,15 +254,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             current_sim_state = classify_outcome(pop_full, res_full, cfg)
             if current_sim_state != 'interesting':
                 print(f"Stopping criterion : {current_sim_state}")
-                return state, outputs, exp_dir, current_sim_state
+                return state, outputs, exp_dir, current_sim_state,chunks_survived
 
+            chunks_survived+=1
             # --- Checkpoint (synchrone) ---
             if (chunk_idx + 1) % cfg.checkpoint_freq == 0:
                 ckpt_path = os.path.join(exp_dir, "checkpoints", f"state_chunk_{chunk_idx+1}.pkl")
                 save_checkpoint(state, ckpt_path)
 
             # --- Vidéo (asynchrone) ---
-            if (chunk_idx + 1) % cfg.video_freq == 0:
+            if (chunk_idx + 1) % cfg.video_freq == 0 or chunk_idx==start_chunk:
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
                 #    Conversion numpy AVANT envoi — bloque le GPU le temps du transfert H→D,
                 #     mais libère ensuite le GPU pour le chunk suivant pendant l'encodage vidéo
@@ -279,31 +283,37 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     delta_sim = time.time()-start_time_sim
     delta_min,delta_sec = sec_to_minutes(delta_sim)
     print(f"Time to compute the simulation : {delta_min} min and {delta_sec:.1f} s")
-    return state, outputs, exp_dir,current_sim_state
+    return state, outputs, exp_dir,current_sim_state,chunks_survived
 
 if __name__ =='__main__':
     
     cfg = Config(
-        n=200,
+        n=60,
 
         chunk_size = 1000,
-        num_chunks = 400,
+        num_chunks = 2,
         checkpoint_freq = 50,
-        video_freq = 400,
+        video_freq = 5,
 
-        energy_decay=0.03,
-        n_agents_max=(770),
-        n_agents_init=200,
-        time_to_die=30,
-        time_above_repr = 15,
-        min_energy_repr = 1.5,
-        prob_factor = 0.045,
-        pre_growth_step = 5000,
+        n_agents_max=1500,
+        n_agents_init=50,
+        agent_view = 7,
+        
+        energy_decay=0.04,
+        
+        time_to_die=50,
+        time_above_repr = 40,
+        min_energy_repr = 1.,
         mutation_var = 0.01,
+        param_mutate = 0.5,
         starting_energy= 1,
-        agent_view = 5,
-        prob_init_resources=0.05,
+        
+        prob_factor = 0.08,
+        
+        pre_growth_step = 200,
+        prob_init_resources=0.01,
     )
+    
     
     
 
@@ -334,6 +344,8 @@ if __name__ =='__main__':
     
     
     # Classic simulation : 
-    # resume_exp = 'exp/2026-05-29_10-30-59'
-    # chunk_id=50
-    state_final, output, exp_dir,_ = launch_simulation_chunked(key,cfg,n_video_workers = 1)
+    # resume_exp = 'exp/try_7/2026-06-02_11-47-21'
+    
+    # cfg,_ = load_config(resume_exp)
+    # cfg = cfg._replace(n_agents_max=1000,n_agents_init=200,pre_growth_step=2000)
+    
