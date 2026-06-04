@@ -42,64 +42,50 @@ def classify_outcome(pop_full, res_full, cfg):
     """
     Returns 'extinction', 'overpopulation', 'depletion', or 'interesting'.
     """
-    n_chunks = 20
+    n_chunks = 30
     if pop_full[-1] == 0:
         return 'extinction'
     
     last = pop_full[-n_chunks*cfg.chunk_size:]
-    if len(last) == n_chunks*cfg.chunk_size and (last > 0.9 * cfg.n_agents_max).all():
+    if len(last) == n_chunks*cfg.chunk_size and (last > 0.95 * cfg.n_agents_max).all():
         return 'overpopulation'
     
     if res_full[-1]==0:
         return 'depletion'
     
     last_res = res_full[-n_chunks*cfg.chunk_size:]
-    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.95 * cfg.n ** 2).all():
+    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.n ** 2).all():
         return 'easy'
     
     return 'interesting'
 
 def objective(trial, base_cfg, base_key,current_dir):
-    # 1. Définition de l'espace de recherche à 5 dimensions
     prob_factor = trial.suggest_float("prob_factor", 0.01, 1.0, log=True)
     energy_decay = trial.suggest_float("energy_decay", 0.001, 0.1, log=True)
-    
-    # Nouveaux paramètres (les bornes sont à ajuster selon ton modèle physique)
-    time_to_die = trial.suggest_int("time_to_die", 10, 100)
-    time_above_repr = trial.suggest_int("time_above_repr", 5, 50)
-    min_energy_repr = trial.suggest_float("min_energy_repr", 0.0, 2.0)
     
     trial_cfg = base_cfg._replace(
         prob_factor=prob_factor,
         energy_decay=energy_decay,
-        time_to_die=time_to_die,
-        time_above_repr=time_above_repr,
-        min_energy_repr=min_energy_repr
     )
     
-    # 2. Vérification des contraintes d'intégrité (Sanity Check enrichi)
     a = trial_cfg.starting_energy - trial_cfg.energy_decay * trial_cfg.time_above_repr
     b = trial_cfg.min_energy_repr
     
-    # On ajoute une vérification logique : le temps nécessaire avant reproduction 
-    # doit être strictement inférieur au temps de vie total sans manger.
     if b <= a or trial_cfg.time_to_die <= trial_cfg.time_above_repr:
         raise optuna.TrialPruned("Contraintes physiques ou temporelles non respectées.")
 
-    # 3. Lancement de la simulation
     trial_key, _ = jax.random.split(base_key)
     
     
     try:
-        state, outputs, exp_dir, outcome = launch_simulation_chunked(
+        state, outputs, exp_dir, outcome,chunks_survived = launch_simulation_chunked(
             trial_key, trial_cfg, resume_exp=None, n_video_workers=1, dir=current_dir
         )
     except Exception as e:
         raise optuna.TrialPruned(f"Erreur d'exécution: {e}")
 
-    # 4. Calcul du score continu
+    
     pop_full = outputs_to_numpy(outputs.agents.alive).sum(axis=1)
-    chunks_survived = len(pop_full) // trial_cfg.chunk_size
     
     final_pop = pop_full[-1] if len(pop_full) > 0 else 0
     pop_ratio = final_pop / trial_cfg.n_agents_max
@@ -107,21 +93,26 @@ def objective(trial, base_cfg, base_key,current_dir):
     score = chunks_survived + pop_ratio
     
     if outcome == 'overpopulation':
-        score -= 5.0 
+        score -= 1.0
+    if outcome == 'easy':
+        score -= 2.0
         
+    trial.set_user_attr('exp_dir', exp_dir)
+    trial.set_user_attr('chunks_survived', int(chunks_survived))
+    trial.set_user_attr('final_pop', int(final_pop))
+
     return score
 
 def run_optuna_search(cfg, key, n_trials=50):
     """
     Configure et lance l'étude d'optimisation.
     """
-    # Pour réduire la verbosité d'Optuna dans la console
     optuna.logging.get_logger("optuna").setLevel(logging.INFO)
     
     study = optuna.create_study(
         study_name="ecoevo_hyperopt",
         direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=42) # Arbre de Parzen pour l'optimisation bayésienne
+        sampler=optuna.samplers.TPESampler(seed=42) 
     )
     
     # Passage des arguments fixes via une fonction lambda
@@ -131,7 +122,25 @@ def run_optuna_search(cfg, key, n_trials=50):
     print("\n=== Recherche Optuna terminée ===")
     print(f"Meilleur score : {study.best_value}")
     print(f"Meilleurs paramètres : {study.best_params}")
-    
+
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    ranked = sorted(completed, key=lambda t: t.value, reverse=True)
+    results = [
+        {
+            'rank': i + 1,
+            'score': t.value,
+            'exp_dir': t.user_attrs.get('exp_dir'),
+            'chunks_survived': t.user_attrs.get('chunks_survived'),
+            'final_pop': t.user_attrs.get('final_pop'),
+            'params': t.params,
+        }
+        for i, t in enumerate(ranked)
+    ]
+    results_path = os.path.join(current_dir, "trials_ranked.json")
+    with open(results_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Résultats triés sauvegardés dans : {results_path}")
+
     # Retourne la configuration optimale
     best_cfg = cfg._replace(**study.best_params)
     return best_cfg, study
@@ -287,16 +296,18 @@ if __name__ =='__main__':
     
     print(jax.devices())
 
-    #Recherche des paramètres
-    print("Démarrage de la recherche de paramètres avec Optuna...")
-    best_cfg, study = run_optuna_search(cfg, key, n_trials=40)
+    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 3)
+
+    # #Recherche des paramètres
+    # print("Démarrage de la recherche de paramètres avec Optuna...")
+    # best_cfg, study = run_optuna_search(cfg, key, n_trials=50)
     
-    # Lancement de la vraie simulation avec la meilleure config trouvée
-    print("\nLancement de la simulation finale avec les meilleurs paramètres...")
-    best_cfg._replace(video_freq = 150)
-    state_final, output, exp_dir, _ = launch_simulation_chunked(
-        key, best_cfg, n_video_workers=1
-    )
+    # # Lancement de la vraie simulation avec la meilleure config trouvée
+    # print("\nLancement de la simulation finale avec les meilleurs paramètres...")
+    # best_cfg._replace(video_freq = 150)
+    # state_final, output, exp_dir, _,_ = launch_simulation_chunked(
+    #     key, best_cfg, n_video_workers=1
+    # )
     
     
     # Classic simulation : 
