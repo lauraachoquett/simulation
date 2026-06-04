@@ -52,15 +52,15 @@ def run_simulation_chunk(state,model,keys, cfg):
         
         actions_id= jax.nn.one_hot(random.categorical(key_action, actions_logit * 50, axis=-1), 4)
         
-        
-        agents= vmap_update_agents_position(agents,jnp.argmax(actions_id,axis=1),cfg.n)
+        acts = jnp.argmax(actions_id,axis=1)
+        agents= vmap_update_agents_position(agents,acts,cfg.n)
         
         pos = agents.position
 
         # Compute intern energy : resource consumption - energy decay 
         local_resources = grid_resources[pos[:, 0], pos[:, 1]]
         rewards = local_resources * survives_int
-        new_energy = energies + rewards - cfg.energy_decay
+        new_energy = energies + rewards - cfg.energy_decay * jnp.where(acts==0,0.5,1)
 
 
         # ------- 3. Environment dynamic -------
