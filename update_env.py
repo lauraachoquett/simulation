@@ -7,13 +7,13 @@ from jax import jit
 
 def respawn(x, subkey, prob_factor):
     conditions = [
-        (x == 2) & (x == 1),
+        (x == 2) | (x == 1),
         (x == 3),
-        (x == 4),
+        (x >= 4),
     ]
-    choices = [0.01, 0.03,0.05]
-    default = 0.01
-    prob = jnp.select(conditions, choices, default) * prob_factor + 0.0005
+    choices = [0.03, 0.06,0.08]
+    default = 0.0
+    prob = jnp.select(conditions, choices, default) * prob_factor + 0.00008
     prob = jnp.clip(prob,0,1)
     return random.bernoulli(subkey, p=prob).astype(jnp.int32)
 
