@@ -132,7 +132,9 @@ def create_exp_file(dir):
     os.makedirs(exp_dir, exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "videos"), exist_ok=True)
-    return exp_dir
+    data_dir = os.path.join(exp_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return exp_dir,data_dir
 
 def save_config(cfg,subkeys,exp_dir):
     cfg_dict = cfg._asdict()

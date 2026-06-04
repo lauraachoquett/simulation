@@ -169,7 +169,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     if dir == '':
         now = datetime.now()
         dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
-    exp_dir = create_exp_file(dir)
+    exp_dir,data_dir = create_exp_file(dir)
     save_script(exp_dir)
     
     num_chunks_exp = cfg.num_chunks + chunk_id
@@ -234,10 +234,25 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} DONE   @ {time.strftime('%H:%M:%S')}")
             
             # --- Plots (CPU léger, synchrone) ---
-            pop_history.append(np.array(outputs.agents.alive.sum(axis=1)))
-            res_history.append(np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2))))
-            mov_history.append(compute_mean_movement_chunk(outputs, cfg.n))
-            consumed_history.append(compute_resources_consumed_chunk(outputs))
+            pop_chunk      = np.array(outputs.agents.alive.sum(axis=1))
+            res_chunk      = np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2)))
+            mov_chunk      = compute_mean_movement_chunk(outputs, cfg.n)
+            consumed_chunk = compute_resources_consumed_chunk(outputs)
+
+            pop_history.append(pop_chunk)
+            res_history.append(res_chunk)
+            mov_history.append(mov_chunk)
+            consumed_history.append(consumed_chunk)
+
+            # --- Sauvegarde des données du chunk ---
+            np.savez(
+                os.path.join(data_dir, f"chunk_{chunk_idx+1:05d}.npz"),
+                population    = pop_chunk,
+                resources     = res_chunk,
+                mean_movement = mov_chunk,
+                consumed      = consumed_chunk,
+            )
+
             plot_evolution(
                 np.concatenate(pop_history, axis=0),
                 np.concatenate(res_history, axis=0),
@@ -288,29 +303,38 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 if __name__ =='__main__':
     
     cfg = Config(
-        n=60,
+        n=50,
 
+        ### Simulation computation :
         chunk_size = 1000,
-        num_chunks = 2,
+        num_chunks = 300,
         checkpoint_freq = 50,
-        video_freq = 5,
+        video_freq = 25,
 
-        n_agents_max=1500,
+        ### AGENTS : 
+        # Agents number : 
+        n_agents_max=1000,
         n_agents_init=50,
-        agent_view = 7,
         
-        energy_decay=0.04,
+        agent_view = 5,
+        
+        #Physiologie
+        energy_decay=0.045,
         
         time_to_die=50,
         time_above_repr = 40,
         min_energy_repr = 1.,
-        mutation_var = 0.01,
-        param_mutate = 0.5,
         starting_energy= 1,
         
-        prob_factor = 0.08,
+        # Mutation parameters
+        mutation_var = 0.01,
+        param_mutate = 0.2,
         
-        pre_growth_step = 200,
+        # RESOURCES : 
+        prob_factor = 0.095,
+        
+        # INIT RESOURCES MAP
+        pre_growth_step = 1000,
         prob_init_resources=0.01,
     )
     
@@ -324,12 +348,12 @@ if __name__ =='__main__':
     
 
 
-    seed = 5
+    seed = 4
     key = random.PRNGKey(seed)
     
     print(jax.devices())
 
-    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 3)
+    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 2)
 
     # #Recherche des paramètres
     # print("Démarrage de la recherche de paramètres avec Optuna...")
@@ -348,4 +372,3 @@ if __name__ =='__main__':
     
     # cfg,_ = load_config(resume_exp)
     # cfg = cfg._replace(n_agents_max=1000,n_agents_init=200,pre_growth_step=2000)
-    
