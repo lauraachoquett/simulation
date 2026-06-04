@@ -241,6 +241,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 exp_dir,
                 start_step
             )
+            plot_mean_movement(np.concatenate(mov_history), exp_dir, start_step)
+            plot_resources_consumed(np.concatenate(consumed_history), exp_dir, start_step)
             pop_full = np.concatenate(pop_history)
             res_full = np.concatenate(res_history)
             
