@@ -28,7 +28,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         agents       = state.agents
         step_idx     = state.step
         grid_resources, grid_agents = grid
-        key_env, key_action, key_respawn, key_params = random.split(subkey, 4)
+        key_env, key_action, key_respawn, key_mut = random.split(subkey, 4)
         
         # ------- 1. Evaluate alive agents and energy : -------
         energies = agents.energy
@@ -90,12 +90,12 @@ def run_simulation_chunk(state,model,keys, cfg):
         parent_indices = jnp.where(spawn_mask, all_potential_parents, 0)
         
         # Draw initial positions for the new borns
-        new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=0, maxval=cfg.n)
+        #new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=0, maxval=cfg.n)
 
 
         # ------- 5. Global update -------
         # Put new born in the state with their initial state
-        final_pos = pos.at[free_indices].set(new_positions)
+        final_pos = pos.at[free_indices].set(pos[parent_indices,:])
         final_energy = new_energy.at[free_indices].set(1.0)
         final_time_under = new_time_under.at[free_indices].set(0)
         final_time_over = new_time_over.at[free_indices].set(0)
@@ -111,7 +111,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         
         mutation = cfg.mutation_var * random.normal(key_params, shape=(cfg.n_agents_max, agents.params.shape[1]))
         final_params = agents.params.at[free_indices].set(
-                    agents.params[parent_indices] +mutation)
+                    agents.params[parent_indices] +mutation*parameters_to_mutate)
         
         final_policy_states =metaRNNPolicyState_bcppr(
                 lstm_h=new_policy_states.lstm_h.at[free_indices].set(jnp.zeros(new_policy_states.lstm_h.shape[1])),
