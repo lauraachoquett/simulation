@@ -1,0 +1,27 @@
+[project]
+name = "project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "evojax",
+    "flax>=0.8.5",
+    "graphviz>=0.21",
+    "ipython>=8.18.1",
+    "jax[cuda12]>=0.4.30",
+    "matplotlib>=3.9.4",
+    "moviepy>=2.2.1",
+    "numpy>=2.0.2",
+    "optuna>=4.9.0",
+    "plotly>=6.8.0",
+]
+
+[tool.uv.workspace]
+exclude = ["EcoEvoJax/evojax"]
+members = [
+    "EcoEvoJax/evojax",
+]
+
+[tool.uv.sources]
+evojax = { path = "EcoEvoJax/evojax", editable = true }
