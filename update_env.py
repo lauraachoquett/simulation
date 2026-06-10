@@ -13,7 +13,7 @@ def respawn(x, subkey, prob_factor):
     ]
     choices = [0.03, 0.06,0.08]
     default = 0.0
-    prob = jnp.select(conditions, choices, default) * prob_factor + 0.00008
+    prob = jnp.select(conditions, choices, default) * prob_factor + 0.00009
     prob = jnp.clip(prob,0,1)
     return random.bernoulli(subkey, p=prob).astype(jnp.int32)
 
