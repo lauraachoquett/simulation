@@ -136,10 +136,15 @@ def create_exp_file(dir):
     os.makedirs(data_dir, exist_ok=True)
     return exp_dir,data_dir
 
-def save_config(cfg,subkeys,exp_dir):
+def save_config(cfg, subkeys, exp_dir):
     cfg_dict = cfg._asdict()
     cfg_dict["seeds"] = [int(k[0]) for k in subkeys]
     cfg_dict["seeds_full"] = [k.tolist() for k in subkeys]
+    cfg_dict["env"] = {
+        "jax_version": jax.__version__,
+        "prng_impl": jax.config.jax_default_prng_impl,
+        "threefry_partitionable": jax.config.jax_threefry_partitionable,
+    }
     with open(os.path.join(exp_dir, "config.json"), "w") as f:
         json.dump(cfg_dict, f, indent=2)
 
