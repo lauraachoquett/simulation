@@ -45,6 +45,8 @@ class Config(NamedTuple):
     checkpoint_freq : int
     video_freq : int
     param_mutate : float
+    factor_energy_decay_not_moving : float
+    pca : int
 
 
 

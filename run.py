@@ -310,6 +310,7 @@ if __name__ =='__main__':
         num_chunks = 300,
         checkpoint_freq = 50,
         video_freq = 25,
+        pca=50,
 
         ### AGENTS : 
         # Agents number : 
@@ -319,7 +320,8 @@ if __name__ =='__main__':
         agent_view = 5,
         
         #Physiologie
-        energy_decay=0.045,
+        energy_decay=0.08,
+        factor_energy_decay_not_moving = 0.5,
         
         time_to_die=50,
         time_above_repr = 40,
