@@ -8,20 +8,23 @@ import jax
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
-from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk, compute_resources_consumed_chunk,plot_mean_movement,plot_resources_consumed
+from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk,plot_mean_movement,compute_lifetime_chunk,plot_lifetime_vs_step,plot_life_expectancy
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
+from simulation.pca import update_genealogy,load_clade_snapshots,find_root,collect_clade,plot_clade_pca_html,save_alive_snapshot,plot_clade_pca_html_res
+from simulation.mrca import coalescence_point,plot_tmrca_gen
 import multiprocessing as mp
 import time
 from datetime import datetime
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import shutil
-import optuna
-import logging
-import json
+
 import os
+### Force the same implementation for random numbers in jax 
+jax.config.update("jax_threefry_partitionable", True)
+
 
 
 def save_script(exp_dir):
@@ -41,19 +44,7 @@ def save_script(exp_dir):
             print(
                 f"Attention : Le fichier {source_path} n'a pas pu être trouvé."
             )
-            
-def get_next_dir(base_path=".", prefix="try_"):
-    """
-    Trouve le prochain dossier disponible avec le préfixe donné et le crée.
-    """
-    i = 1
-    while True:
-        dir_path = os.path.join(base_path, f"{prefix}{i}")
-        if not os.path.exists(dir_path):
-            # Création immédiate pour réserver l'emplacement
-            os.makedirs(dir_path)
-            return dir_path
-        i += 1
+
         
 def classify_outcome(pop_full, res_full, cfg):
     """
@@ -76,92 +67,7 @@ def classify_outcome(pop_full, res_full, cfg):
     
     return 'interesting'
 
-def objective(trial, base_cfg, base_key,current_dir):
-    prob_factor = trial.suggest_float("prob_factor", 0.01, 1.0, log=True)
-    energy_decay = trial.suggest_float("energy_decay", 0.001, 0.1, log=True)
-    
-    trial_cfg = base_cfg._replace(
-        prob_factor=prob_factor,
-        energy_decay=energy_decay,
-    )
-    
-    a = trial_cfg.starting_energy - trial_cfg.energy_decay * trial_cfg.time_above_repr
-    b = trial_cfg.min_energy_repr
-    
-    if b <= a or trial_cfg.time_to_die <= trial_cfg.time_above_repr:
-        raise optuna.TrialPruned("Contraintes physiques ou temporelles non respectées.")
 
-    trial_key, _ = jax.random.split(base_key)
-    
-    
-    try:
-        state, outputs, exp_dir, outcome,chunks_survived = launch_simulation_chunked(
-            trial_key, trial_cfg, resume_exp=None, n_video_workers=1, dir=current_dir
-        )
-    except Exception as e:
-        raise optuna.TrialPruned(f"Erreur d'exécution: {e}")
-
-    
-    pop_full = outputs_to_numpy(outputs.agents.alive).sum(axis=1)
-    
-    final_pop = pop_full[-1] if len(pop_full) > 0 else 0
-    pop_ratio = final_pop / trial_cfg.n_agents_max
-    
-    score = chunks_survived + pop_ratio
-    
-    if outcome == 'overpopulation':
-        score -= 1.0
-    if outcome == 'easy':
-        score -= 2.0
-        
-    trial.set_user_attr('exp_dir', exp_dir)
-    trial.set_user_attr('chunks_survived', int(chunks_survived))
-    trial.set_user_attr('final_pop', int(final_pop))
-
-    return score
-
-def run_optuna_search(cfg, key, n_trials=50):
-    """
-    Configure et lance l'étude d'optimisation.
-    """
-    optuna.logging.get_logger("optuna").setLevel(logging.INFO)
-    
-    study = optuna.create_study(
-        study_name="ecoevo_hyperopt",
-        direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=42) 
-    )
-    
-    # Passage des arguments fixes via une fonction lambda
-    current_dir = get_next_dir(base_path="exp/", prefix="try_")
-    study.optimize(lambda trial: objective(trial, cfg, key,current_dir), n_trials=n_trials)
-    
-    print("\n=== Recherche Optuna terminée ===")
-    print(f"Meilleur score : {study.best_value}")
-    print(f"Meilleurs paramètres : {study.best_params}")
-
-    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-    ranked = sorted(completed, key=lambda t: t.value, reverse=True)
-    results = [
-        {
-            'rank': i + 1,
-            'score': t.value,
-            'exp_dir': t.user_attrs.get('exp_dir'),
-            'chunks_survived': t.user_attrs.get('chunks_survived'),
-            'final_pop': t.user_attrs.get('final_pop'),
-            'params': t.params,
-        }
-        for i, t in enumerate(ranked)
-    ]
-    results_path = os.path.join(current_dir, "trials_ranked.json")
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"Résultats triés sauvegardés dans : {results_path}")
-
-    # Retourne la configuration optimale
-    best_cfg = cfg._replace(**study.best_params)
-    return best_cfg, study
-    
     
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,dir=''):
     
@@ -197,14 +103,20 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         state = init_state(subkey, cfg, model)
         start_chunk = 0
         
-    save_config(cfg, subkeys, exp_dir)
+    
+    save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
     
 
     pop_history = []
     res_history = []
     mov_history = []
-    consumed_history = []
+    life_history = []
+    node_parent, node_children = {}, {}
+    tmrca_gen = []
+    prev_born = prev_parent = None
+
+
 
     initial_grid_res = state.grid[0, :, :]
     chunks_survived = 0
@@ -237,12 +149,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             pop_chunk      = np.array(outputs.agents.alive.sum(axis=1))
             res_chunk      = np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2)))
             mov_chunk      = compute_mean_movement_chunk(outputs, cfg.n)
-            consumed_chunk = compute_resources_consumed_chunk(outputs)
+            life_chunk = compute_lifetime_chunk(outputs, cfg)
 
             pop_history.append(pop_chunk)
             res_history.append(res_chunk)
             mov_history.append(mov_chunk)
-            consumed_history.append(consumed_chunk)
+            life_history.append(life_chunk)       # 1 scalaire par chunk
 
             # --- Sauvegarde des données du chunk ---
             np.savez(
@@ -250,26 +162,62 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 population    = pop_chunk,
                 resources     = res_chunk,
                 mean_movement = mov_chunk,
-                consumed      = consumed_chunk,
+                mean_life = life_chunk
             )
 
-            plot_evolution(
-                np.concatenate(pop_history, axis=0),
-                np.concatenate(res_history, axis=0),
-                exp_dir,
-                start_step
-            )
-            plot_mean_movement(np.concatenate(mov_history), exp_dir, start_step)
-            plot_resources_consumed(np.concatenate(consumed_history), exp_dir, start_step)
+            if (chunk_idx + 1) % 10  == 0:
+                plot_evolution(
+                    np.concatenate(pop_history, axis=0),
+                    np.concatenate(res_history, axis=0),
+                    exp_dir,
+                    start_step
+                )
+                life_data = np.concatenate(life_history, axis=1) 
+                plot_mean_movement(np.concatenate(mov_history)[1500:],np.concatenate(res_history, axis=0)[1500:], exp_dir, start_step)
+                plot_current_config(state.grid[0, :, :], state.agents.position, state.agents.alive, exp_dir,name_fig=f'{chunk_idx}')
+                plot_lifetime_vs_step((life_data[1,:]), (life_data[0,:]), exp_dir, cfg)
+                plot_life_expectancy((life_data[1,:]), (life_data[0,:]), exp_dir, bin_width=10)
+
+            
             pop_full = np.concatenate(pop_history)
             res_full = np.concatenate(res_history)
-            
-            plot_current_config(state.grid[0, :, :], state.agents.position, state.agents.alive, exp_dir,name_fig=f'{chunk_idx}')
-            
             current_sim_state = classify_outcome(pop_full, res_full, cfg)
             if current_sim_state != 'interesting':
                 print(f"Stopping criterion : {current_sim_state}")
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
+            
+            ## Genealogy and MCRA
+            prev_born, prev_parent = update_genealogy(
+                outputs, node_parent, node_children, prev_born, prev_parent)   # arbre complet, pas cher
+                
+            save_alive_snapshot(outputs, chunk_idx, os.path.join(exp_dir,'params'))    
+            
+            outputs_mcra = coalescence_point(outputs, node_parent)
+            tmrca_generations = outputs_mcra['tmrca_generations']
+            tmrca_gen.append(tmrca_generations)
+            plot_tmrca_gen(np.concatenate(pop_history, axis=0),tmrca_gen,exp_dir)
+            
+            
+            if (chunk_idx + 1) % cfg.pca == 0:
+
+                np.savez(
+                    os.path.join(data_dir, f"tmrca.npz"),
+                    tmrca    = np.array(tmrca_gen),
+                )
+                alive_last = np.array(outputs.agents.alive)[-1]
+                born_last  = np.array(outputs.agents.born_step)[-1]
+                survivors  = [(i, int(born_last[i])) for i in range(1, len(alive_last))
+                              if alive_last[i] == 1]
+                if survivors:
+                    root  = find_root(survivors[0], node_parent)
+                    clade = collect_clade(root, node_children)
+                    node_params = load_clade_snapshots(clade, os.path.join(exp_dir,'params'))
+                    plot_clade_pca_html(node_params, os.path.join(exp_dir,'pca'),name_fig=f'{chunk_idx}')
+                    # plot_clade_pca_html_res(node_params, res_full, exp_dir, name_fig=f'clade_{chunk_idx}')
+
+
+            # Stop simulation ? 
+
 
             chunks_survived+=1
             # --- Checkpoint (synchrone) ---
@@ -295,19 +243,36 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             except Exception as e:
                 print(f"  [video] ERREUR chunk {cidx} : {e}")
 
+
+    np.savez(
+        os.path.join(data_dir, f"tmrca.npz"),
+        tmrca    = np.array(tmrca_gen),
+    )
     delta_sim = time.time()-start_time_sim
     delta_min,delta_sec = sec_to_minutes(delta_sim)
     print(f"Time to compute the simulation : {delta_min} min and {delta_sec:.1f} s")
     return state, outputs, exp_dir,current_sim_state,chunks_survived
 
+
+# def sanity_check_pca(cfg,key):
+#     model = MetaRnnPolicy_bcppr(
+#         input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
+#         hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
+#     )
+#     key, sk_params = random.split(key)
+#     params = random.normal(sk_params, (cfg.n_agents_max, model.num_params)) / 100
+#     final_params = params.at[free_indices].set(
+#             params[parent_indices] +mutation*parameters_to_mutate)
+
 if __name__ =='__main__':
     
+    
     cfg = Config(
-        n=50,
+        n=300,
 
         ### Simulation computation :
         chunk_size = 1000,
-        num_chunks = 300,
+        num_chunks = 1000,
         checkpoint_freq = 50,
         video_freq = 25,
         pca=50,
@@ -317,7 +282,7 @@ if __name__ =='__main__':
         n_agents_max=1000,
         n_agents_init=50,
         
-        agent_view = 5,
+        agent_view = 7,
         
         #Physiologie
         energy_decay=0.08,
@@ -330,16 +295,15 @@ if __name__ =='__main__':
         
         # Mutation parameters
         mutation_var = 0.01,
-        param_mutate = 0.2,
+        param_mutate = 0.5,
         
         # RESOURCES : 
-        prob_factor = 0.095,
+        prob_factor = 0.01,
         
         # INIT RESOURCES MAP
-        pre_growth_step = 1000,
-        prob_init_resources=0.01,
+        pre_growth_step = 500,
+        prob_init_resources=0.000001,
     )
-    
     
     
 
@@ -350,12 +314,12 @@ if __name__ =='__main__':
     
 
 
-    seed = 4
+    seed = 3
     key = random.PRNGKey(seed)
     
     print(jax.devices())
 
-    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 2)
+    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)
 
     # #Recherche des paramètres
     # print("Démarrage de la recherche de paramètres avec Optuna...")
