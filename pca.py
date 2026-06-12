@@ -123,7 +123,7 @@ def plot_clade_pca_html(node_params, exp_dir, name_fig='clade'):
                f"var. {var[0]:.1f}/{var[1]:.1f}/{var[2]:.1f} %"),
         scene=dict(xaxis_title='PC1', yaxis_title='PC2', zaxis_title='PC3'),
     )
-    path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
+    path = os.path.join(exp_dir, 'fig','pca'); os.makedirs(path, exist_ok=True)
     fig.write_html(os.path.join(path, f'pca_clade_{name_fig}.html'))
 
 
