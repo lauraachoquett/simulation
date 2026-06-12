@@ -8,7 +8,7 @@ import jax
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
-from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk,plot_mean_movement,compute_lifetime_chunk,plot_lifetime_vs_step,plot_life_expectancy
+from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk,plot_mean_movement,compute_lifetime_chunk,plot_lifetime_vs_step,plot_life_expectancy,plot_phase_portrait_png
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
@@ -143,6 +143,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} START  @ {time.strftime('%H:%M:%S')}")
             state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
+            assert jnp.std(state.obs) > 0
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} DONE   @ {time.strftime('%H:%M:%S')}")
             
             # --- Plots (CPU léger, synchrone) ---
@@ -165,8 +166,14 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 mean_life = life_chunk
             )
 
-            if (chunk_idx + 1) % 10  == 0:
+            if (chunk_idx + 1) % 100  == 0 or  (chunk_idx + 1) == 10:
                 plot_evolution(
+                    np.concatenate(pop_history, axis=0),
+                    np.concatenate(res_history, axis=0),
+                    exp_dir,
+                    start_step
+                )
+                plot_phase_portrait_png(
                     np.concatenate(pop_history, axis=0),
                     np.concatenate(res_history, axis=0),
                     exp_dir,
@@ -183,7 +190,19 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             res_full = np.concatenate(res_history)
             current_sim_state = classify_outcome(pop_full, res_full, cfg)
             if current_sim_state != 'interesting':
+                plot_evolution(
+                    np.concatenate(pop_history, axis=0),
+                    np.concatenate(res_history, axis=0),
+                    exp_dir,
+                    start_step
+                )
                 print(f"Stopping criterion : {current_sim_state}")
+                vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
+                #    Conversion numpy AVANT envoi — bloque le GPU le temps du transfert H→D,
+                #     mais libère ensuite le GPU pour le chunk suivant pendant l'encodage vidéo
+                outputs_np = outputs_to_numpy(outputs)
+                future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5)
+                pending_futures[future] = chunk_idx + 1
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
             
             ## Genealogy and MCRA
@@ -211,8 +230,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 if survivors:
                     root  = find_root(survivors[0], node_parent)
                     clade = collect_clade(root, node_children)
-                    node_params = load_clade_snapshots(clade, os.path.join(exp_dir,'params'))
-                    plot_clade_pca_html(node_params, os.path.join(exp_dir,'pca'),name_fig=f'{chunk_idx}')
+                    name_save=list(np.arange(chunk_idx-(cfg.pca)//2,chunk_idx))
+                    node_params = load_clade_snapshots(clade, os.path.join(exp_dir,'params'),name_save)
+                    plot_clade_pca_html(node_params, os.path.join(exp_dir),name_fig=f'{chunk_idx}')
                     # plot_clade_pca_html_res(node_params, res_full, exp_dir, name_fig=f'clade_{chunk_idx}')
 
 
@@ -254,56 +274,48 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     return state, outputs, exp_dir,current_sim_state,chunks_survived
 
 
-# def sanity_check_pca(cfg,key):
-#     model = MetaRnnPolicy_bcppr(
-#         input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
-#         hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
-#     )
-#     key, sk_params = random.split(key)
-#     params = random.normal(sk_params, (cfg.n_agents_max, model.num_params)) / 100
-#     final_params = params.at[free_indices].set(
-#             params[parent_indices] +mutation*parameters_to_mutate)
 
 if __name__ =='__main__':
     
     
     cfg = Config(
-        n=300,
+            n=300,
 
-        ### Simulation computation :
-        chunk_size = 1000,
-        num_chunks = 1000,
-        checkpoint_freq = 50,
-        video_freq = 25,
-        pca=50,
+            ### Simulation computation :
+            chunk_size = 1000,
+            num_chunks = 1000,
+            checkpoint_freq = 50,
+            video_freq = 50,
+            pca=100,
 
-        ### AGENTS : 
-        # Agents number : 
-        n_agents_max=1000,
-        n_agents_init=50,
-        
-        agent_view = 7,
-        
-        #Physiologie
-        energy_decay=0.08,
-        factor_energy_decay_not_moving = 0.5,
-        
-        time_to_die=50,
-        time_above_repr = 40,
-        min_energy_repr = 1.,
-        starting_energy= 1,
-        
-        # Mutation parameters
-        mutation_var = 0.01,
-        param_mutate = 0.5,
-        
-        # RESOURCES : 
-        prob_factor = 0.01,
-        
-        # INIT RESOURCES MAP
-        pre_growth_step = 500,
-        prob_init_resources=0.000001,
-    )
+            ### AGENTS : 
+            # Agents number : 
+            n_agents_max=1860,
+            n_agents_init=60,
+            agent_view = 5,
+            temperature=10,
+            
+            #Physiologie
+            energy_decay=0.0545,
+            factor_energy_decay_not_moving = 0.2,
+            
+            time_to_die=50,
+            time_above_repr = 40,
+            min_energy_repr = 1.,
+            starting_energy= 1,
+            
+            # Mutation parameters
+            mutation_var = 0.01,
+            param_mutate = 0.4,
+            
+            # RESOURCES : 
+            prob_factor = 0.05,
+            pop_res_prob = 0.0,
+            
+            # INIT RESOURCES MAP
+            pre_growth_step = 3000,
+            init_number_of_resources=70,
+        )
     
     
 
@@ -318,7 +330,7 @@ if __name__ =='__main__':
     key = random.PRNGKey(seed)
     
     print(jax.devices())
-
+    # sanity_check_pca(cfg, key, './', name_fig="lineage_100")
     state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)
 
     # #Recherche des paramètres
