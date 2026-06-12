@@ -47,6 +47,8 @@ class Config(NamedTuple):
     param_mutate : float
     factor_energy_decay_not_moving : float
     pca : int
+    pop_res_prob : float
+    temperature : int
 
 
 
