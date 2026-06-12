@@ -39,7 +39,52 @@ def plot_evolution_png(pop_history, res_history, exp_dir,start_step=0):
     plt.savefig(os.path.join(path_save_fig, f'plot_evo.png'))
     plt.close()
 
+from matplotlib.collections import LineCollection
 
+def plot_phase_portrait_png(pop_history, res_history, exp_dir, start_step=0,
+                            fixed_point=None):
+    """Phase portrait: trajectory (resources, population) colored by time."""
+    if len(pop_history)<2000:
+        return
+    R = np.asarray(res_history)[2000:]
+    N = np.asarray(pop_history)[2000:]
+    start_step=2000
+    steps = np.arange(start_step, start_step + len(N))
+
+    # Segments consécutifs pour colorer la ligne par le temps
+    points = np.array([R, N]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    lc = LineCollection(segments, cmap='viridis', linewidth=2)
+    lc.set_array(steps[:-1])           # couleur = step
+    line = ax.add_collection(lc)
+    cbar = fig.colorbar(line, ax=ax)
+    cbar.set_label('Step')
+
+    # Début (cercle) et fin (croix)
+    ax.scatter(R[0], N[0], color='black', s=60, zorder=3, label='Start')
+    ax.scatter(R[-1], N[-1], color='red', marker='X', s=80, zorder=3, label='End')
+
+    # Point fixe théorique si fourni : (R*, N*)
+    if fixed_point is not None:
+        ax.scatter(*fixed_point, color='blue', marker='*', s=200,
+                   zorder=3, label='Fixed point')
+
+    ax.set_xlabel('Resources amount')
+    ax.set_ylabel('Population size')
+    ax.set_title('Phase portrait (resources vs population)')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    ax.autoscale()                     # LineCollection ne fixe pas les limites seule
+
+    plt.tight_layout()
+    path_save_fig = os.path.join(exp_dir, 'fig')
+    os.makedirs(path_save_fig, exist_ok=True)
+    plt.savefig(os.path.join(path_save_fig, 'plot_phase.png'))
+    plt.close()
+    
 
 def plot_several_sim_seeds(output_seeds,cfg,exp_dir):
     n_sims = output_seeds.grid.shape[0]
