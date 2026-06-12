@@ -28,7 +28,7 @@ class SimState:
 
 class Config(NamedTuple):
     n: int
-    prob_init_resources: float
+    init_number_of_resources: int
     energy_decay: float
     n_agents_max: int
     n_agents_init: int

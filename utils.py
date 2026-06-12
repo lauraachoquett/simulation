@@ -22,7 +22,10 @@ import pickle
 def init_state(key, cfg, model):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
-    grid_resources = random.bernoulli(subkey_grid, p=cfg.prob_init_resources, shape=(cfg.n, cfg.n)).astype(jnp.int32)
+    
+    position_res=random.randint(subkey_grid, (cfg.init_number_of_resources, 2), 0, cfg.n)
+    grid_resources = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
+    grid_resources = grid_resources.at[position_res[:, 0], position_res[:, 1]].set(1)
     
     # 2. Préparation des agents
     key, *subkeys = random.split(key, 4)
