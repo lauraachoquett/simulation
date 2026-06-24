@@ -81,8 +81,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
         )
         key, *subkeys = random.split(key, num_chunks_exp + 1)
-        key, subkey = jax.random.split(key)
-        state = init_state(subkey, cfg, model)
+        key, subkey_state = jax.random.split(key)
+        state = init_state(subkey_state, cfg, model)
         start_chunk = 0
         
     
@@ -116,6 +116,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
             # --- Simulation GPU ---
             subkey = subkeys[chunk_idx]
+            subkey,subkey_lab = random.split(subkey)
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} START  @ {time.strftime('%H:%M:%S')}")
             state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
