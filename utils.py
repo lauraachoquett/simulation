@@ -163,6 +163,7 @@ def load_config(resume_exp):
     with open(os.path.join(resume_exp, 'config.json'), 'r') as f:
         cfg_dict = json.load(f)
     seeds_full = [jnp.array(s, dtype=jnp.uint32) for s in cfg_dict.pop("seeds_full")]
+    env = cfg_dict.pop("env", None)
     cfg_dict.pop("seeds", None)
     return Config(**cfg_dict), seeds_full
 
