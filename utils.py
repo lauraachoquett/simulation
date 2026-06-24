@@ -177,3 +177,25 @@ def print_params(params, prefix="", total=0):
             total += n_p
             print(f"{full_name:<55} {str(value.shape):<20} {n_p:>10,}")
     return total
+
+
+def classify_outcome(pop_full, res_full, cfg):
+    """
+    Returns 'extinction', 'overpopulation', 'depletion', or 'interesting'.
+    """
+    n_chunks = 30
+    if pop_full[-1] == 0:
+        return 'extinction'
+    
+    last = pop_full[-n_chunks*cfg.chunk_size:]
+    if len(last) == n_chunks*cfg.chunk_size and (last > 0.95 * cfg.n_agents_max).all():
+        return 'overpopulation'
+    
+    if res_full[-1]==0:
+        return 'depletion'
+    
+    last_res = res_full[-n_chunks*cfg.chunk_size:]
+    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.n ** 2).all():
+        return 'easy'
+    
+    return 'interesting'
