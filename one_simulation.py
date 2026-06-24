@@ -97,12 +97,15 @@ def run_simulation_chunk(state,model,keys, cfg):
         parent_indices = jnp.where(spawn_mask, all_potential_parents, 0)
         
         # Draw initial positions for the new borns
-        #new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=0, maxval=cfg.n)
+        if cfg.random_pos_offspring:
+            new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=1, maxval=cfg.n-1)
+        else :
+            new_positions = pos[parent_indices,:]
 
 
         # ------- 5. Global update -------
         # Put new born in the state with their initial state
-        final_pos = pos.at[free_indices].set(pos[parent_indices,:])
+        final_pos = pos.at[free_indices].set(new_positions)
         final_energy = new_energy.at[free_indices].set(1.0)
         final_time_under = new_time_under.at[free_indices].set(0)
         final_time_over = new_time_over.at[free_indices].set(0)
