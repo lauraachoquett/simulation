@@ -144,8 +144,9 @@ def run_simulation_chunk(state,model,keys, cfg):
             params = final_params
         )
         
-        new_grid = jnp.stack((grid_resources, grid_agents))
-        obs = get_obs_vector(new_grid, final_pos,cfg.agent_view)
+        new_grid = jnp.stack((grid_resources, grid_agents,grid_walls))
+        obs = get_obs_vector(new_grid, (final_pos, new_agents.orientation), cfg.agent_view)
+
 
         
         new_state = SimState(

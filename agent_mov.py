@@ -36,14 +36,25 @@ def vmap_update_agents_position(agents_state,actions_id,n):
     return agents_state
     
     
-def get_single_obs(grid, pos, radius):
+def get_single_obs(grid, loc, radius):
+    pos, rot = loc                    
     side = 2 * radius + 1
-    
-    padding = ((0, 0), (radius, radius), (radius, radius))
-    padded_grid = jnp.pad(grid, padding)
-    
-    obs = lax.dynamic_slice(padded_grid, (0, pos[0], pos[1]), (2, side, side))
-    
-    return jnp.transpose(obs, (1, 2, 0))
+    n_channels = grid.shape[0]
 
-get_obs_vector = vmap(get_single_obs, in_axes=(None, 0, None))
+    padded_grid = jnp.pad(grid, ((0, 0), (radius, radius), (radius, radius)),
+                          constant_values=-1)
+    obs = lax.dynamic_slice(padded_grid, (0, pos[0], pos[1]),
+                            (n_channels, side, side))    
+
+    k = jnp.round(rot / (jnp.pi / 2)).astype(jnp.int32) % 4
+    variants = jnp.stack([
+        obs,
+        jnp.rot90(obs, 1, axes=(1, 2)),   
+        jnp.rot90(obs, 2, axes=(1, 2)),
+        jnp.rot90(obs, 3, axes=(1, 2)),
+    ])                                     
+    obs = variants[k]
+
+    return jnp.transpose(obs, (1, 2, 0))  
+
+get_obs_vector = vmap(get_single_obs, in_axes=(None, 0, None))  
