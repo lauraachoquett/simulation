@@ -8,7 +8,7 @@ import jax
 import numpy as np
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
-from simulation.plots import plot_evolution,plot_current_config, compute_mean_movement_chunk,plot_mean_movement,compute_lifetime_chunk,plot_lifetime_vs_step,plot_life_expectancy,plot_phase_portrait_png
+from simulation.plots import plot_current_config
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
@@ -194,33 +194,37 @@ if __name__ =='__main__':
 
             ### AGENTS : 
             # Agents number : 
-            n_agents_max=1860,
-            n_agents_init=60,
+            n_agents_max=1400,
+            n_agents_init=20,
             agent_view = 5,
-            temperature=10,
+            temperature=20,
             
             #Physiologie
-            energy_decay=0.0545,
+            energy_decay=0.07,
             factor_energy_decay_not_moving = 0.2,
             
-            time_to_die=50,
-            time_above_repr = 40,
-            min_energy_repr = 1.,
-            starting_energy= 1,
+            time_to_die=70,
+            time_above_repr = 60,
+            min_energy_repr = 2.5,
+            starting_energy= 0.5,
             
             # Mutation parameters
-            mutation_var = 0.01,
-            param_mutate = 0.4,
+            mutation_var = 0.02,
+            param_mutate = 0.9,
             
             # RESOURCES : 
-            prob_factor = 0.05,
-            pop_res_prob = 0.0,
+            prob_factor = 0.065,
+            pop_res_prob = 0.00000001,
             
             # INIT RESOURCES MAP
             pre_growth_step = 3000,
-            init_number_of_resources=70,
+            init_number_of_resources=2,
+            random_pos_offspring = True,
+            dumb_agent= False,
         )
     
+
+
     
 
     # Sanity check : 
@@ -230,27 +234,17 @@ if __name__ =='__main__':
     
 
 
-    seed = 3
+    seed = 4
     key = random.PRNGKey(seed)
     
     print(jax.devices())
-    # sanity_check_pca(cfg, key, './', name_fig="lineage_100")
+    
     state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)
 
-    # #Recherche des paramètres
-    # print("Démarrage de la recherche de paramètres avec Optuna...")
-    # best_cfg, study = run_optuna_search(cfg, key, n_trials=50)
-    
-    # # Lancement de la vraie simulation avec la meilleure config trouvée
-    # print("\nLancement de la simulation finale avec les meilleurs paramètres...")
-    # best_cfg._replace(video_freq = 150)
-    # state_final, output, exp_dir, _,_ = launch_simulation_chunked(
-    #     key, best_cfg, n_video_workers=1
-    # )
+
     
     
     # Classic simulation : 
-    # resume_exp = 'exp/try_7/2026-06-02_11-47-21'
     
     # cfg,_ = load_config(resume_exp)
     # cfg = cfg._replace(n_agents_max=1000,n_agents_init=200,pre_growth_step=2000)

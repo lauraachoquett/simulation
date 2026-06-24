@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import numpy as np
 import jax
 # Special transform functions (we'll understand what these are very soon!)
-from jax import grad, jit, vmap, pmap
 
 # JAX's low level API 
 # (lax is just an anagram for XLA, not completely sure how they came up with name JAX)
