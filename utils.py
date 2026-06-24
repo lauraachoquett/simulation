@@ -27,6 +27,13 @@ def init_state(key, cfg, model):
     grid_resources = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
     grid_resources = grid_resources.at[position_res[:, 0], position_res[:, 1]].set(1)
     
+    grid_walls = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
+    grid_walls = grid_walls.at[0,:].set(1)
+    grid_walls = grid_walls.at[:,0].set(1)
+    grid_walls = grid_walls.at[-1,:].set(1)
+    grid_walls = grid_walls.at[:,-1].set(1)
+    grid_resources = jnp.where(grid_walls==1,0,grid_resources)
+    
     # 2. Préparation des agents
     key, *subkeys = random.split(key, 4)
     sk_pos, sk_or, sk_params = subkeys
@@ -43,7 +50,7 @@ def init_state(key, cfg, model):
     
     # Création de l'objet AgentState
     agents = AgentState(
-        position=random.randint(sk_pos, (cfg.n_agents_max, 2), 0, cfg.n),
+        position=random.randint(sk_pos, (cfg.n_agents_max, 2), 1, cfg.n-1),
         orientation=orientations_pool[idx_or],
         energy=jnp.ones((cfg.n_agents_max,))*cfg.starting_energy,
         time_under_min_energy=jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32),
@@ -58,9 +65,9 @@ def init_state(key, cfg, model):
     # 3. Grille d'occupation et observations
     grid_agents = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
     grid_agents = grid_agents.at[agents.position[:, 0], agents.position[:, 1]].add(agents.alive)
-    grid = jnp.stack((grid_resources, grid_agents))
+    grid = jnp.stack((grid_resources, grid_agents,grid_walls))
     pos = agents.position
-    obs = get_obs_vector(grid, pos,cfg.agent_view)
+
     # 4. État final
     
     key, key_env = jax.random.split(key)
@@ -73,8 +80,9 @@ def init_state(key, cfg, model):
         lambda i, carry: resources_growth(carry, cfg),
         init_carry
     )
-    
-    grid = jnp.stack((grid_resources_grown, grid_agents))
+    grid_resources_grown_bis = jnp.where(grid_walls==1,0,grid_resources_grown)
+    grid = jnp.stack((grid_resources_grown_bis, grid_agents,grid_walls))
+    obs = get_obs_vector(grid, (pos, agents.orientation), cfg.agent_view)
 
     state = SimState(
         grid=grid,

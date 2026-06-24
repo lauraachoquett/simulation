@@ -27,7 +27,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         grid         = state.grid
         agents       = state.agents
         step_idx     = state.step
-        grid_resources, grid_agents = grid
+        grid_resources, grid_agents,grid_walls = grid
         key_env, key_action, key_respawn, key_mut = random.split(subkey, 4)
         
         # ------- 1. Evaluate alive agents and energy : -------
@@ -56,6 +56,9 @@ def run_simulation_chunk(state,model,keys, cfg):
         agents= vmap_update_agents_position(agents,acts,cfg.n)
         
         pos = agents.position
+        survives_int = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,survives_int)
+        reproduces = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,reproduces)
+        
 
         # Compute intern energy : resource consumption - energy decay 
         local_resources = grid_resources[pos[:, 0], pos[:, 1]]
@@ -71,6 +74,8 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # Resources spread via convolution
         grid_resources,_ = resources_growth((grid_resources,key_env),cfg)
+        grid_resources = jnp.where(grid_walls==1,0,grid_resources)
+
 
 
         # ------- 4. Reproduction -------
