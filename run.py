@@ -72,13 +72,13 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
         start_chunk = chunk_id
         model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
+            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 3),
             hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
         )
     else:
         model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2),
-            hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
+            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 3),
+            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
         )
         key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey = jax.random.split(key)
