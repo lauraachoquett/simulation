@@ -119,16 +119,22 @@ def plot_evolution_html(pop_history, res_history, exp_dir, start_step=0):
     fig.write_html(os.path.join(path_save_fig, f'plot_evo.html'))
 
 
-def plot_current_config(current_grid_res, pos, alive, exp_dir, name_fig='sim'):
-    plot_current_config_png(current_grid_res, pos, alive, exp_dir, name_fig)
+def plot_current_config(current_grid_res, grid_walls,pos, alive, exp_dir, name_fig='sim'):
+    plot_current_config_png(current_grid_res, grid_walls,pos, alive, exp_dir, name_fig)
 
-def plot_current_config_png(current_grid_res, pos, alive, exp_dir, name_fig='sim'):
+def plot_current_config_png(current_grid_res,grid_walls, pos, alive, exp_dir, name_fig='sim'):
     """Plot the initial grid configuration with agent positions."""
     fig, ax = plt.subplots(figsize=(5, 5))
 
     cmap_res = mcolors.ListedColormap(["white", "#4CAF50"])
     ax.imshow(current_grid_res, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
 
+    walls = np.asarray(grid_walls)
+    walls_masked = np.ma.masked_where(walls != 1, walls)   # masque tout sauf les murs
+    cmap_walls = mcolors.ListedColormap(["black"])
+    ax.imshow(walls_masked, cmap=cmap_walls, vmin=1, vmax=1, interpolation="nearest")
+    
+    
     fig.canvas.draw()
     bbox = ax.get_window_extent()
     grid_h, grid_w = current_grid_res.shape
@@ -141,7 +147,7 @@ def plot_current_config_png(current_grid_res, pos, alive, exp_dir, name_fig='sim
                     color="purple" if i == 1 else "red",
                     markersize=cell_pts)
 
-    ax.set_title('Configuration at step ($t=0$)')
+    ax.set_title('Configuration')
     ax.axis("off")
 
     plt.tight_layout()
