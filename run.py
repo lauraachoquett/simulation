@@ -12,8 +12,8 @@ from simulation.plots import plot_evolution,plot_current_config, compute_mean_mo
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils import init_state,load_checkpoint,save_checkpoint
-from simulation.pca import update_genealogy,load_clade_snapshots,find_root,collect_clade,plot_clade_pca_html,save_alive_snapshot,plot_clade_pca_html_res
-from simulation.mrca import coalescence_point,plot_tmrca_gen
+from simulation.simulation_data import simulation_data
+
 import multiprocessing as mp
 import time
 from datetime import datetime
@@ -46,36 +46,18 @@ def save_script(exp_dir):
             )
 
         
-def classify_outcome(pop_full, res_full, cfg):
-    """
-    Returns 'extinction', 'overpopulation', 'depletion', or 'interesting'.
-    """
-    n_chunks = 30
-    if pop_full[-1] == 0:
-        return 'extinction'
-    
-    last = pop_full[-n_chunks*cfg.chunk_size:]
-    if len(last) == n_chunks*cfg.chunk_size and (last > 0.95 * cfg.n_agents_max).all():
-        return 'overpopulation'
-    
-    if res_full[-1]==0:
-        return 'depletion'
-    
-    last_res = res_full[-n_chunks*cfg.chunk_size:]
-    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.n ** 2).all():
-        return 'easy'
-    
-    return 'interesting'
 
 
     
-def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,dir=''):
+        
+def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,save_dir=''):
     
     start_time_sim = time.time()
-    if dir == '':
+    if save_dir == '':
         now = datetime.now()
-        dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
-    exp_dir,data_dir = create_exp_file(dir)
+        save_dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
+        
+    exp_dir,data_dir = create_exp_file(save_dir)
     save_script(exp_dir)
     
     num_chunks_exp = cfg.num_chunks + chunk_id
@@ -108,20 +90,14 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     start_step = start_chunk * cfg.chunk_size
     
 
-    pop_history = []
-    res_history = []
-    mov_history = []
-    life_history = []
-    node_parent, node_children = {}, {}
-    tmrca_gen = []
-    prev_born = prev_parent = None
+    sim_data = simulation_data(cfg=cfg,start_step=start_step)
 
 
 
     initial_grid_res = state.grid[0, :, :]
     chunks_survived = 0
     
-    plot_current_config(initial_grid_res, state.agents.position, state.agents.alive, exp_dir,name_fig=f'init')
+    plot_current_config(initial_grid_res,state.grid[-1, :, :] ,state.agents.position, state.agents.alive, exp_dir,name_fig=f'init')
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
@@ -143,102 +119,36 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} START  @ {time.strftime('%H:%M:%S')}")
             state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
-            assert jnp.std(state.obs) > 0
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} DONE   @ {time.strftime('%H:%M:%S')}")
             
-            # --- Plots (CPU léger, synchrone) ---
-            pop_chunk      = np.array(outputs.agents.alive.sum(axis=1))
-            res_chunk      = np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2)))
-            mov_chunk      = compute_mean_movement_chunk(outputs, cfg.n)
-            life_chunk = compute_lifetime_chunk(outputs, cfg)
+  
 
-            pop_history.append(pop_chunk)
-            res_history.append(res_chunk)
-            mov_history.append(mov_chunk)
-            life_history.append(life_chunk)       # 1 scalaire par chunk
-
-            # --- Sauvegarde des données du chunk ---
-            np.savez(
-                os.path.join(data_dir, f"chunk_{chunk_idx+1:05d}.npz"),
-                population    = pop_chunk,
-                resources     = res_chunk,
-                mean_movement = mov_chunk,
-                mean_life = life_chunk
-            )
+            sim_data.update_data_with_chunk(outputs,data_dir)
 
             if (chunk_idx + 1) % 100  == 0 or  (chunk_idx + 1) == 10:
-                plot_evolution(
-                    np.concatenate(pop_history, axis=0),
-                    np.concatenate(res_history, axis=0),
-                    exp_dir,
-                    start_step
-                )
-                plot_phase_portrait_png(
-                    np.concatenate(pop_history, axis=0),
-                    np.concatenate(res_history, axis=0),
-                    exp_dir,
-                    start_step
-                )
-                life_data = np.concatenate(life_history, axis=1) 
-                plot_mean_movement(np.concatenate(mov_history)[1500:],np.concatenate(res_history, axis=0)[1500:], exp_dir, start_step)
-                plot_current_config(state.grid[0, :, :], state.agents.position, state.agents.alive, exp_dir,name_fig=f'{chunk_idx}')
-                plot_lifetime_vs_step((life_data[1,:]), (life_data[0,:]), exp_dir, cfg)
-                plot_life_expectancy((life_data[1,:]), (life_data[0,:]), exp_dir, bin_width=10)
-
+                sim_data.plot(state,exp_dir)
             
-            pop_full = np.concatenate(pop_history)
-            res_full = np.concatenate(res_history)
-            current_sim_state = classify_outcome(pop_full, res_full, cfg)
+            current_sim_state = sim_data.check_end_condition()
+            
             if current_sim_state != 'interesting':
-                plot_evolution(
-                    np.concatenate(pop_history, axis=0),
-                    np.concatenate(res_history, axis=0),
-                    exp_dir,
-                    start_step
-                )
+                sim_data.plot(state,exp_dir)
                 print(f"Stopping criterion : {current_sim_state}")
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
-                #    Conversion numpy AVANT envoi — bloque le GPU le temps du transfert H→D,
-                #     mais libère ensuite le GPU pour le chunk suivant pendant l'encodage vidéo
                 outputs_np = outputs_to_numpy(outputs)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5)
                 pending_futures[future] = chunk_idx + 1
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
             
             ## Genealogy and MCRA
-            prev_born, prev_parent = update_genealogy(
-                outputs, node_parent, node_children, prev_born, prev_parent)   # arbre complet, pas cher
-                
-            save_alive_snapshot(outputs, chunk_idx, os.path.join(exp_dir,'params'))    
-            
-            outputs_mcra = coalescence_point(outputs, node_parent)
-            tmrca_generations = outputs_mcra['tmrca_generations']
-            tmrca_gen.append(tmrca_generations)
-            plot_tmrca_gen(np.concatenate(pop_history, axis=0),tmrca_gen,exp_dir)
+            sim_data.update_genealogy(outputs,exp_dir)
+            sim_data.update_mrca(outputs,exp_dir)
             
             
-            if (chunk_idx + 1) % cfg.pca == 0:
-
-                np.savez(
-                    os.path.join(data_dir, f"tmrca.npz"),
-                    tmrca    = np.array(tmrca_gen),
-                )
-                alive_last = np.array(outputs.agents.alive)[-1]
-                born_last  = np.array(outputs.agents.born_step)[-1]
-                survivors  = [(i, int(born_last[i])) for i in range(1, len(alive_last))
-                              if alive_last[i] == 1]
-                if survivors:
-                    root  = find_root(survivors[0], node_parent)
-                    clade = collect_clade(root, node_children)
-                    name_save=list(np.arange(chunk_idx-(cfg.pca)//2,chunk_idx))
-                    node_params = load_clade_snapshots(clade, os.path.join(exp_dir,'params'),name_save)
-                    plot_clade_pca_html(node_params, os.path.join(exp_dir),name_fig=f'{chunk_idx}')
-                    # plot_clade_pca_html_res(node_params, res_full, exp_dir, name_fig=f'clade_{chunk_idx}')
-
+            if ((chunk_idx + 1) % cfg.pca == 0) or (chunk_idx ==10):
+                sim_data.launch_env(outputs,subkey_lab,model,exp_dir,n=10)
+                sim_data.plot_pca_and_mrca_and_lab_env(outputs,data_dir,exp_dir)
 
             # Stop simulation ? 
-
-
             chunks_survived+=1
             # --- Checkpoint (synchrone) ---
             if (chunk_idx + 1) % cfg.checkpoint_freq == 0:
@@ -248,13 +158,10 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # --- Vidéo (asynchrone) ---
             if (chunk_idx + 1) % cfg.video_freq == 0 or chunk_idx==start_chunk:
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
-                #    Conversion numpy AVANT envoi — bloque le GPU le temps du transfert H→D,
-                #     mais libère ensuite le GPU pour le chunk suivant pendant l'encodage vidéo
                 outputs_np = outputs_to_numpy(outputs)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5)
                 pending_futures[future] = chunk_idx + 1
 
-        # --- Attente finale de toutes les vidéos restantes ---
         print("Simulation terminée. Attente des vidéos en cours...")
         for f in as_completed(pending_futures):
             cidx = pending_futures[f]
@@ -264,10 +171,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 print(f"  [video] ERREUR chunk {cidx} : {e}")
 
 
-    np.savez(
-        os.path.join(data_dir, f"tmrca.npz"),
-        tmrca    = np.array(tmrca_gen),
-    )
+    sim_data.save_mrca_end_sim(data_dir)
     delta_sim = time.time()-start_time_sim
     delta_min,delta_sec = sec_to_minutes(delta_sim)
     print(f"Time to compute the simulation : {delta_min} min and {delta_sec:.1f} s")
