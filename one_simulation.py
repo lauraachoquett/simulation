@@ -46,13 +46,16 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # ------- 2. Movement and Physiological update -------
         # Update position
-        actions_logit, new_policy_states = model.get_actions(state, state.agents.params,
-                                                                  state.agents.policy_states)
+        if cfg.dumb_agent:
+            actions_id = jax.nn.one_hot(random.randint(key_action, shape=(), minval=0, maxval=4),4)
+        else : 
+            actions_logit, new_policy_states = model.get_actions(state, state.agents.params,
+                                                                    state.agents.policy_states)
         
-        actions_id= jax.nn.one_hot(random.categorical(key_action, actions_logit * cfg.temperature, axis=-1), 4)
+            actions_id= jax.nn.one_hot(random.categorical(key_action, actions_logit * cfg.temperature, axis=-1), 4)
         
         acts = jnp.argmax(actions_id,axis=1)
-        agents= vmap_update_agents_position(agents,acts,cfg.n)
+        agents= vmap_update_agents_position(agents,acts,cfg.n) #update agents pos and ori
         
         pos = agents.position
         survives_int = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,survives_int)
