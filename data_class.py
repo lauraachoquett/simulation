@@ -49,6 +49,13 @@ class Config(NamedTuple):
     pca : int
     pop_res_prob : float
     temperature : int
+    random_pos_offspring : bool
+    dumb_agent : bool
+    
+    reproduction_on: bool = True
+    resources_growth : bool = True
+    letal_wall : bool = True
+    
 
 
 
