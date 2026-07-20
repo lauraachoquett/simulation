@@ -46,7 +46,8 @@ def get_single_obs(grid, loc, radius):
     obs = lax.dynamic_slice(padded_grid, (0, pos[0], pos[1]),
                             (n_channels, side, side))    
 
-    k = jnp.round(rot / (jnp.pi / 2)).astype(jnp.int32) % 4
+    k = (-jnp.round(rot / (jnp.pi / 2))).astype(jnp.int32) % 4
+
     variants = jnp.stack([
         obs,
         jnp.rot90(obs, 1, axes=(1, 2)),   
