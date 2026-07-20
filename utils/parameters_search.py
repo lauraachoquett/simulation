@@ -4,7 +4,7 @@ import logging
 import json
 import jax
 from simulation.run import launch_simulation_chunked
-from simulation.utils import outputs_to_numpy
+from simulation.utils.utils_sim import outputs_to_numpy
 
 def get_next_dir(base_path=".", prefix="try_"):
     """
@@ -45,7 +45,7 @@ def objective(trial, base_cfg, base_key,current_dir):
         raise optuna.TrialPruned(f"Erreur d'exécution: {e}")
 
     
-    pop_full = outputs_to_numpy(outputs.agents.alive).sum(axis=1)
+    pop_full = outputs_to_numpy(outputs.alive).sum(axis=1)
     
     final_pop = pop_full[-1] if len(pop_full) > 0 else 0
     pop_ratio = final_pop / trial_cfg.n_agents_max

@@ -10,7 +10,6 @@ import numpy as np
 
 def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200):
     grids = outputs.grid
-    agents = outputs.agents
 
     with VideoWriter(filename, fps=fps) as vid:
         for i in range(grids.shape[0]):
@@ -24,9 +23,9 @@ def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200):
             img[mask_res] = np.array([0.0, 1.0, 0.0])  # vert ressources
 
             # --- agents overlay ---
-            pos = np.array(agents.position[i])      # (n_agents, 2)
-            born = np.array(agents.born_step[i])    # (n_agents,)
-            alive = np.array(agents.alive[i])       # (n_agents,)
+            pos = np.array(outputs.position[i])      # (n_agents, 2)
+            born = np.array(outputs.born_step[i])    # (n_outputs,)
+            alive = np.array(outputs.alive[i])       # (n_agents,)
             step = int(outputs.step[i])
 
             age = step - born

@@ -11,7 +11,7 @@ from simulation.update_env import resources_growth
 from simulation.data_class import Config
 
 import numpy as np
-from simulation.utils_video import save_chunk_video
+from simulation.utils.utils_video import save_chunk_video
 import json
 from datetime import datetime
 import time
@@ -23,11 +23,11 @@ def init_state(key, cfg, model):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
     
-    position_res=random.randint(subkey_grid, (cfg.init_number_of_resources, 2), 0, cfg.n)
-    grid_resources = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
+    position_res=random.randint(subkey_grid, (cfg.init_number_of_resources, 2), 0, cfg.grid_length)
+    grid_resources = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_resources = grid_resources.at[position_res[:, 0], position_res[:, 1]].set(1)
     
-    grid_walls = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
+    grid_walls = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_walls = grid_walls.at[0,:].set(1)
     grid_walls = grid_walls.at[:,0].set(1)
     grid_walls = grid_walls.at[-1,:].set(1)
@@ -50,7 +50,7 @@ def init_state(key, cfg, model):
     
     # Création de l'objet AgentState
     agents = AgentState(
-        position=random.randint(sk_pos, (cfg.n_agents_max, 2), 1, cfg.n-1),
+        position=random.randint(sk_pos, (cfg.n_agents_max, 2), 1, cfg.grid_length-1),
         orientation=orientations_pool[idx_or],
         energy=jnp.ones((cfg.n_agents_max,))*cfg.starting_energy,
         time_under_min_energy=jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32),
@@ -62,8 +62,9 @@ def init_state(key, cfg, model):
         policy_states=policy_states
     )
 
+
     # 3. Grille d'occupation et observations
-    grid_agents = jnp.zeros((cfg.n, cfg.n), dtype=jnp.int32)
+    grid_agents = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_agents = grid_agents.at[agents.position[:, 0], agents.position[:, 1]].add(agents.alive)
     grid = jnp.stack((grid_resources, grid_agents,grid_walls))
     pos = agents.position
@@ -195,7 +196,7 @@ def classify_outcome(pop_full, res_full, cfg):
         return 'depletion'
     
     last_res = res_full[-n_chunks*cfg.chunk_size:]
-    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.n ** 2).all():
+    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.grid_length ** 2).all():
         return 'easy'
     
     return 'interesting'
