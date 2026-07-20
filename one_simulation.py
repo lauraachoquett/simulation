@@ -17,6 +17,21 @@ from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 
+from typing import NamedTuple
+import jax
+
+class StepLog(NamedTuple):
+    position:  jax.Array   # (N, 2)
+    alive:     jax.Array   # (N,)
+    time_under_min_energy :     jax.Array   # (N,)
+    energy:    jax.Array   # (N,)
+    parent_id: jax.Array   # (N,)  -> généalogie
+    born_step: jax.Array   # (N,)  -> généalogie / MRCA
+    actions:   jax.Array   # (N, 4) -> si besoin pour les vidéos
+    rewards:   jax.Array   # (N, 1) -> R0
+    grid:      jax.Array   # (3, L, L) -> si tes vidéos affichent la grille
+    step :     int
+    
 
 @partial(jax.jit, static_argnames=['cfg','model'])
 def run_simulation_chunk(state,model,keys, cfg):
@@ -45,27 +60,35 @@ def run_simulation_chunk(state,model,keys, cfg):
 
 
         # ------- 2. Movement and Physiological update -------
-        # Update position
-        if cfg.dumb_agent:
-            actions_id = jax.nn.one_hot(random.randint(key_action, shape=(), minval=0, maxval=4),4)
-        else : 
-            actions_logit, new_policy_states = model.get_actions(state, state.agents.params,
-                                                                    state.agents.policy_states)
-        
-            actions_id= jax.nn.one_hot(random.categorical(key_action, actions_logit * cfg.temperature, axis=-1), 4)
-        
-        acts = jnp.argmax(actions_id,axis=1)
-        agents= vmap_update_agents_position(agents,acts,cfg.n) #update agents pos and ori
+        actions_logit, new_policy_states = model.get_actions(
+            state, state.agents.params, state.agents.policy_states
+        )
+        if cfg.dumb_agent:  
+            actions_id = jax.nn.one_hot(
+                random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=4),
+                4,
+            )
+        else:
+            
+            actions_id = jax.nn.one_hot(
+                random.categorical(key_action, actions_logit  / cfg.temperature, axis=-1),
+                4,
+            )
+
+        acts = jnp.argmax(actions_id, axis=1)
+        agents= vmap_update_agents_position(agents,acts,cfg.grid_length) 
         
         pos = agents.position
-        survives_int = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,survives_int)
-        reproduces = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,reproduces)
+        
+        if cfg.letal_wall :
+            survives_int = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,survives_int)
+            reproduces = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,reproduces)
         
 
         # Compute intern energy : resource consumption - energy decay 
         local_resources = grid_resources[pos[:, 0], pos[:, 1]]
         rewards = local_resources * survives_int
-        new_energy = energies + rewards - cfg.energy_decay * jnp.where(acts==0,cfg.factor_energy_decay_not_moving,1)
+        new_energy = energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int
 
 
         # ------- 3. Environment dynamic -------
@@ -75,59 +98,76 @@ def run_simulation_chunk(state,model,keys, cfg):
         grid_resources = grid_resources * (1 - consumed)
 
         # Resources spread via convolution
-        grid_resources,_ = resources_growth((grid_resources,key_env),cfg)
-        grid_resources = jnp.where(grid_walls==1,0,grid_resources)
+        if cfg.resources_growth : 
+            grid_resources,_ = resources_growth((grid_resources,key_env),cfg)
+            grid_resources = jnp.where(grid_walls==1,0,grid_resources)
 
 
 
         # ------- 4. Reproduction -------
         # Compute the number of births (Number of parents VS Number free idx)
-        nb_parents = reproduces.sum()
-        nb_free_places = cfg.n_agents_max - survives.sum()
-        nb_births = jnp.minimum(nb_parents, nb_free_places)
-
-        free_idx = jnp.nonzero(survives == 0, size=cfg.n_agents_max, fill_value=0)[0]
-        sort_free_idx = jnp.sort(free_idx)
-        sort_free_idx_ordered = jnp.flip(sort_free_idx)
-
-        spawn_mask = jnp.arange(cfg.n_agents_max) < nb_births
-        free_indices = jnp.where(spawn_mask, sort_free_idx_ordered, 0)
-
-        all_potential_parents = jnp.nonzero(reproduces, size=cfg.n_agents_max, fill_value=0)[0]
-        parent_indices = jnp.where(spawn_mask, all_potential_parents, 0)
         
-        # Draw initial positions for the new borns
-        if cfg.random_pos_offspring:
-            new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=1, maxval=cfg.n-1)
-        else :
-            new_positions = pos[parent_indices,:]
+        if cfg.reproduction_on:
+            nb_parents = reproduces.sum()
+            nb_free_places = cfg.n_agents_max - survives.sum()
+            nb_births = jnp.minimum(nb_parents, nb_free_places)
+
+            free_idx = jnp.nonzero(survives == 0, size=cfg.n_agents_max, fill_value=0)[0]
+            sort_free_idx = jnp.sort(free_idx)
+            sort_free_idx_ordered = jnp.flip(sort_free_idx)
+
+            spawn_mask = jnp.arange(cfg.n_agents_max) < nb_births
+            free_indices = jnp.where(spawn_mask, sort_free_idx_ordered, 0)
+
+            all_potential_parents = jnp.nonzero(reproduces, size=cfg.n_agents_max, fill_value=0)[0]
+            parent_indices = jnp.where(spawn_mask, all_potential_parents, 0)
+            
+            # Draw initial positions for the new borns
+            if cfg.random_pos_offspring:
+                new_positions = random.randint(key_respawn, (cfg.n_agents_max, 2), minval=1, maxval=cfg.grid_length-1)
+            else :
+                new_positions = pos[parent_indices,:]
 
 
-        # ------- 5. Global update -------
-        # Put new born in the state with their initial state
-        final_pos = pos.at[free_indices].set(new_positions)
-        final_energy = new_energy.at[free_indices].set(1.0)
-        final_time_under = new_time_under.at[free_indices].set(0)
-        final_time_over = new_time_over.at[free_indices].set(0)
-        final_alive = survives_int.at[free_indices].set(1)
-        final_parent_id = agents.parent_id.at[free_indices].set(parent_indices)
-        final_born_step = agents.born_step.at[free_indices].set(step_idx)
-        
-        final_alive_without_0 = final_alive.at[0].set(0)
-        
-        key_child_param_mutate,key_params = random.split(key_mut)
-        
-        parameters_to_mutate = random.bernoulli(key_child_param_mutate, p=cfg.param_mutate, shape=(cfg.n_agents_max, agents.params.shape[1])).astype(jnp.int32)
-        
-        mutation = cfg.mutation_var * random.normal(key_params, shape=(cfg.n_agents_max, agents.params.shape[1]))
-        final_params = agents.params.at[free_indices].set(
-                    agents.params[parent_indices] +mutation*parameters_to_mutate)
-        
-        final_policy_states =metaRNNPolicyState_bcppr(
-                lstm_h=new_policy_states.lstm_h.at[free_indices].set(jnp.zeros(new_policy_states.lstm_h.shape[1])),
-                lstm_c=new_policy_states.lstm_c.at[free_indices].set(jnp.zeros(new_policy_states.lstm_c.shape[1])),
-                keys=new_policy_states.keys)
+            # ------- 5. Global update -------
+            # Put new born in the state with their initial state
+            final_pos = pos.at[free_indices].set(new_positions)
+            final_energy = new_energy.at[free_indices].set(1.0)
+            final_time_under = new_time_under.at[free_indices].set(0)
+            final_time_over = new_time_over.at[free_indices].set(0)
+            final_alive = survives_int.at[free_indices].set(1)
+            final_parent_id = agents.parent_id.at[free_indices].set(parent_indices)
+            final_born_step = agents.born_step.at[free_indices].set(step_idx)
+            
+            final_alive_without_0 = final_alive.at[0].set(0)
+            
+            key_child_param_mutate,key_params = random.split(key_mut)
+            
+            parameters_to_mutate = random.bernoulli(key_child_param_mutate, p=cfg.param_mutate, shape=(cfg.n_agents_max, agents.params.shape[1])).astype(jnp.int32)
+            number_of_parameters_mutating = parameters_to_mutate.sum(axis=1)
+            
+            mutation = cfg.mutation_var * random.normal(key_params, shape=(cfg.n_agents_max, agents.params.shape[1]))
+            final_params = agents.params.at[free_indices].set(
+                        agents.params[parent_indices] +mutation*parameters_to_mutate)
+            
+            final_policy_states =metaRNNPolicyState_bcppr(
+                    lstm_h=new_policy_states.lstm_h.at[free_indices].set(jnp.zeros(new_policy_states.lstm_h.shape[1])),
+                    lstm_c=new_policy_states.lstm_c.at[free_indices].set(jnp.zeros(new_policy_states.lstm_c.shape[1])),
+                    keys=new_policy_states.keys)
 
+        else : 
+            final_pos= pos
+            final_energy = new_energy
+            final_time_under = new_time_under
+            final_time_over = new_time_over
+            final_alive = survives_int
+            final_parent_id = agents.parent_id
+            final_born_step = agents.born_step
+            final_alive_without_0 = final_alive.at[0].set(0)
+            final_policy_states = new_policy_states
+            final_params = agents.params
+            
+            
         # Update spatial grid with agents positions
         grid_agents = jnp.zeros_like(grid_resources, dtype=jnp.int32)
         grid_agents = grid_agents.at[final_pos[:, 0], final_pos[:, 1]].add(final_alive_without_0)
@@ -147,7 +187,6 @@ def run_simulation_chunk(state,model,keys, cfg):
         new_grid = jnp.stack((grid_resources, grid_agents,grid_walls))
         obs = get_obs_vector(new_grid, (final_pos, new_agents.orientation), cfg.agent_view)
 
-
         
         new_state = SimState(
             grid=new_grid,
@@ -158,10 +197,21 @@ def run_simulation_chunk(state,model,keys, cfg):
             rewards=jnp.expand_dims(rewards, 1).astype(jnp.float32)
         )
         
-        return new_state, state
-
+        log = StepLog(
+            position=state.agents.position,
+            alive=state.agents.alive,
+            energy=state.agents.energy,
+            parent_id=state.agents.parent_id,
+            born_step=state.agents.born_step,
+            actions=state.last_actions,
+            rewards=state.rewards,
+            grid=state.grid,    # retire-le si tes vidéos n'en ont pas besoin
+            step = step_idx,
+            time_under_min_energy = state.agents.time_under_min_energy
+        )
+        
+        return new_state, log
     state_final, outputs = lax.scan(step, state, keys)
 
     return state_final, outputs
-
 
