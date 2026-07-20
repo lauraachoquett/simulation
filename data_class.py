@@ -27,34 +27,53 @@ class SimState:
     
 
 class Config(NamedTuple):
-    n: int
-    init_number_of_resources: int
-    energy_decay: float
-    n_agents_max: int
-    n_agents_init: int
-    time_to_die: int
-    time_above_repr: int
-    min_energy_repr:float
-    prob_factor :int
-    pre_growth_step : int
-    mutation_var : float
-    starting_energy : int
-    agent_view : int
+    grid_length : int
+    
+    ## Simulation computation :
     chunk_size : int
     num_chunks : int
     checkpoint_freq : int
     video_freq : int
-    param_mutate : float
-    factor_energy_decay_not_moving : float
-    pca : int
-    pop_res_prob : float
-    temperature : int
-    random_pos_offspring : bool
-    dumb_agent : bool
+    pca_save_freq : int
     
+    # AGENTS # 
+    n_agents_max: int
+    n_agents_init: int
+    agent_view : int
+    temperature : float #Temperature in the Categorical operation
+    
+    ## Physiologie
+    energy_decay: float
+    factor_energy_decay_not_moving : float
+
+    time_to_die: int
+    time_above_repr: int
+    min_energy_repr:float
+    starting_energy : int
+    random_pos_offspring : bool
+    
+    ## Mutation parameters
+    mutation_var : float
+    param_mutate : float
+    
+    # Random agents action
+    
+    # RESOURCES #
+    prob_factor :int
+    pop_res_prob : float
+    
+     # INIT RESOURCES MAP
+    pre_growth_step : int
+    init_number_of_resources: int
+    
+    
+    dumb_agent : bool = False
+    
+    # Lab env paramaeters
     reproduction_on: bool = True
     resources_growth : bool = True
     letal_wall : bool = True
+    energy_to_die : float = 0.0
     
 
 
