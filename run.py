@@ -206,10 +206,10 @@ if __name__ =='__main__':
             #Physiologie
             energy_decay=0.07/4,
             factor_energy_decay_not_moving = 0.4,
-            energy_max = 8.0,
+            energy_max = 10.0,
             
             time_to_die=70*4,
-            time_above_repr = 60*3.75,
+            time_above_repr = 60*4,
             min_energy_repr = 4.,
             starting_energy= 1.0,
             
@@ -218,11 +218,11 @@ if __name__ =='__main__':
             param_mutate = 0.9,
             
             # RESOURCES : 
-            prob_factor = 0.065/1.25,
+            prob_factor = 0.065/0.5,
             pop_res_prob = 0.000001,
             
             # INIT RESOURCES MAP
-            pre_growth_step = 3000,
+            pre_growth_step = 1000,
             init_number_of_resources=1,
             random_pos_offspring = False,
             dumb_agent = False,
@@ -237,7 +237,7 @@ if __name__ =='__main__':
     
 
 
-    seed = 53
+    seed = 4
     
     key = random.PRNGKey(seed)
     
