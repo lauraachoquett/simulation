@@ -88,7 +88,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         # Compute intern energy : resource consumption - energy decay 
         local_resources = grid_resources[pos[:, 0], pos[:, 1]]
         rewards = local_resources * survives_int
-        new_energy = energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int
+        new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int, cfg.energy_max)
 
 
         # ------- 3. Environment dynamic -------

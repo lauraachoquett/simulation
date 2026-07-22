@@ -45,6 +45,7 @@ class Config(NamedTuple):
     ## Physiologie
     energy_decay: float
     factor_energy_decay_not_moving : float
+    energy_max : float
 
     time_to_die: int
     time_above_repr: int

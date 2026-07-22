@@ -205,7 +205,8 @@ if __name__ =='__main__':
             
             #Physiologie
             energy_decay=0.07/4,
-            factor_energy_decay_not_moving = 0.3,
+            factor_energy_decay_not_moving = 0.4,
+            energy_max = 8.0,
             
             time_to_die=70*4,
             time_above_repr = 60*3.5,
