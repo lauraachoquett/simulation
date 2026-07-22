@@ -3,16 +3,11 @@ from collections import defaultdict
 
 
 def r0_by_birth_window(node_children, oldest_alive_birth, window):
-    """R_0 par fenêtre de naissance, uniquement sur cohortes éteintes.
-       node_children : dict {(idx, born_step): set(enfants)}
-       oldest_alive_birth : born_step min parmi les agents encore vivants
-       window : largeur de la fenêtre (en steps)
-    """
     num = defaultdict(int)   # somme des descendants
     den = defaultdict(int)   # taille de cohorte
     for (idx, born), children in node_children.items():
         wk = born // window
-        if (wk + 1) * window <= oldest_alive_birth:   # cohorte éteinte
+        if (wk + 1) * window <= oldest_alive_birth:   
             num[wk] += len(children)
             den[wk] += 1
     return {wk: num[wk] / den[wk] for wk in den}       # {index_fenêtre: R_0}
@@ -24,22 +19,6 @@ from matplotlib.ticker import FuncFormatter
 
 
 def plot_r0(r0_by_window, window, exp_dir=None, smooth_w=0, fname="r0_evolution.png"):
-    """Trace l'evolution du taux de reproduction net R_0.
-
-    Parameters
-    ----------
-    r0_by_window : dict {int -> float}
-        Sortie de r0_by_birth_window : cle = indice de fenetre (born // window),
-        valeur = R_0 de la cohorte nee dans cette fenetre.
-    window : int
-        Largeur de fenetre en pas de simulation (pour convertir indice -> temps).
-    exp_dir : str or None
-        Si fourni, sauvegarde la figure dans ce dossier.
-    smooth_w : int
-        Largeur de la moyenne glissante (0 = desactivee). Impair conseille.
-    fname : str
-        Nom du fichier de sortie.
-    """
     if not r0_by_window:
         return None
 

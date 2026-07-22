@@ -4,14 +4,7 @@ import plotly.graph_objects as go
 import os 
 import glob
 from functools import reduce
-
-def find_root(node, node_parent):
-    seen = set()
-    while node_parent.get(node) is not None and node not in seen:
-        seen.add(node)
-        node = node_parent[node]
-    return node
-
+from simulation.genealogy.genealogy import find_root
 
 def make_depth_fn(node_parent):
     """g(node) = nb d'arêtes depuis la racine, mémoïsé. O(N) au total."""

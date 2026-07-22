@@ -9,7 +9,7 @@ Recombine les quatre mixins thématiques en un seul objet partageant un unique
 
 import numpy as np
 
-from simulation.plots import (
+from simulation.utils.plots import (
     plot_evolution,
     plot_phase_portrait_png,
     plot_mean_movement,

@@ -8,8 +8,8 @@ de la simulation.
 import os
 import numpy as np
 
-from simulation.plots import compute_mean_movement_chunk, compute_lifetime_chunk
-from simulation.utils import classify_outcome
+from simulation.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
+from simulation.utils.utils_sim import classify_outcome
 
 
 class DemographyMixin:

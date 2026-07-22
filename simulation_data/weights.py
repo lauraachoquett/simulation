@@ -26,7 +26,7 @@ import numpy as np
 import jax
 from jax.flatten_util import ravel_pytree
 
-from simulation.genealogy.pca import find_root
+from simulation.genealogy.genealogy import find_root
 from simulation.utils.plots import plots_metrics_weight_distance
 
 
@@ -140,7 +140,7 @@ def _segment_noise(L, p, sigma, n_flat, rng, dtype):
 
 def neutral_drift_groups(alive_nodes, node_parent, unravel_batch,
                          mutation_sigma, param_mutate, n_flat,
-                         seed=0, dtype=np.float32):
+                         seed=0, dtype=np.float32, cache=None):
     """Contrôle neutre, réduit EXACTEMENT comme les données réelles.
 
     On propage un vecteur de poids fictifs de taille `n_flat` (la vraie taille
@@ -200,8 +200,15 @@ def neutral_drift_groups(alive_nodes, node_parent, unravel_batch,
                 last_kept, L = node, 0
 
     # --- 3. propagation (order est déjà racine -> feuilles) -------------------
-    disp = {}
+    # `cache` persiste d'un chunk à l'autre : un nœud déjà simulé conserve son
+    # déplacement. Sans lui, chaque chunk serait un tirage indépendant et la
+    # courbe neutre sauterait d'un point à l'autre, alors que le processus réel
+    # est continu (les poids d'un agent dérivent de ceux du chunk précédent).
+    # Seuls les nœuds nouveaux sont tirés ; le tronc partagé reste figé.
+    disp = {} if cache is None else cache
     for node in order:
+        if node in disp:
+            continue
         par, L = reduced[node]
         disp[node] = (np.zeros(n_flat, dtype=dtype) if par is None
                       else disp[par] + _segment_noise(L, p, sigma, n_flat, rng, dtype))
@@ -210,6 +217,14 @@ def neutral_drift_groups(alive_nodes, node_parent, unravel_batch,
     flat   = np.stack([disp[n] for n in alive_nodes]).astype(np.float64)
     struct = unravel_batch(flat)
     dist_g = _group_reduce(_dist_per_layer(struct))
+
+    # Élagage : on ne garde que les nœuds encore utiles. Les lignées éteintes
+    # ne reviendront jamais, donc la mémoire reste en O(M * n_flat) au lieu de
+    # croître sur toute la durée du run.
+    if cache is not None:
+        keep_nodes = set(order)
+        for n in [k for k in cache if k not in keep_nodes]:
+            del cache[n]
 
     return {g: (float(v.mean()), float(v.std())) for g, v in dist_g.items()}
 
@@ -228,6 +243,7 @@ class WeightsMixin:
         self.n_unresolved   = []     # naissances du dernier pas, non rattachées
         self.founder_params = None
         self._unravel       = None
+        self._neutral_cache = {}     # nœud -> déplacement neutre, persiste entre chunks
 
     def register_founders(self, state, model_policy):
         _, self._unravel = ravel_pytree(model_policy.params['params'])
@@ -354,7 +370,9 @@ class WeightsMixin:
             alive_nodes, self.node_parent, unravel_batch,
             mutation_sigma=self.cfg.mutation_var,
             param_mutate=self.cfg.param_mutate,
-            n_flat=params.shape[1]))
+            n_flat=params.shape[1],
+            seed=len(self.weight_neutral),      # évite de rejouer les mêmes tirages
+            cache=self._neutral_cache))         # continuité temporelle
 
     # ---------------------------------------------------------------------- #
     def plot_weight_metrics(self, exp_dir, x_axis="step"):
