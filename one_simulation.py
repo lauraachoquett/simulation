@@ -31,6 +31,7 @@ class StepLog(NamedTuple):
     rewards:   jax.Array   # (N, 1) -> R0
     grid:      jax.Array   # (3, L, L) -> si tes vidéos affichent la grille
     step :     int
+    obs :      jax.Array
     
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -207,7 +208,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             rewards=state.rewards,
             grid=state.grid,    # retire-le si tes vidéos n'en ont pas besoin
             step = step_idx,
-            time_under_min_energy = state.agents.time_under_min_energy
+            time_under_min_energy = state.agents.time_under_min_energy,
+            obs=state.obs,
         )
         
         return new_state, log
