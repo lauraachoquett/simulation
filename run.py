@@ -5,11 +5,11 @@ os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
+from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils import init_state,load_checkpoint,save_checkpoint
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint
 from simulation.simulation_data.core import simulation_data
 
 import multiprocessing as mp
@@ -190,7 +190,7 @@ if __name__ =='__main__':
             grid_length=200,
 
             ### Simulation computation :
-            chunk_size = 2000,
+            chunk_size = 1000,
             num_chunks = 1000,
             checkpoint_freq = 50,
             video_freq = 50,
@@ -209,16 +209,16 @@ if __name__ =='__main__':
             energy_max = 8.0,
             
             time_to_die=70*4,
-            time_above_repr = 60*3.5,
+            time_above_repr = 60*3.75,
             min_energy_repr = 4.,
             starting_energy= 1.0,
             
             # Mutation parameters
             mutation_var = 0.02,
-            param_mutate = 0.8,
+            param_mutate = 0.9,
             
             # RESOURCES : 
-            prob_factor = 0.065/1.5,
+            prob_factor = 0.065/1.25,
             pop_res_prob = 0.000001,
             
             # INIT RESOURCES MAP
