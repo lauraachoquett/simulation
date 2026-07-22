@@ -1,0 +1,159 @@
+"""COURBE DE RÉPONSE ÉNERGÉTIQUE
+
+Question : quand une ressource est dans le champ de vision, l'agent la mange-t-il ?
+Et cette propension dépend-elle de son niveau d'énergie ?
+
+Pour chaque pas t où l'agent VOIT une ressource (event conditionnant) :
+  - x = energy[t]                          (son niveau d'énergie a cet instant)
+  - y = 1 si l'agent consomme dans [t, t+W], sinon 0   (le temps de marcher
+        jusqu'a la case ; W ~ rayon du champ de vision)
+On agrege par bin d'energie :@@
+
+  P(mange | voit, E in bin) = (# events avec y=1) / (# events du bin)@
+                            = k_bin / n_bin@
+
+C'est une courbe de reponse comportementale : E bas + P haut = l'agent se jette
+sur la nourriture quand il a faim. P plat = comportement independant de la faim.
+
+--------------------------------------------------------------------------
+PREREQUIS : obs=state.obs dans StepLog (cf. patch greediness), sinon "voir" et
+"manger" sont desalignes.
+--------------------------------------------------------------------------
+"""
+
+import os
+import json
+import numpy as np
+
+
+ENERGY_EAT_WINDOW = 5     # W : pas apres l'observation ou la consommation compte
+
+
+def _resource_in_view(obs):
+    """(T, N) booleen : au moins une ressource dans le champ de vision.
+    Identique au helper du bloc greediness — si lab.py le definit deja, importe
+    le sien et supprime cette copie. Canal 0 = ressources ; padding -1 ecarte
+    par le test > 0."""
+    o = np.asarray(obs)
+    if o.ndim == 5:                      # (T, N, 3, side, side)
+        return (o[:, :, 0] > 0).any(axis=(2, 3))
+    if o.ndim == 4:                      # (T, N, 3, k)
+        return (o[:, :, 0] > 0).any(axis=2)
+    if o.ndim == 3:                      # (T, N, 3*k) aplati
+        k = o.shape[2] // 3
+        return (o[:, :, :k] > 0).any(axis=2)
+    raise ValueError(f"forme d'obs inattendue : {o.shape}")
+
+
+def default_energy_bins(cfg):
+    """Bins fixes ancres aux seuils physiques (comparables entre chunks).
+      e_die = energy_to_die (0)     -> frontiere letale
+      e_rep = min_energy_repr (4)   -> seuil de reproduction
+    Resolution fine entre les deux (la ou la decision est interessante),
+    grossiere au-dela. Modifie cette fonction pour changer le decoupage."""
+    e_die = float(cfg.energy_to_die)
+    e_rep = float(cfg.min_energy_repr)
+    return np.array([-np.inf, e_die,
+                     e_die + 0.25 * (e_rep - e_die),
+                     e_die + 0.50 * (e_rep - e_die),
+                     e_die + 0.75 * (e_rep - e_die),
+                     e_rep,
+                     e_rep + 0.5 * (e_rep - e_die),
+                     e_rep + 1.5 * (e_rep - e_die),
+                     np.inf])
+
+
+def _ate_within_window(ate_col, window):
+    """ate_col (L,) booleen -> ateW (L,) : y a-t-il consommation dans [t, t+W] ?
+    OU glissant sur les W pas suivants, par decalages successifs (W petit)."""
+    ateW = ate_col.copy()
+    for d in range(1, window + 1):
+        ateW[:-d] |= ate_col[d:]
+    return ateW
+
+
+def energy_response_accumulate(saw, ate_step, energy, slot, birth_row, death_row,
+                               bins, window=ENERGY_EAT_WINDOW):
+    """Accumule (n, k) par bin d'energie sur tous les events "ressource vue".
+      n[b] = nb de pas ou une ressource est vue, energie dans le bin b
+      k[b] = parmi ceux-la, nb ou l'agent mange dans [t, t+W]
+    Retourne (n, k), tableaux (n_bins,)."""
+    n_bins = len(bins) - 1
+    n = np.zeros(n_bins, dtype=np.int64)
+    k = np.zeros(n_bins, dtype=np.int64)
+
+    for e in range(slot.size):
+        s, lo, hi = slot[e], int(birth_row[e]), int(death_row[e])
+        if hi < lo:
+            continue
+        saw_col = saw[lo:hi + 1, s]                      # (L,)
+        if not saw_col.any():
+            continue
+        ateW = _ate_within_window(ate_step[lo:hi + 1, s], window)
+        e_col = energy[lo:hi + 1, s]
+
+        idx    = np.where(saw_col)[0]                    # pas ou une ressource est vue
+        e_seen = e_col[idx]
+        y_seen = ateW[idx]                               # a mange dans la fenetre
+
+        b = np.digitize(e_seen, bins) - 1                # bin de chaque event
+        b = np.clip(b, 0, n_bins - 1)
+        np.add.at(n, b, 1)
+        np.add.at(k, b, y_seen.astype(np.int64))
+    return n, k
+
+
+def energy_response_over_envs(outputs_lab, cfg, bins=None, window=ENERGY_EAT_WINDOW,
+                              rew_lag=1):
+    """Accumule (bins, n, k) sur TOUS les agents de TOUS les environnements d'un
+    lab. Fonction libre : passe-lui outputs_lab (B, T, N, ...) et cfg.
+      n[b] = pas ou une ressource est vue, energie dans le bin b
+      k[b] = parmi eux, l'agent mange dans [t, t+window]
+    Pool sur toute la population -> une courbe P = k/n par lab."""
+    bins  = default_energy_bins(cfg) if bins is None else np.asarray(bins, float)
+    n_tot = np.zeros(len(bins) - 1, dtype=np.int64)
+    k_tot = np.zeros(len(bins) - 1, dtype=np.int64)
+
+    alive_all  = np.asarray(outputs_lab.alive)      # (B, T, N)
+    energy_all = np.asarray(outputs_lab.energy)     # (B, T, N)
+    obs_all    = np.asarray(outputs_lab.obs)
+    rew_all    = np.asarray(outputs_lab.rewards)    # (B, T, N) ou (B, T, N, 1)
+    if rew_all.ndim == 4 and rew_all.shape[-1] == 1:
+        rew_all = rew_all[..., 0]
+
+    B = alive_all.shape[0]
+    for b in range(B):
+        saw = _resource_in_view(obs_all[b])                 # (T, N)
+        ate = np.zeros_like(saw, dtype=bool)                # consommation alignee
+        if rew_lag > 0:
+            ate[:-rew_lag] = rew_all[b, rew_lag:] > 0
+        else:
+            ate = rew_all[b] > 0
+
+        alive, energy = alive_all[b], energy_all[b]
+        for s in range(alive.shape[1]):
+            idx = np.where(alive[:, s] == 1)[0]             # intervalle vivant du slot
+            if idx.size == 0:
+                continue
+            nb, kb = energy_response_accumulate(
+                saw, ate, energy,
+                np.array([s]), np.array([idx[0]]), np.array([idx[-1]]),
+                bins, window)
+            n_tot += nb
+            k_tot += kb
+    return bins, n_tot, k_tot
+
+
+def _wilson(k, n, z=1.96):
+    """Intervalle de Wilson 95% pour une proportion k/n. Mieux que l'intervalle
+    normal quand p est proche de 0 ou 1 ou quand n est petit (ne sort jamais
+    de [0, 1]). Retourne (p, lo, hi), NaN si n = 0."""
+    n = np.asarray(n, float)
+    k = np.asarray(k, float)
+    p = np.divide(k, n, out=np.full_like(n, np.nan), where=n > 0)
+    denom  = 1 + z**2 / n
+    center = (p + z**2 / (2 * n)) / denom
+    half   = (z / denom) * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
+    lo = np.where(n > 0, center - half, np.nan)
+    hi = np.where(n > 0, center + half, np.nan)
+    return p, lo, hi

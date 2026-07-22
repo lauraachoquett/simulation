@@ -24,8 +24,95 @@ from jax import random
 
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
-                            plot_alone_vs_clones, plot_lab_energy)
+                            plot_alone_vs_clones, plot_lab_energy,plot_energy_response)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy
+from simulation.simulation_data.energy_response import (default_energy_bins,
+                                        energy_response_over_envs,
+                                        ENERGY_EAT_WINDOW)
+
+ 
+GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
+REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
+#   Une fois `obs=state.obs` applique dans StepLog :
+#     log.obs[t]     = observation sur laquelle l'agent DECIDE au pas t
+#     log.rewards[t] = recompense gagnee au pas t-1
+#   donc la recompense qui SUIT l'observation du pas t est log.rewards[t+1].
+ 
+ 
+def _resource_in_view(obs):
+    """(T, N) booleen : au moins une ressource dans le champ de vision.
+    obs par agent = dynamic_slice du grid padde -> (3, side, side), canal 0 =
+    ressources (grid = stack(resources, agents, walls)). Le padding hors-grille
+    vaut -1, donc le test > 0 l'ecarte. Une rotation du champ ne change rien :
+    c'est une permutation des memes cases et on ne fait qu'un any()."""
+    o = np.asarray(obs)
+    if o.ndim == 5:                      # (T, N, 3, side, side)
+        return (o[:, :, 0] > 0).any(axis=(2, 3))
+    if o.ndim == 4:                      # (T, N, 3, k)
+        return (o[:, :, 0] > 0).any(axis=2)
+    if o.ndim == 3:                      # (T, N, 3*k) aplati
+        k = o.shape[2] // 3
+        return (o[:, :, :k] > 0).any(axis=2)
+    raise ValueError(f"forme d'obs inattendue : {o.shape}")
+ 
+ 
+def _greediness(saw, ate, slot, birth_row, death_row, window=GREED_WINDOW):
+    """G = Cr / Tr sur des fenetres non chevauchantes de `window` pas.
+      Tr = fenetres vecues ou l'agent voit >= 1 ressource
+      Cr = fenetres PARMI CELLES-LA ou il en consomme >= 1
+    Cr etant compte parmi Tr, G est dans [0, 1] par construction.
+    Fenetres alignees sur le rollout (t // window) : en lab tous les agents
+    naissent au pas 0, donc elles sont comparables entre agents.
+    G = NaN si Tr = 0 (jamais rien vu -> la question ne se pose pas)."""
+    T, E  = saw.shape[0], slot.size
+    n_win = int(np.ceil(T / window))
+    G  = np.full(E, np.nan)
+    Tr = np.zeros(E, dtype=int)
+    Cr = np.zeros(E, dtype=int)
+    for e in range(E):
+        s, lo, hi = slot[e], int(birth_row[e]), int(death_row[e])
+        if hi < lo:
+            continue
+        rows = np.arange(lo, hi + 1)
+        w    = rows // window
+        seen_w = np.zeros(n_win, dtype=bool)
+        ate_w  = np.zeros(n_win, dtype=bool)
+        seen_w[w[saw[rows, s]]] = True
+        ate_w[w[ate[rows, s]]]  = True
+        tr = int(seen_w.sum())
+        cr = int((seen_w & ate_w).sum())
+        Tr[e], Cr[e] = tr, cr
+        if tr > 0:
+            G[e] = cr / tr
+    return G, Tr, Cr
+ 
+ 
+def _clean(a):
+    """Retire les NaN avant _dispersion (agents pour qui la mesure est indefinie)."""
+    a = np.asarray(a, dtype=float)
+    return a[~np.isnan(a)]
+
+# =====================================================================
+#  À PLACER AU NIVEAU MODULE — avant "class LabMixin:"
+#  (fonction libre, pas une méthode : elle ne prend pas self)
+# =====================================================================
+def _dispersion(arr, prefix, empty=0.0):
+    """Statistiques de position ET de dispersion pour une mesure.
+    On stocke a la fois std, min/max et quartiles : les quantiles sont des
+    valeurs OBSERVEES, donc toujours dans le support de la mesure (jamais de
+    duree de vie negative), contrairement a moy ± std."""
+    keys = ("moy", "std", "min", "max", "p25", "p50", "p75")
+    if arr.size == 0:
+        return {f"{prefix}_{k}": empty for k in keys}
+    return {
+        f"{prefix}_moy": float(arr.mean()),
+        f"{prefix}_std": float(arr.std()),
+        f"{prefix}_min": float(arr.min()),
+        f"{prefix}_max": float(arr.max()),
+        f"{prefix}_p25": float(np.percentile(arr, 25)),
+        f"{prefix}_p50": float(np.percentile(arr, 50)),
+        f"{prefix}_p75": float(np.percentile(arr, 75)),
+    }
 
 
 
@@ -45,8 +132,9 @@ class LabMixin:
             agent_params, key_env, key_sim, model, self.cfg)
         agg, summary = self.data_lab_env(outputs_lab=outputs_high)
         self._save_lab_data(agg, summary, exp_dir)
-        self._print_and_plot_lab_summary(summary, exp_dir)
-        self._plot_energy(outputs_high, exp_dir, "lab_1",                     # <== NOUVEAU
+        
+        plot_lab_metrics(exp_dir=exp_dir)
+        self._plot_energy(outputs_high, exp_dir, "high_res",                     # <== NOUVEAU
                           "lab_1 — high_res (agent alone)")
 
         vid = os.path.join(exp_dir, "videos", f"high_res_video_chunk_{self.chunk_idx+1}_lab_0.mp4")
@@ -59,8 +147,9 @@ class LabMixin:
             agent_params, key_env, key_sim, model, self.cfg)
         agg_low, summary_low = self.data_lab_env_low_res(outputs_low)                # <== NOUVEAU
         self._save_lab_data(agg_low, summary_low, exp_dir, suffix="lowres")          # fichiers séparés
-        self._print_and_plot_low_res(summary_low, exp_dir)                          # <== NOUVEAU
-        self._plot_energy(outputs_low, exp_dir, "lab_2",                            # <== NOUVEAU
+
+        plot_lab_exploration(exp_dir=exp_dir)
+        self._plot_energy(outputs_low, exp_dir, "low_res",                            # <== NOUVEAU
                           "lab_2 — low_res (exploration)")
 
         for b in range(3):
@@ -72,37 +161,17 @@ class LabMixin:
             agent_params, key_env, key_sim, model, self.cfg)
         # comparaison APPARIÉE avec l'env high_res (mêmes génomes, même ordre) :
         self.compare_alone_vs_clones(outputs_high, outputs_clones, exp_dir)          # <== NOUVEAU
-        self._plot_energy(outputs_clones, exp_dir, "lab_3",                          # <== NOUVEAU
+        self._plot_energy(outputs_clones, exp_dir, "high_res_clones",                          # <== NOUVEAU
                           "lab_3 — high_res with clones")
 
+        self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
         for b in range(3):
             vid = os.path.join(exp_dir, "videos", f"high_res_clones_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
             _video_worker(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10)
 
 
 
-    def _print_and_plot_lab_summary(self, summary, exp_dir):
-        print(f"\n--- Lab chunk {self.chunk_idx+1} | {summary['n_morts']} morts sur  {summary['n_agents']} agents ---")
-        if summary["n_morts"] == 0:
-            print("  (aucune mort sur ce rollout)")
-            return
-        print(f"  durée de vie moy.   : {summary['duree_vie_moy']:8.2f} pas")
-        print(f"  consommation moy.   : {summary['consommation_moy']:8.4f} /pas")
-        print(f"  mouvement moy.      : {summary['mouvement_moy']:8.4f} /pas")
-        print(f"  morts par mur       : {summary['frac_mort_mur']:8.2%}")
-        plot_lab_metrics(exp_dir=exp_dir)
 
-    # ---------- NOUVEAU : résumé + plot exploration (low_res) ----------
-    def _print_and_plot_low_res(self, summary, exp_dir):
-        print(f"\n--- Lab low_res chunk {summary['chunk']} | exploration ---")
-        print(f"  found food          : {summary['frac_found_food']:8.2%} des agents")
-        if not np.isnan(summary["explore_time_moy"]):
-            print(f"  time to 1st resource: {summary['explore_time_moy']:8.2f} "
-                  f"± {summary['explore_time_std']:.2f} pas  "
-                  f"(médiane {summary['explore_time_med']:.1f})")
-        plot_lab_exploration(exp_dir=exp_dir)
-
-    # ---------- NOUVEAU : énergie(t) pour 10 agents d'un lab ----------
     def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=10):
         """Sauve exp_dir/energy/<lab_dir>/chunk_<N>_agent_<b>.png pour les
         n_envs premiers génomes (les survivants sont déjà triés). Un sous-graphe
@@ -130,6 +199,10 @@ class LabMixin:
         with open(os.path.join(data_dir, f"{tag}_summary.json"), "w") as f:
             json.dump({k: float(v) for k, v in summary.items()}, f, indent=2)
 
+
+   # =================================================================
+    #  INCHANGÉ
+    # =================================================================
     def _per_agent_metrics(self, outputs):
             """Métriques par agent, alignées par événement de fin de vie
             (mort OU survie jusqu'au dernier pas = censure à droite).
@@ -143,45 +216,45 @@ class LabMixin:
                 rew = rew[..., 0]
             time_under_min_energy = np.asarray(outputs.time_under_min_energy)  # (T, N)
             energy = np.asarray(outputs.energy)        # (T, N)
-
+ 
             T = alive.shape[0]
-
+ 
             # 1) Morts : transition t -> t+1
             a_t, a_tp1 = alive[:-1], alive[1:]
             b_t, b_tp1 = born[:-1],  born[1:]
             death_event = (a_t == 1) & ((a_tp1 == 0) | (b_tp1 != b_t))   # (T-1, N)
             d_row, d_slot = np.where(death_event)                        # dernière ligne vivant
-
+ 
             # 2) Survivants : vivants à la dernière ligne (censurés à droite)
             s_slot = np.where(alive[-1] == 1)[0]
             s_row  = np.full(s_slot.shape, T - 1, dtype=int)
-
+ 
             # 3) Fusion morts + survivants + drapeau
             t_row = np.concatenate([d_row,  s_row])
             slot  = np.concatenate([d_slot, s_slot])
             died  = np.concatenate([np.ones(d_row.shape, bool),
                                     np.zeros(s_slot.shape, bool)])       # True = mort
-
+ 
             if t_row.size == 0:
                 return None
-
+ 
             # 4) Naissance, durée de vie (marche pour les deux cas)
             b_dead    = born[t_row, slot]
             birth_row = (b_dead - step[0]).astype(int)
             death_row = t_row
             age       = step[t_row] - b_dead        # survivant : step[T-1] - born = durée totale
-
+ 
             # somme inclusive sur [lo, hi] par différence de cumsum (capture slot)
             def window_sum(cum, lo, hi):
                 hi_v = cum[hi, slot]
                 lo_v = np.where(lo >= 0, cum[np.clip(lo, 0, None), slot], 0.0)
                 return hi_v - lo_v
-
+ 
             # 5) Consommation (grandeur "par état") -> fenêtre [birth_row, death_row]
             cum_rew   = np.cumsum(rew, axis=0)                          # (T, N)
             total_rew = window_sum(cum_rew, birth_row - 1, death_row)
             mean_rew  = total_rew / (age + 1)          # age+1 = nb de lignes vécues
-
+ 
             # 6) Mouvement (grandeur "par transition") -> fenêtre [birth_row, death_row-1]
             delta = pos[1:] - pos[:-1]                                  # (T-1, N, 2)
             mag   = np.sqrt((delta ** 2).sum(axis=-1))                 # (T-1, N)
@@ -189,13 +262,13 @@ class LabMixin:
             total_move = window_sum(cum_mag, birth_row - 1, np.clip(death_row - 1, 0, None))
             total_move = np.where(age > 0, total_move, 0.0)
             mean_speed = np.where(age > 0, total_move / age, 0.0)
-
+ 
             # 7) Cause de mort "par mur" (famine exclue) : n'a de sens que pour les morts
             seuil          = self.cfg.time_to_die
             wall_death_raw = (time_under_min_energy[death_row, slot] < seuil - 1)
             wall_death     = wall_death_raw & died                     # False pour un survivant
             energy_end     = energy[death_row, slot]                   # (D,) aligné sur les événements
-
+ 
             # 8) Exploration : temps jusqu'à la 1re ressource mangée
             #    t_explore = min{ t in [birth_row, death_row] : rew[t, slot] > 0 } - birth_row
             #    NaN si l'agent n'a jamais mangé (censuré : pas trouvé de ressource).
@@ -206,7 +279,17 @@ class LabMixin:
             ever_ate  = ate.any(axis=0)                               # (E,)
             first_r   = np.where(ever_ate, ate.argmax(axis=0), -1)    # 1re ligne positive
             t_explore = np.where(ever_ate, first_r - birth_row, np.nan)  # (E,)
-
+ 
+            # 9) Greediness : G = Cr / Tr sur des fenetres de GREED_WINDOW pas
+            saw = _resource_in_view(outputs.obs)               # (T, N)
+            ate_step = np.zeros_like(saw, dtype=bool)          # consommation alignee
+            if REWARD_LAG > 0:
+                ate_step[:-REWARD_LAG] = rew[REWARD_LAG:] > 0
+            else:
+                ate_step = rew > 0
+            greediness, greed_Tr, greed_Cr = _greediness(
+                saw, ate_step, slot, birth_row, death_row)
+            
             return {
                 "slot":       slot,        # (slot, born) pour recroiser avec la généalogie
                 "born":       b_dead,
@@ -218,15 +301,22 @@ class LabMixin:
                 "wall_death": wall_death,  # True = mort par mur ; False si survivant
                 "energy_end": energy_end,  # énergie au dernier pas vivant
                 "died":       died,        # True = mort, False = survivant (censuré)
-                "t_explore":  t_explore,   # délai avant 1re ressource (NaN si jamais)  <== NOUVEAU
-                "ever_ate":   ever_ate,    # True si l'agent a mangé au moins une fois  <== NOUVEAU
+                "t_explore":  t_explore,   # délai avant 1re ressource (NaN si jamais)
+                "ever_ate":   ever_ate,    # True si l'agent a mangé au moins une fois
+                "greediness": greediness,  # G = Cr / Tr (NaN si Tr = 0)      <== NOUVEAU
+                "greed_Tr":   greed_Tr,    # fenêtres avec ressource visible  <== NOUVEAU
+                "greed_Cr":   greed_Cr,    # fenêtres avec consommation       <== NOUVEAU
             }
-
+ 
+    # =================================================================
+    #  MODIFIÉ — _stat supprimé, remplacé par **_dispersion
+    # =================================================================
     def data_lab_env(self, outputs_lab):
         keys = ["age", "total_rew", "mean_rew", "total_move",
-                "mean_speed", "energy_end", "wall_death", "died"]
+                "mean_speed", "energy_end", "wall_death", "died",
+                "greediness"]                                  # <== NOUVEAU
         agg = {k: [] for k in keys}
-
+ 
         B = outputs_lab.alive.shape[0]          # nb d'environnements = nb d'agents testés
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
@@ -235,40 +325,35 @@ class LabMixin:
                 continue
             for k in keys:
                 agg[k].append(m[k])
-
+ 
         agg = {k: (np.concatenate(v) if v else np.array([])) for k, v in agg.items()}
-
+ 
         died    = agg["died"].astype(bool)
         n_morts = int(died.sum())
         n_surv  = int((~died).sum())
         n_mur   = int(agg["wall_death"].sum())             # déjà masqué par died
         n_faim  = n_morts - n_mur
-
-        def _stat(arr):
-            return (float(arr.mean()), float(arr.std())) if arr.size else (0.0, 0.0)
-
-        vie_m,   vie_s   = _stat(agg["age"])               # tous (survivants comptés à l'âge plein)
-        viem_m,  viem_s  = _stat(agg["age"][died])         # conditionnel : morts seulement
-        conso_m, conso_s = _stat(agg["mean_rew"])
-        mouv_m,  mouv_s  = _stat(agg["mean_speed"])
-
+ 
         summary = {
             "chunk":              self.chunk_idx + 1,
             "n_agents":           B,
             "n_morts":            n_morts,
             "n_survivants":       n_surv,
-            "duree_vie_moy":      vie_m,   "duree_vie_std":      vie_s,    # inclut les survivants
-            "duree_vie_mort_moy": viem_m,  "duree_vie_mort_std": viem_s,   # morts uniquement
-            "consommation_moy":   conso_m, "consommation_std":   conso_s,
-            "mouvement_moy":      mouv_m,  "mouvement_std":      mouv_s,
             "frac_mort_mur":      n_mur  / B,
             "frac_mort_faim":     n_faim / B,
             "frac_survie":        n_surv / B,              # mur + faim + survie = 1
+            # chaque appel étale 7 clés : _moy _std _min _max _p25 _p50 _p75
+            **_dispersion(agg["age"],        "duree_vie"),       # inclut les survivants
+            **_dispersion(agg["age"][died],  "duree_vie_mort"),  # morts uniquement
+            **_dispersion(agg["mean_rew"],   "consommation"),
+            **_dispersion(agg["mean_speed"], "mouvement"),
+            # G indéfini (NaN) pour les agents n'ayant jamais vu de ressource
+            **_dispersion(_clean(agg["greediness"]), "greediness", empty=float("nan")),
         }
         return agg, summary
-
+ 
     # =================================================================
-    #  NOUVEAU — A) EXPLORATION (env low_res)
+    #  MODIFIÉ — A) EXPLORATION (env low_res)
     # =================================================================
     def data_lab_env_low_res(self, outputs_lab):
         """Résumé de l'env 'low_res' (ressources fixes, non renouvelées).
@@ -279,7 +364,7 @@ class LabMixin:
                               mangé (sinon les NaN des censurés fausseraient tout).
         """
         B = outputs_lab.alive.shape[0]
-        t_explore, ever_ate = [], []
+        t_explore, ever_ate, greed = [], [], []
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
             m = self._per_agent_metrics(single)
@@ -287,24 +372,26 @@ class LabMixin:
                 continue
             t_explore.append(m["t_explore"])
             ever_ate.append(m["ever_ate"])
-
+            greed.append(m["greediness"])
+ 
         t_explore = np.concatenate(t_explore) if t_explore else np.array([])
         ever_ate  = np.concatenate(ever_ate).astype(bool) if ever_ate else np.array([], bool)
-
+        greed     = np.concatenate(greed) if greed else np.array([])
+ 
         found = t_explore[ever_ate]                       # temps de ceux qui ont mangé
         summary = {
             "chunk":            self.chunk_idx + 1,
-            "n_agents":         int(ever_ate.size),
-            "frac_found_food":  float(ever_ate.mean())     if ever_ate.size else 0.0,
-            "explore_time_moy": float(found.mean())        if found.size    else float("nan"),
-            "explore_time_std": float(found.std())         if found.size    else float("nan"),
-            "explore_time_med": float(np.median(found))    if found.size    else float("nan"),
+            "n_agents":         int(ever_ate.size),        # tous les agents testés
+            "n_found_food":     int(found.size),           # ceux retenus dans explore_time
+            "frac_found_food":  float(ever_ate.mean()) if ever_ate.size else 0.0,
+            **_dispersion(found, "explore_time", empty=float("nan")),
+            **_dispersion(_clean(greed), "greediness", empty=float("nan")),  # <== NOUVEAU
         }
-        agg = {"t_explore": t_explore, "ever_ate": ever_ate}
+        agg = {"t_explore": t_explore, "ever_ate": ever_ate, "greediness": greed}
         return agg, summary
-
+ 
     # =================================================================
-    #  NOUVEAU — B) EFFET DES PAIRS (env clones)
+    #  INCHANGÉ
     # =================================================================
     def data_lab_env_grouped(self, outputs_lab):
         """Réduit le comportement À L'INTÉRIEUR de chaque environnement.
@@ -312,15 +399,16 @@ class LabMixin:
         moyenne -> un seul profil comportemental par génome. Pour high_res
         (1 agent/env) la moyenne est triviale. Utiliser la MÊME fonction pour
         les deux garantit des définitions de métriques identiques.
-
+ 
         Retourne per_genome : dict de tableaux (B,), alignés par index de
         génome (même ordre que agent_params / key_sim).
         """
-        keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death", "died"]
+        keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
+                "died", "greediness"]                          # <== NOUVEAU
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)
-
+ 
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
             m = self._per_agent_metrics(single)
@@ -328,54 +416,68 @@ class LabMixin:
                 continue
             n_peers[b] = m["age"].size                     # nb de clones vivants
             for k in keys:
-                per_genome[k][b] = float(np.mean(m[k]))    # bool -> fraction
-
+                v = np.asarray(m[k], dtype=float)
+                # nanmean : greediness est indéfinie pour un clone n'ayant rien vu
+                per_genome[k][b] = float(np.nanmean(v)) if np.isfinite(v).any() else np.nan
+ 
         per_genome["n_peers"] = n_peers
         return per_genome
-
+ 
+    # =================================================================
+    #  MODIFIÉ — B) EFFET DES PAIRS (env clones)
+    # =================================================================
     def compare_alone_vs_clones(self, outputs_alone, outputs_clones, exp_dir):
         """Compare, PAR GÉNOME, le comportement SEUL (high_res) vs EN GROUPE
         (clones). Les deux rollouts partagent agent_params/key_env/key_sim dans
         le même ordre -> tableaux alignés par génome -> comparaison APPARIÉE :
-
+ 
             delta[g] = comportement_clones[g] - comportement_seul[g]
-
-        delta.mean() isole l'effet moyen des pairs à génome fixé (élimine la
+ 
+        La médiane de delta isole l'effet des pairs à génome fixé (élimine la
         variance inter-génomes)."""
         a = self.data_lab_env_grouped(outputs_alone)
         c = self.data_lab_env_grouped(outputs_clones)
-
-        metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death"]
+ 
+        metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
+                   "greediness"]                               # <== NOUVEAU
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
-                   "wall_death": "fraction wall deaths"}
-
+                   "wall_death": "fraction wall deaths",
+                   "greediness": "greediness G = Cr/Tr"}
+ 
         table = {}
         for k in metrics:
             mask  = ~(np.isnan(a[k]) | np.isnan(c[k]))     # génomes valides des 2 côtés
             delta = c[k][mask] - a[k][mask]
-            table[k] = {
-                "alone_moy":  float(np.nanmean(a[k])) if np.isfinite(a[k]).any() else float("nan"),
-                "clones_moy": float(np.nanmean(c[k])) if np.isfinite(c[k]).any() else float("nan"),
-                "delta_moy":  float(delta.mean()) if delta.size else float("nan"),
-                "delta_std":  float(delta.std())  if delta.size else float("nan"),
-                "n":          int(mask.sum()),
-            }
-
-        # affichage
+            row = {"n": int(mask.sum())}
+            row.update(_dispersion(a[k][mask], "alone",  empty=float("nan")))
+            row.update(_dispersion(c[k][mask], "clones", empty=float("nan")))
+            row.update(_dispersion(delta,      "delta",  empty=float("nan")))
+            table[k] = row
+ 
+        # affichage : médianes + IQR de l'effet apparié
         print(f"\n--- Lab chunk {self.chunk_idx+1} | ALONE vs CLONES (peers effect) ---")
-        print(f"  {'metric':<22}{'alone':>10}{'clones':>10}{'Δ (peers)':>14}")
+        print(f"  {'metric':<22}{'alone':>10}{'clones':>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
-            print(f"  {labels[k]:<22}{r['alone_moy']:>10.3f}{r['clones_moy']:>10.3f}"
-                  f"{r['delta_moy']:>10.3f}±{r['delta_std']:.2f}")
-
+            print(f"  {labels[k]:<22}{r['alone_p50']:>10.3f}{r['clones_p50']:>10.3f}"
+                  f"{r['delta_p50']:>11.3f}"
+                  f"{'[' + format(r['delta_p25'], '.3f') + ', ' + format(r['delta_p75'], '.3f') + ']':>20}")
+ 
         # sauvegarde json (une entrée par chunk -> suivi de l'évolution)
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
         with open(os.path.join(data_dir, f"chunk_{self.chunk_idx+1}_alone_vs_clones.json"), "w") as f:
             json.dump(payload, f, indent=2)
-
+ 
         plot_alone_vs_clones(exp_dir=exp_dir)
         return table
+    
+    def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
+        curves = {
+            "lab_1 high_res": energy_response_over_envs(out_high,   self.cfg),
+            "lab_2 low_res":  energy_response_over_envs(out_low,    self.cfg),
+            "lab_3 clones":   energy_response_over_envs(out_clones, self.cfg),
+        }
+        plot_energy_response(exp_dir, self.chunk_idx + 1, curves, cfg=self.cfg)

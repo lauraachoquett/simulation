@@ -8,6 +8,9 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
+import glob 
+import json
+import re 
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
 
@@ -488,41 +491,93 @@ def plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width=10, nam
     os.makedirs(path_save_fig, exist_ok=True)
     fig.write_html(os.path.join(path_save_fig, f'plot_life_exp_{name_fig}.html'))
     
-import glob 
-import re
-import json
-       
+
+
+
+# =====================================================================
+#  Bande de dispersion — remplace moy ± std
+# =====================================================================
+BAND = "iqr"          # "minmax" | "iqr" | "std"   <- change ici partout
+
+
+
+def _get(S, prefix, key, fallback=None):
+    """Lecture tolerante : les resumes ecrits AVANT l'ajout des quantiles n'ont
+    que moy/std. Cle absente -> NaN (bande non tracee), avec repli optionnel
+    sur une autre cle pour la ligne centrale (on garde l'historique)."""
+    out = []
+    for s in S:
+        v = s.get(f"{prefix}_{key}")
+        if v is None and fallback is not None:
+            v = s.get(f"{prefix}_{fallback}")
+        out.append(np.nan if v is None else float(v))
+    return np.array(out, dtype=float)
+ 
+ 
+def _band(S, prefix, band=None):
+    """Retourne (centre, bas, haut) pour tracer une mesure au fil des chunks.
+ 
+      "minmax" : enveloppe totale [min, max]  — jamais hors du support, mais
+                 s'elargit mecaniquement avec le nombre d'agents.
+      "iqr"    : [p25, p75], 50% central      — borne ET stable avec n.
+      "std"    : moy ± 1σ                     — peut sortir du support.
+ 
+    Le centre est la MEDIANE pour minmax/iqr (coherent avec des quantiles,
+    robuste aux queues), la moyenne pour std. Sur un chunk trop ancien pour
+    avoir les quantiles, le centre retombe sur la moyenne.
+    """
+    band = band or BAND
+    if band == "std":
+        m = _get(S, prefix, "moy")
+        return m, m - _get(S, prefix, "std"), m + _get(S, prefix, "std")
+    m = _get(S, prefix, "p50", fallback="moy")
+    if band == "iqr":
+        return m, _get(S, prefix, "p25"), _get(S, prefix, "p75")
+    return m, _get(S, prefix, "min"), _get(S, prefix, "max")
+ 
+ 
+def _plot_band(ax, x, S, prefix, color="C0", label="median", band=None):
+    m, lo, hi = _band(S, prefix, band)
+    ok = ~np.isnan(m)
+    if ok.any():
+        ax.plot(x[ok], m[ok], marker="o", color=color, label=label)
+    okb = ~(np.isnan(lo) | np.isnan(hi))          # chunks sans quantiles : pas de bande
+    if okb.any():
+        ax.fill_between(x[okb], lo[okb], hi[okb], alpha=0.22, color=color,
+                        label={"std": "±1σ", "iqr": "p25–p75"}.get(band or BAND, "min–max"))
+    return m
+ 
+ 
 def plot_lab_metrics(exp_dir):
+    """Évolution des métriques du lab 1 (high_res) chunk après chunk."""
     data_dir = os.path.join(exp_dir, "lab_data")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_summary.json")),
-                key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
-    files = [f for f in files                                   # <== AJOUT
-            if re.fullmatch(r"chunk_\d+_summary\.json", os.path.basename(f))]
+                   key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
+    files = [f for f in files                       # exclut les résumés low_res
+             if re.fullmatch(r"chunk_\d+_summary\.json", os.path.basename(f))]
     if not files:
         print("No summary to plot.")
         return
-
+ 
     S = [json.load(open(f)) for f in files]
     x = np.array([s["chunk"] for s in S])
-
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
-
-    # Trois mesures avec moyenne ± 1σ
+ 
+    fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True)
+ 
     specs = [
-        (axes[0, 0], "duree_vie_moy",    "duree_vie_std",    "Lifespan",     "steps"),
-        (axes[0, 1], "consommation_moy", "consommation_std", "Mean intake",  "/step"),
-        (axes[1, 0], "mouvement_moy",    "mouvement_std",    "Mean motion",  "/step"),
+        (axes[0, 0], "duree_vie",    "Lifespan",              "steps"),
+        (axes[0, 1], "consommation", "Mean intake",           "/step"),
+        (axes[0, 2], "mouvement",    "Mean motion",           "/step"),
+        (axes[1, 0], "greediness",   "Greediness  G = Cr/Tr", "ratio"),
     ]
-    for ax, km, ks, title, unit in specs:
-        m  = np.array([s[km] for s in S])
-        sd = np.array([s[ks] for s in S])
-        ax.plot(x, m, marker="o", color="C0", label="mean")
-        ax.fill_between(x, m - sd, m + sd, alpha=0.25, color="C0", label="±1σ")
+    for ax, prefix, title, unit in specs:
+        _plot_band(ax, x, S, prefix)
         ax.set_title(title)
         ax.set_ylabel(unit)
         ax.grid(alpha=0.3)
-
-    # Mortalité : deux fractions empilables, sans écart-type
+    axes[1, 0].set_ylim(0, 1)          # G est un ratio borne
+ 
+    # Mortalité : fractions, pas de dispersion (ce sont deja des proportions)
     ax = axes[1, 1]
     mur  = np.array([s["frac_mort_mur"]  for s in S])
     faim = np.array([s["frac_mort_faim"] for s in S])
@@ -533,18 +588,19 @@ def plot_lab_metrics(exp_dir):
     ax.set_ylim(0, 1)
     ax.grid(alpha=0.3)
     ax.legend(loc="best")
-
-    for ax in axes[-1]:
+ 
+    axes[1, 2].axis("off")             # 6e case libre
+    for ax in axes.ravel():
         ax.set_xlabel("chunk")
     axes[0, 0].legend(loc="best")
-
+ 
     fig.tight_layout()
     out = os.path.join(data_dir, "lab_metrics_evolution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
-
-
+ 
+ 
 def plot_lab_exploration(exp_dir):
     """Évolution de l'EXPLORATION (env low_res) chunk après chunk.
     Deux panneaux :
@@ -558,41 +614,43 @@ def plot_lab_exploration(exp_dir):
     if not files:
         print("No low_res summary to plot.")
         return
-
+ 
     S = [json.load(open(f)) for f in files]
     x = np.array([s["chunk"] for s in S])
-
-    frac = np.array([s["frac_found_food"]  for s in S])
-    tm   = np.array([s["explore_time_moy"] for s in S], dtype=float)
-    ts   = np.array([s["explore_time_std"] for s in S], dtype=float)
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharex=True)
-
+ 
+    frac = np.array([s["frac_found_food"] for s in S])
+ 
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
+ 
     axes[0].plot(x, frac, marker="o", color="C2")
     axes[0].set_title("Fraction of agents that found food")
     axes[0].set_ylabel("fraction")
     axes[0].set_ylim(0, 1)
     axes[0].grid(alpha=0.3)
-
-    valid = ~np.isnan(tm)                      # chunks où au moins un agent a mangé
-    axes[1].plot(x[valid], tm[valid], marker="o", color="C0", label="mean")
-    axes[1].fill_between(x[valid], (tm - ts)[valid], (tm + ts)[valid],
-                         alpha=0.25, color="C0", label="±1σ")
+ 
+    _plot_band(axes[1], x, S, "explore_time")
     axes[1].set_title("Time to first resource (exploration)")
+ 
+    _plot_band(axes[2], x, S, "greediness")
+    axes[2].set_title("Greediness  G = Cr/Tr")
+    axes[2].set_ylabel("ratio")
+    axes[2].set_ylim(0, 1)
+    axes[2].grid(alpha=0.3)
+    axes[2].legend(loc="best")
     axes[1].set_ylabel("steps")
     axes[1].grid(alpha=0.3)
     axes[1].legend(loc="best")
-
+ 
     for ax in axes:
         ax.set_xlabel("chunk")
-
+ 
     fig.tight_layout()
     out = os.path.join(data_dir, "lab_exploration_evolution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
-
-
+ 
+ 
 def plot_alone_vs_clones(exp_dir):
     """Évolution de l'EFFET DES PAIRS (env clones) chunk après chunk.
     Un sous-graphe par métrique : comportement de l'agent SEUL (high_res) vs
@@ -605,39 +663,38 @@ def plot_alone_vs_clones(exp_dir):
     if not files:
         print("No alone_vs_clones data to plot.")
         return
-
+ 
     P = [json.load(open(f)) for f in files]
     x = np.array([p["chunk"] for p in P])
-
-    metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death"]
+ 
+    metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
+               "greediness"]
     titles  = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",
                "mean_speed": "Movement /step", "energy_end": "Final energy",
-               "wall_death": "Fraction wall deaths"}
-
+               "wall_death": "Fraction wall deaths",
+               "greediness": "Greediness  G = Cr/Tr"}
+ 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=True)
     axes = axes.ravel()
-
+ 
     for ax, k in zip(axes, metrics):
-        alone  = np.array([p["metrics"][k]["alone_moy"]  for p in P], dtype=float)
-        clones = np.array([p["metrics"][k]["clones_moy"] for p in P], dtype=float)
-        dstd   = np.array([p["metrics"][k]["delta_std"]  for p in P], dtype=float)
-        ax.plot(x, alone,  marker="o", color="C0", label="alone")
-        ax.plot(x, clones, marker="s", color="C1", label="clones (mean of peers)")
-        ax.fill_between(x, clones - dstd, clones + dstd, alpha=0.20, color="C1")
+        Sk = [p["metrics"][k] for p in P]        # une entrée par chunk
+        _plot_band(ax, x, Sk, "alone",  color="C0", label="alone")
+        _plot_band(ax, x, Sk, "clones", color="C1", label="clones (median of peers)")
         ax.set_title(titles[k])
         ax.grid(alpha=0.3)
         ax.set_xlabel("chunk")
-
-    axes[0].legend(loc="best")
-    axes[-1].axis("off")            # 6e case vide (5 métriques)
-
+ 
+    axes[0].legend(loc="best")      # 6 métriques : la grille 2x3 est pleine
+ 
     fig.suptitle("Focal agent alone vs among identical clones", y=1.0)
     fig.tight_layout()
     out = os.path.join(data_dir, "lab_alone_vs_clones_evolution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
-
+ 
+ 
 # =====================================================================
 #  NOUVEAU — ENERGIE AU COURS DU TEMPS (les 3 labs)
 #  Necessite en tete de plots.py :
@@ -743,6 +800,9 @@ def plot_lab_energy(energy, alive, exp_dir, lab_dir, chunk,
             ax.grid(alpha=.25)
  
         handles = [
+            Line2D([], [], color="#2e7d4f", lw=2, label=f"E $\\geq$ {min_energy_repr:g} (repr. threshold)"),
+            Line2D([], [], color="#7f8c8d", lw=2, label="intermediate"),
+            Line2D([], [], color="#c0392b", lw=2, label=f"E < {energy_to_die:g} (lethal)"),
             Line2D([], [], color="#146b34", lw=2.0, dashes=(6, 3), label=f"reproduction reached ({time_above_repr:g} steps above)"),
             Line2D([], [], color="#c77d0a", lw=1.1, dashes=(2, 2), label="dropped below before threshold"),
         ]
@@ -755,20 +815,7 @@ def plot_lab_energy(energy, alive, exp_dir, lab_dir, chunk,
         fig.savefig(os.path.join(out_dir, f"chunk_{chunk}_agent_{b:02d}.png"), dpi=130)
         plt.close(fig)
     print(f"Energy plots saved: {out_dir}")
-    
-"""À intégrer dans simulation/plots.py
-(remplace plots_metrics_weight_magnitude_distance).
-
-`neutral` est désormais, comme `dist_list`, une liste de {groupe: (mean, std)} :
-chaque bloc a sa propre référence neutre, parce que la chaîne de réduction
-(moyenne par couche puis moyenne non pondérée sur les couches du groupe) ne
-produit pas la même dispersion selon la taille et le nombre de couches.
-"""
-
-import os
-
-import numpy as np
-import matplotlib.pyplot as plt
+ 
 
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
@@ -859,8 +906,10 @@ def plots_metrics_weight_distance(dist_list, exp_dir, steps,
         ax.set_title(g, fontsize=11)
         ax.grid(alpha=0.3)
         ax.set_ylim(bottom=0)
-        if not show_origin:
-            ax.set_xlim(left=float(np.nanmin(x)))
+        # Axe démarré à 0 alors que la donnée démarre à la coalescence : le vide
+        # à gauche est informatif, il montre quelle part du run s'est écoulée
+        # avant que la mesure ne devienne définissable.
+        ax.set_xlim(left=0)
         if i == 0:
             ax.legend(loc="upper left", fontsize=8)
 
@@ -918,6 +967,7 @@ def plots_weight_selection(dist_list, neutral, exp_dir, steps, gen_depth=None,
 
     for ax in axes:
         ax.set_xlabel(xlab)
+        ax.set_xlim(left=0)
         ax.grid(alpha=0.3, which="both")
         ax.legend(loc="best", fontsize=8)
 
@@ -927,6 +977,21 @@ def plots_weight_selection(dist_list, neutral, exp_dir, steps, gen_depth=None,
     plt.close(fig)
     print(f"Figure saved: {out}")
 
+
+
+def _wilson(k, n, z=1.96):
+    """Intervalle de Wilson 95% pour une proportion k/n. Mieux que l'intervalle
+    normal quand p est proche de 0 ou 1 ou quand n est petit (ne sort jamais
+    de [0, 1]). Retourne (p, lo, hi), NaN si n = 0."""
+    n = np.asarray(n, float)
+    k = np.asarray(k, float)
+    p = np.divide(k, n, out=np.full_like(n, np.nan), where=n > 0)
+    denom  = 1 + z**2 / n
+    center = (p + z**2 / (2 * n)) / denom
+    half   = (z / denom) * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
+    lo = np.where(n > 0, center - half, np.nan)
+    hi = np.where(n > 0, center + half, np.nan)
+    return p, lo, hi
 
 def plot_generation_rate(steps, gen_depth, gen_depth_std, exp_dir,
                          fname="generation_rate.png"):
@@ -957,6 +1022,59 @@ def plot_generation_rate(steps, gen_depth, gen_depth_std, exp_dir,
 
     fig.tight_layout()
     out = os.path.join(exp_dir, "fig", fname)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+    
+# =====================================================================
+#  NOUVEAU — COURBE DE RÉPONSE ÉNERGÉTIQUE  P(mange | voit, E)
+#  Necessite en tete de plots.py :
+#      from simulation.energy_response import _wilson
+# =====================================================================
+def plot_energy_response(exp_dir, chunk, curves, cfg=None, fname=None):
+    """curves : dict {label: (bins, n, k)} — une entree par lab.
+    Trace P(mange | ressource vue) par bin d'energie, avec bande de Wilson 95%.
+    Sous-panneau : effectif n par bin (la ou n est faible, P est peu fiable)."""
+    import matplotlib.pyplot as plt
+ 
+    fig, (ax, axn) = plt.subplots(2, 1, figsize=(9, 6), sharex=True,
+                                  gridspec_kw={"height_ratios": [3, 1]})
+    colors = {}
+    for i, (label, (bins, n, k)) in enumerate(curves.items()):
+        c = f"C{i}"
+        colors[label] = c
+        centers = 0.5 * (np.asarray(bins[:-1], float) + np.asarray(bins[1:], float))
+        # remplace les bords infinis par un centre lisible
+        if not np.isfinite(centers[0]):
+            centers[0] = bins[1] - 0.5 * (bins[2] - bins[1])
+        if not np.isfinite(centers[-1]):
+            centers[-1] = bins[-2] + 0.5 * (bins[-2] - bins[-3])
+        p, lo, hi = _wilson(k, n)
+        ok = n > 0
+        ax.plot(centers[ok], p[ok], marker="o", color=c, label=label)
+        ax.fill_between(centers[ok], lo[ok], hi[ok], alpha=0.20, color=c)
+        axn.plot(centers[ok], n[ok], marker=".", color=c)
+ 
+    # seuils physiques
+    if cfg is not None:
+        ax.axvline(cfg.energy_to_die,   color="#c0392b", ls=":", lw=1, alpha=.8)
+        ax.axvline(cfg.min_energy_repr, color="#2e7d4f", ls=":", lw=1, alpha=.8)
+ 
+    ax.set_ylabel("P(eats | resource in view)")
+    ax.set_ylim(0, 1)
+    ax.set_title(f"Response to a visible resource vs energy — chunk {chunk}")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="best", fontsize=8)
+ 
+    axn.set_ylabel("# events")
+    axn.set_xlabel("energy at the moment the resource is seen")
+    axn.set_yscale("log")
+    axn.grid(alpha=0.3)
+ 
+    fig.tight_layout()
+    data_dir = os.path.join(exp_dir, "lab_data")
+    os.makedirs(data_dir, exist_ok=True)
+    out = os.path.join(data_dir, fname or f"chunk_{chunk}_energy_response.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
