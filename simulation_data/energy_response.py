@@ -156,4 +156,4 @@ def _wilson(k, n, z=1.96):
     half   = (z / denom) * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
     lo = np.where(n > 0, center - half, np.nan)
     hi = np.where(n > 0, center + half, np.nan)
-    return p, lo, hi
+    return p, lo, hi 

@@ -2,6 +2,11 @@ from flax import struct
 from typing import Any
 import jax.numpy as jnp
 from typing import NamedTuple
+import numpy as np
+import matplotlib.colors as mcolors
+
+LABELS = ("good", "medium", "poison")     # id 0, 1, 2
+COLOR_BY_ID = {0: "#2A9131", 1: "#3933F35E", 2: "#9C27B0"}
 
 @struct.dataclass
 class AgentState:
@@ -26,6 +31,23 @@ class SimState:
     rewards: jnp.ndarray
     
 
+
+@struct.dataclass
+@struct.dataclass
+class ResourceConfig:
+    init_number_of_resources: int
+    prob_factor: float
+    pop_res_prob: float
+    delta_energy: float
+    id: int = 0            
+
+
+BASE_RESOURCES = (
+    ResourceConfig(init_number_of_resources=30, prob_factor=0.065/0.75, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
+    ResourceConfig(init_number_of_resources=20, prob_factor=0.065/0.5,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
+    ResourceConfig(init_number_of_resources=15,  prob_factor=0.065/10,   pop_res_prob=4e-5, delta_energy=-1.0, id=2),
+)
+    
 class Config(NamedTuple):
     grid_length : int
     
@@ -57,19 +79,14 @@ class Config(NamedTuple):
     mutation_var : float
     param_mutate : float
     
-    # Random agents action
     
-    # RESOURCES #
-    prob_factor :int
-    pop_res_prob : float
-    
-     # INIT RESOURCES MAP
+    # INIT RESOURCES MAP
     pre_growth_step : int
-    init_number_of_resources: int
     
-    
+    # Random agents action
     dumb_agent : bool = False
     
+    resources: tuple  = BASE_RESOURCES
     # Lab env paramaeters
     reproduction_on: bool = True
     resources_growth : bool = True

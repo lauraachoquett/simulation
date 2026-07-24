@@ -11,14 +11,15 @@ from matplotlib.lines import Line2D
 import glob 
 import json
 import re 
+from simulation.data_class import COLOR_BY_ID,LABELS
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
 
-def plot_evolution(pop_history, res_history, exp_dir,start_step=0):
-    plot_evolution_png(pop_history, res_history, exp_dir,start_step=start_step)
-    plot_evolution_html(pop_history, res_history, exp_dir,start_step=start_step)
+def plot_evolution(pop_history, res_history, exp_dir,resources,start_step=0):
+    plot_evolution_png(pop_history, res_history, exp_dir,resources,start_step=start_step)
+    plot_evolution_html(pop_history, res_history, exp_dir,resources,start_step=start_step)
 
-def plot_evolution_png(pop_history, res_history, exp_dir,start_step=0):
+def plot_evolution_png(pop_history, res_history, exp_dir,resources,start_step=0):
     """Plot population and resource dynamics over time."""
     generations = np.arange(start_step,start_step+len(pop_history))
 
@@ -32,10 +33,21 @@ def plot_evolution_png(pop_history, res_history, exp_dir,start_step=0):
     ax_evo_agents.grid(True, alpha=0.3)
 
     ax_evo_res = ax_evo_agents.twinx()
-    color_res = 'tab:green'
-    ax_evo_res.set_ylabel('Resources amount', color=color_res)
-    ax_evo_res.plot(generations, res_history, color=color_res, linewidth=2, label='Resources')
-    ax_evo_res.tick_params(axis='y', labelcolor=color_res)
+    ax_evo_res.set_ylabel('Resources amount', color='tab:green')
+
+    res = np.asarray(res_history)          # (T, n_types)
+    if res.ndim == 1:                      # rétro-compat si une seule courbe
+        res = res[:, None]
+    n_types = res.shape[1]
+
+    ids = [r.id for r in resources]
+    colors = [COLOR_BY_ID[id] for id in ids]
+
+    for k in range(n_types):
+        ax_evo_res.plot(generations, res[:, k], color=colors[k],
+                        linewidth=2, label=f'{LABELS[ids[k]]}')     # nom = identité, pas position
+    ax_evo_res.tick_params(axis='y', labelcolor='tab:green')
+    ax_evo_res.legend(loc='upper right')
 
     ax_evo_agents.set_title('Simulation dynamic')
 
@@ -47,14 +59,19 @@ def plot_evolution_png(pop_history, res_history, exp_dir,start_step=0):
 
 from matplotlib.collections import LineCollection
 
-def plot_phase_portrait_png(pop_history, res_history, exp_dir, start_step=0,
+def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0,
                             fixed_point=None):
-    """Phase portrait: trajectory (resources, population) colored by time."""
-    if len(pop_history)<2000:
+    if len(pop_history) < 2000:
         return
-    R = np.asarray(res_history)[2000:]
+
+    res     = np.asarray(res_history)                      # (T, n_types)
+    delta_e = np.array([r.delta_energy for r in cfg.resources])
+    good    = np.where(delta_e > 0)[0]
+    R_full  = res[:, good].sum(axis=1)                     # (T,) total bonnes ressources
+
+    R = R_full[2000:]
     N = np.asarray(pop_history)[2000:]
-    start_step=2000
+    start_step = 2000
     steps = np.arange(start_step, start_step + len(N))
 
     # Segments consécutifs pour colorer la ligne par le temps
@@ -91,16 +108,9 @@ def plot_phase_portrait_png(pop_history, res_history, exp_dir, start_step=0,
     plt.savefig(os.path.join(path_save_fig, 'plot_phase.png'))
     plt.close()
     
-
-def plot_several_sim_seeds(output_seeds,cfg,exp_dir):
-    n_sims = output_seeds.grid.shape[0]
-    for i in range(n_sims):
-        outputs_i = jax.tree_util.tree_map(lambda x: x[i], output_seeds)
-        plot_evolution_png(outputs_i,exp_dir,name_fig =f'seed_{i}')
-        
             
 
-def plot_evolution_html(pop_history, res_history, exp_dir, start_step=0):
+def plot_evolution_html(pop_history, res_history, exp_dir, resources,start_step=0):
     """Plot population and resource dynamics over time."""
     generations = np.arange(start_step, start_step + len(pop_history))
 
@@ -109,10 +119,20 @@ def plot_evolution_html(pop_history, res_history, exp_dir, start_step=0):
         go.Scatter(x=generations, y=pop_history, name='Agents', line=dict(color='red', width=2)),
         secondary_y=False,
     )
-    fig.add_trace(
-        go.Scatter(x=generations, y=res_history, name='Ressources', line=dict(color='green', width=2)),
-        secondary_y=True,
-    )
+    res = np.asarray(res_history)
+    if res.ndim == 1:
+        res = res[:, None]
+    n_types = res.shape[1]
+
+    ids = [r.id for r in resources]
+    colors = [f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
+          for r, g, b, a in (mcolors.to_rgba(COLOR_BY_ID[i]) for i in ids)]
+    for k in range(n_types):
+        fig.add_trace(
+            go.Scatter(x=generations, y=res[:, k], name=f'{LABELS[ids[k]]}',
+                       line=dict(color=colors[k], width=2)),
+            secondary_y=True,
+        )
     fig.update_xaxes(title_text='Steps')
     fig.update_yaxes(title_text='Population size', secondary_y=False,
                      title_font=dict(color='red'), tickfont=dict(color='red'))
@@ -125,25 +145,34 @@ def plot_evolution_html(pop_history, res_history, exp_dir, start_step=0):
     fig.write_html(os.path.join(path_save_fig, f'plot_evo.html'))
 
 
-def plot_current_config(current_grid_res, grid_walls,pos, alive, exp_dir, name_fig='sim'):
-    plot_current_config_png(current_grid_res, grid_walls,pos, alive, exp_dir, name_fig)
+def plot_current_config(current_grid_res, grid_walls,pos, alive, exp_dir, resources,name_fig='sim'):
+    plot_current_config_png(current_grid_res, grid_walls,pos, alive, exp_dir,resources, name_fig)
 
-def plot_current_config_png(current_grid_res,grid_walls, pos, alive, exp_dir, name_fig='sim'):
-    """Plot the initial grid configuration with agent positions."""
+def plot_current_config_png(current_grid_res, grid_walls, pos, alive, exp_dir, resources, name_fig='sim'):
     fig, ax = plt.subplots(figsize=(5, 5))
 
-    cmap_res = mcolors.ListedColormap(["white", "#4CAF50"])
-    ax.imshow(current_grid_res, cmap=cmap_res, vmin=0, vmax=1, interpolation="nearest")
+    res = np.asarray(current_grid_res)                    # (n_types, L, L)
+    n_types = res.shape[0]
 
-    walls = np.asarray(grid_walls)
-    walls_masked = np.ma.masked_where(walls != 1, walls)   # masque tout sauf les murs
-    cmap_walls = mcolors.ListedColormap(["black"])
-    ax.imshow(walls_masked, cmap=cmap_walls, vmin=1, vmax=1, interpolation="nearest")
+    # repli en grille de labels : 0 = vide, k+1 = type k
+    present = res.sum(axis=0) > 0                          # (L, L) : y a-t-il une ressource ?
+    label   = np.where(present, res.argmax(axis=0) + 1, 0)  # (L, L)
+
+    # une couleur par type (indice 0 = blanc = vide)
+    ids = [r.id for r in resources]
+    colors = [COLOR_BY_ID[id] for id in ids]
+    colors = ["white"] + colors
+    cmap_res = mcolors.ListedColormap(colors[:n_types + 1])
+
+    # bornes décalées de 0.5 -> chaque entier tombe au centre de sa couleur
+    ax.imshow(label, cmap=cmap_res, vmin=-0.5, vmax=n_types + 0.5,
+              interpolation="nearest")
+
     
     
     fig.canvas.draw()
     bbox = ax.get_window_extent()
-    grid_h, grid_w = current_grid_res.shape
+    _,grid_h, grid_w = current_grid_res.shape
     cell_px = min(bbox.width / grid_w, bbox.height / grid_h)
     cell_pts = cell_px * 72 / fig.dpi
 
@@ -297,27 +326,27 @@ def plot_full_genealogy_robust(outputs):
 
 ### MOVEMENT
 def compute_mean_movement_chunk(outputs, n):
-    """Compute mean movement magnitude (in cells) per step from a simulation chunk.
+    """Déplacement moyen (en cellules) par transition, moyenné sur les agents.
+    Ne compte QUE les vraies transitions intra-vie (même individu vivant aux 2 pas).
+    Grille bornée : pas de correction toroïdale."""
+    positions = np.array(outputs.position)   # (T, N, 2)
+    alive     = np.array(outputs.alive)      # (T, N)
+    born      = np.array(outputs.born_step)  # (T, N)
 
-    Returns an array of shape (chunk_size - 1,) — one value per step transition.
-    Handles toroidal wrap-around for a grid of size n.
-    """
-    positions = np.array(outputs.position)  # (T, N, 2)
-    alive = np.array(outputs.alive)          # (T, N)
+    delta     = positions[1:] - positions[:-1]           # (T-1, N, 2)
+    magnitude = np.sqrt((delta ** 2).sum(axis=-1))       # (T-1, N)
 
-    delta = positions[1:] - positions[:-1]  # (T-1, N, 2)
-    delta = np.where(delta > n // 2, delta - n, delta)
-    delta = np.where(delta < -(n // 2), delta + n, delta)
+    # même individu, vivant à t ET t+1  ->  exclut naissances, morts, recyclages
+    same = (alive[:-1] == 1) & (alive[1:] == 1) & (born[:-1] == born[1:])   # (T-1, N)
 
-    magnitude = np.sqrt(delta[:, :, 0] ** 2 + delta[:, :, 1] ** 2)  # (T-1, N)
-    alive_mask = alive[1:]  # (T-1, N)
-    n_alive = alive_mask.sum(axis=1)
-    mean_mov = np.where(n_alive > 0, (magnitude * alive_mask).sum(axis=1) / n_alive, 0.0)
-    return mean_mov  # (T-1,)
+    n_valid  = same.sum(axis=1)
+    mean_mov = np.where(n_valid > 0,
+                        (magnitude * same).sum(axis=1) / n_valid, 0.0)
+    return mean_mov   # (T-1,)
 
-def plot_mean_movement(mov_history, res_history,exp_dir, start_step=0, name_fig='sim'):
+def plot_mean_movement(mov_history, exp_dir, start_step=0, name_fig='sim'):
     plot_mean_movement_png(mov_history, exp_dir, start_step=start_step, name_fig=name_fig)
-    plot_mean_movement_html(mov_history, res_history,exp_dir, start_step=start_step, name_fig=name_fig)
+    plot_mean_movement_html(mov_history, exp_dir, start_step=start_step, name_fig=name_fig)
 
 def plot_mean_movement_png(mov_history, exp_dir, start_step=0, name_fig='sim'):
     """Plot mean movement of the population over time."""
@@ -336,7 +365,7 @@ def plot_mean_movement_png(mov_history, exp_dir, start_step=0, name_fig='sim'):
     plt.savefig(os.path.join(path_save_fig, f'plot_movement_{name_fig}.png'))
     plt.close()
 
-def plot_mean_movement_html(mov_history, res_history, exp_dir,
+def plot_mean_movement_html(mov_history, exp_dir,
                             start_step=0, name_fig='sim'):
     """Plot mean movement, points colored by resource presence."""
     steps = np.arange(start_step, start_step + len(mov_history))
@@ -346,7 +375,6 @@ def plot_mean_movement_html(mov_history, res_history, exp_dir,
         x=steps, y=mov_history,
         mode='markers',
         marker=dict(
-            color=res_history,            # tableau -> couleur par point
             colorscale='Viridis',
             showscale=True,
             size=5,
@@ -438,31 +466,37 @@ def plot_lifetime_vs_step_html(death_steps, lifetimes, exp_dir,cfg, name_fig='si
     
 ## LIFE EXPECTANCY
 def compute_life_expectancy(death_steps, lifetimes, bin_width=100):
-    """Espérance de vie par cohorte : regroupe par step de naissance
-    (largeur bin_width) et renvoie (centres, âge moyen à la mort, effectif)."""
+    """Médiane de survie par cohorte : regroupe par step de naissance
+    (largeur bin_width) et renvoie (centres, âge médian à la mort, effectif)."""
     death_steps = np.asarray(death_steps, dtype=float)
     lifetimes   = np.asarray(lifetimes, dtype=float)
     born        = death_steps - lifetimes
 
-    edges      = np.arange(born.min(), born.max() + bin_width, bin_width)
-    sum_age, _ = np.histogram(born, bins=edges, weights=lifetimes)   # Σ âges par bin
-    count,   _ = np.histogram(born, bins=edges)                      # effectif par bin
-    mean_age   = np.divide(sum_age, count,
-                           out=np.full(sum_age.shape, np.nan), where=count > 0)
-    centers    = 0.5 * (edges[:-1] + edges[1:])
-    return centers, mean_age, count
+    edges  = np.arange(born.min(), born.max() + bin_width, bin_width)
+    n_bins = len(edges) - 1
+    idx    = np.clip(np.digitize(born, edges) - 1, 0, n_bins - 1)   # bin de chaque individu
+
+    med_age = np.full(n_bins, np.nan)
+    count   = np.zeros(n_bins, dtype=int)
+    for b in range(n_bins):
+        vals = lifetimes[idx == b]
+        count[b] = vals.size
+        if vals.size:
+            med_age[b] = np.median(vals)
+
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, med_age, count
  
 def plot_life_expectancy(death_steps, lifetimes, exp_dir, bin_width=100, name_fig='sim'):
     plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width, name_fig)
     plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width, name_fig)
 
 def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10, name_fig='sim'):
-    centers, mean_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
-
+    centers, med_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
     _, ax = plt.subplots(figsize=(12, 4))
     ax.set_xlabel('Born step')
     ax.set_ylabel('Life expectancy (steps)')
-    ax.scatter(centers, mean_age, color='tab:purple')
+    ax.scatter(centers, med_age, color='tab:purple')
     ax.grid(True, alpha=0.3)
     ax.set_title(f"Life expectancy with lifetime average over {bin_width} agents")
 
@@ -473,12 +507,12 @@ def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10, name
     plt.close()
 
 def plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width=10, name_fig='sim'):
-    centers, mean_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
+    centers, med_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
 
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=centers, y=mean_age,
+        x=centers, y=med_age,
         mode='markers',
         marker=dict(color='purple', size=5, opacity=0.8),
         name='Born step',
@@ -550,7 +584,7 @@ def _plot_band(ax, x, S, prefix, color="C0", label="median", band=None):
  
 def plot_lab_metrics(exp_dir):
     """Évolution des métriques du lab 1 (high_res) chunk après chunk."""
-    data_dir = os.path.join(exp_dir, "lab_data")
+    data_dir = os.path.join(exp_dir, "fig")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_summary.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     files = [f for f in files                       # exclut les résumés low_res
@@ -608,7 +642,7 @@ def plot_lab_exploration(exp_dir):
       - explore_time    : délai moyen (± 1σ) avant la 1re ressource, calculé sur
                           les seuls agents qui ont mangé (grandeur conditionnelle).
     """
-    data_dir = os.path.join(exp_dir, "lab_data")
+    data_dir = os.path.join(exp_dir, "fig")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_lowres_summary.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     if not files:
@@ -657,7 +691,7 @@ def plot_alone_vs_clones(exp_dir):
     comportement MOYEN des clones du même génome. L'écart entre les deux courbes
     = effet des pairs. Le liseré ±1σ autour de la courbe clones vient de
     delta_std (variance de l'effet apparié entre génomes)."""
-    data_dir = os.path.join(exp_dir, "lab_data")
+    data_dir = os.path.join(exp_dir, "fig")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_alone_vs_clones.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     if not files:
@@ -1072,7 +1106,7 @@ def plot_energy_response(exp_dir, chunk, curves, cfg=None, fname=None):
     axn.grid(alpha=0.3)
  
     fig.tight_layout()
-    data_dir = os.path.join(exp_dir, "lab_data")
+    data_dir = os.path.join(exp_dir, "fig")
     os.makedirs(data_dir, exist_ok=True)
     out = os.path.join(data_dir, fname or f"chunk_{chunk}_energy_response.png")
     fig.savefig(out, dpi=150)

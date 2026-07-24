@@ -23,7 +23,8 @@ class DemographyMixin:
     def update_data_with_chunk(self, outputs, data_dir):
         self.chunk_idx += 1
         pop_chunk  = np.array(outputs.alive.sum(axis=1))          # (T,)
-        res_chunk  = np.array(outputs.grid[:, 0, :, :].sum(axis=(1, 2)))  # (T,)
+        n_types = len(self.cfg.resources)
+        res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3))) 
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 

@@ -4,28 +4,44 @@ import jax
 from jax import random,vmap
 import jax.numpy as jnp
 
-from simulation.data_class import AgentState,SimState
+from simulation.data_class import AgentState,SimState,LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+
 def init_state_lab(key, cfg, model,agent_params):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
     
-    position_res=random.randint(subkey_grid, (cfg.init_number_of_resources, 2), 0, cfg.grid_length)
-    grid_resources = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
-    grid_resources = grid_resources.at[position_res[:, 0], position_res[:, 1]].set(1)
     
-    # 2. Grille avec les murs
+    ## Grille mur
     grid_walls = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_walls = grid_walls.at[0,:].set(1)
     grid_walls = grid_walls.at[:,0].set(1)
     grid_walls = grid_walls.at[-1,:].set(1)
     grid_walls = grid_walls.at[:,-1].set(1)
-    grid_resources = jnp.where(grid_walls==1,0,grid_resources)
+    
+    ## Grille ressources 
+    counts = tuple(r.init_number_of_resources for r in cfg.resources) #STATIQUE
+    n_types = len(counts)
+    total = sum(counts)
+
+    # à quel type appartient chaque ressource : [0,...,0, 1,...,1, 2,...,2]
+    type_ids = jnp.repeat(jnp.arange(n_types), np.array(counts), total_repeat_length=total)
+
+    # une position (ligne, colonne) par ressource
+    position_res = random.randint(subkey_grid, (total, 2), 0, cfg.grid_length)
+
+    # grille 3D : un plan par type
+    grid_resources = jnp.zeros((n_types, cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
+    grid_resources = grid_resources.at[type_ids, position_res[:, 0], position_res[:, 1]].set(1)
+
+    # on éteint les murs (broadcast du plan (L,L) sur l'axe type)
+    grid_resources = jnp.where(grid_walls[None] == 1, 0, grid_resources)
     
     # 3. Préparation de l'agents
     key, *subkeys = random.split(key, 3)
@@ -61,7 +77,11 @@ def init_state_lab(key, cfg, model,agent_params):
     # 4. Grille d'occupation et observations
     grid_agents = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_agents = grid_agents.at[agents.position[:, 0], agents.position[:, 1]].add(agents.alive)
-    grid = jnp.stack((grid_resources, grid_agents,grid_walls))
+    grid = jnp.concatenate([
+        grid_resources,          # (n_types, L, L)  -> déjà n canaux
+        grid_agents[None],       # (1, L, L)
+        grid_walls[None],        # (1, L, L)
+    ], axis=0)   
     pos = agents.position
     
     # 5. État final
@@ -76,8 +96,14 @@ def init_state_lab(key, cfg, model,agent_params):
         lambda i, carry: resources_growth(carry, cfg),
         init_carry
     )
-    grid_resources_grown_bis = jnp.where(grid_walls==1,0,grid_resources_grown)
-    grid = jnp.stack((grid_resources_grown_bis, grid_agents,grid_walls))
+    
+    grid_resources_grown_bis = jnp.where(grid_walls[None] == 1, 0, grid_resources_grown)
+    
+    grid = jnp.concatenate([
+        grid_resources_grown_bis,          # (n_types, L, L)  
+        grid_agents[None],       # (1, L, L)
+        grid_walls[None],        # (1, L, L)
+    ], axis=0)   
 
     obs = get_obs_vector(grid, (pos, agents.orientation), cfg.agent_view)
     state = SimState(
@@ -112,7 +138,7 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
     # import jax
     # jax.debug.print("inj ok ? {b}", b=jnp.allclose(state.agents.params[1], agent_params))
     key, subkey = jax.random.split(key_sim)
-    keys_chunk = jax.random.split(subkey, 500)
+    keys_chunk = jax.random.split(subkey, 1000)
     state, outputs = run_simulation_chunk(state,model,keys_chunk, cfg)
 
     
@@ -127,11 +153,13 @@ def launch_env_high_res(agent_params,key_env,key_sim,cfg,model):
         n_agents_max=2,
         reproduction_on = False,
         resources_growth=False,
-        pre_growth_step = 200,
-        init_number_of_resources=20,
-        starting_energy = 1,
-        letal_wall=True,
+        pre_growth_step = 100,
     )
+    count_by_id = {"good": 10, "medium": 5, "poison": 20}
+
+    cfg = cfg._replace(resources=tuple(
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+    ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs
     
@@ -143,11 +171,13 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         n_agents_max=5,
         reproduction_on = False,
         resources_growth=False,
-        pre_growth_step = 200,
-        init_number_of_resources=30,
-        starting_energy = 1,
-        letal_wall=True,
+        pre_growth_step = 100,
     )
+    count_by_id = {"good": 10, "medium": 5, "poison": 20}
+    
+    cfg = cfg._replace(resources=tuple(
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+    ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs
     
@@ -158,11 +188,14 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
         n_agents_max=2,
         reproduction_on = False,
         resources_growth=False, 
-        pre_growth_step = 100,
-        init_number_of_resources=3,
-        starting_energy = 1,
-        letal_wall=True,
+        pre_growth_step = 50,
     )
+    count_by_id = {"good": 3, "medium": 2, "poison": 10}
+    
+    
+    cfg = cfg._replace(resources=tuple(
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+    ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs    
 

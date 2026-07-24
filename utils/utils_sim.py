@@ -4,8 +4,10 @@ import numpy as np
 import jax
 from jax import random
 import jax.numpy as jnp
+import dataclasses
 
-from simulation.data_class import AgentState,SimState
+
+from simulation.data_class import AgentState,SimState, ResourceConfig
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config
@@ -23,16 +25,30 @@ def init_state(key, cfg, model):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
     
-    position_res=random.randint(subkey_grid, (cfg.init_number_of_resources, 2), 0, cfg.grid_length)
-    grid_resources = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
-    grid_resources = grid_resources.at[position_res[:, 0], position_res[:, 1]].set(1)
-    
+    ## Grille mur
     grid_walls = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_walls = grid_walls.at[0,:].set(1)
     grid_walls = grid_walls.at[:,0].set(1)
     grid_walls = grid_walls.at[-1,:].set(1)
     grid_walls = grid_walls.at[:,-1].set(1)
-    grid_resources = jnp.where(grid_walls==1,0,grid_resources)
+    
+    ## Grille ressources 
+    counts = tuple(r.init_number_of_resources for r in cfg.resources) #STATIQUE
+    n_types = len(counts)
+    total = sum(counts)
+
+    # à quel type appartient chaque ressource : [0,...,0, 1,...,1, 2,...,2]
+    type_ids = jnp.repeat(jnp.arange(n_types), jnp.array(counts))       # (total,)
+
+    # une position (ligne, colonne) par ressource
+    position_res = random.randint(subkey_grid, (total, 2), 0, cfg.grid_length)
+
+    # grille 3D : un plan par type
+    grid_resources = jnp.zeros((n_types, cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
+    grid_resources = grid_resources.at[type_ids, position_res[:, 0], position_res[:, 1]].set(1)
+
+    # on éteint les murs (broadcast du plan (L,L) sur l'axe type)
+    grid_resources = jnp.where(grid_walls[None] == 1, 0, grid_resources)
     
     # 2. Préparation des agents
     key, *subkeys = random.split(key, 4)
@@ -66,7 +82,11 @@ def init_state(key, cfg, model):
     # 3. Grille d'occupation et observations
     grid_agents = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
     grid_agents = grid_agents.at[agents.position[:, 0], agents.position[:, 1]].add(agents.alive)
-    grid = jnp.stack((grid_resources, grid_agents,grid_walls))
+    grid = jnp.concatenate([
+        grid_resources,          # (n_types, L, L)  -> déjà n canaux
+        grid_agents[None],       # (1, L, L)
+        grid_walls[None],        # (1, L, L)
+    ], axis=0)   
     pos = agents.position
 
     # 4. État final
@@ -81,8 +101,15 @@ def init_state(key, cfg, model):
         lambda i, carry: resources_growth(carry, cfg),
         init_carry
     )
-    grid_resources_grown_bis = jnp.where(grid_walls==1,0,grid_resources_grown)
-    grid = jnp.stack((grid_resources_grown_bis, grid_agents,grid_walls))
+    
+    grid_resources_grown_bis = jnp.where(grid_walls[None] == 1, 0, grid_resources_grown)
+    
+    grid = jnp.concatenate([
+        grid_resources_grown_bis,          # (n_types, L, L)  
+        grid_agents[None],       # (1, L, L)
+        grid_walls[None],        # (1, L, L)
+    ], axis=0)   
+    
     obs = get_obs_vector(grid, (pos, agents.orientation), cfg.agent_view)
 
     state = SimState(
@@ -129,10 +156,10 @@ def outputs_to_numpy(outputs):
 
 
 # --- Wrapper picklable pour le worker ---
-def _video_worker(outputs_np, vid_path, fps, scale):
+def _video_worker(outputs_np, vid_path, fps, scale, resources):
     t0 = time.time()
     print(f"  [video | PID {os.getpid()}] START  {vid_path}  @ {time.strftime('%H:%M:%S')}")
-    save_chunk_video(outputs_np, vid_path, fps=fps, scale=scale)
+    save_chunk_video(outputs_np, vid_path, fps=fps, scale=scale,resources = resources)
     print(f"  [video | PID {os.getpid()}] DONE   {vid_path}  ({time.time()-t0:.2f}s)")
     return vid_path
 
@@ -144,12 +171,17 @@ def create_exp_file(dir):
     os.makedirs(exp_dir, exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "videos"), exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, "videos","high"), exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, "videos","low"), exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, "videos","high_res_clones"), exist_ok=True)
     data_dir = os.path.join(exp_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
     return exp_dir,data_dir
 
+
 def save_config(cfg, subkeys, exp_dir):
     cfg_dict = cfg._asdict()
+    cfg_dict["resources"] = [dataclasses.asdict(r) for r in cfg.resources]   # <-- ajout
     cfg_dict["seeds"] = [int(k[0]) for k in subkeys]
     cfg_dict["seeds_full"] = [k.tolist() for k in subkeys]
     cfg_dict["env"] = {
@@ -166,6 +198,7 @@ def load_config(resume_exp):
     seeds_full = [jnp.array(s, dtype=jnp.uint32) for s in cfg_dict.pop("seeds_full")]
     env = cfg_dict.pop("env", None)
     cfg_dict.pop("seeds", None)
+    cfg_dict["resources"] = tuple(ResourceConfig(**r) for r in cfg_dict["resources"])  # <-- ajout
     return Config(**cfg_dict), seeds_full
 
 def print_params(params, prefix="", total=0):
@@ -181,22 +214,33 @@ def print_params(params, prefix="", total=0):
 
 
 def classify_outcome(pop_full, res_full, cfg):
-    """
-    Returns 'extinction', 'overpopulation', 'depletion', or 'interesting'.
-    """
+    """Returns 'extinction', 'overpopulation', 'depletion', 'easy' or 'interesting'."""
     n_chunks = 30
+    span = n_chunks * cfg.chunk_size
+
     if pop_full[-1] == 0:
         return 'extinction'
-    
-    last = pop_full[-n_chunks*cfg.chunk_size:]
-    if len(last) == n_chunks*cfg.chunk_size and (last > 0.95 * cfg.n_agents_max).all():
+
+    last = pop_full[-span:]
+    if len(last) == span and (last > 0.95 * cfg.n_agents_max).all():
         return 'overpopulation'
-    
-    if res_full[-1]==0:
+
+    delta_e  = np.array([r.delta_energy for r in cfg.resources])
+    good     = np.where(delta_e > 0)[0]
+    res_good = res_full[:, good].sum(axis=1)          # (T,) total des bonnes ressources
+
+    if res_good[-1] == 0:
         return 'depletion'
-    
-    last_res = res_full[-n_chunks*cfg.chunk_size:]
-    if len(last_res) == n_chunks*cfg.chunk_size and (last_res > 0.8 * cfg.grid_length ** 2).all():
+
+    last_res = res_good[-span:]
+    if len(last_res) == span and (last_res > 0.8 * cfg.grid_length ** 2).all():
         return 'easy'
-    
+
     return 'interesting'
+
+import numpy as np
+
+def shuffle_resources(resources, key):
+    perm = np.asarray(jax.random.permutation(key, len(resources)))   # concret -> indexe un tuple
+    return tuple(resources[int(i)] for i in perm)
+

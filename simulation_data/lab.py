@@ -38,21 +38,17 @@ REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #     log.rewards[t] = recompense gagnee au pas t-1
 #   donc la recompense qui SUIT l'observation du pas t est log.rewards[t+1].
  
- 
-def _resource_in_view(obs):
-    """(T, N) booleen : au moins une ressource dans le champ de vision.
-    obs par agent = dynamic_slice du grid padde -> (3, side, side), canal 0 =
-    ressources (grid = stack(resources, agents, walls)). Le padding hors-grille
-    vaut -1, donc le test > 0 l'ecarte. Une rotation du champ ne change rien :
-    c'est une permutation des memes cases et on ne fait qu'un any()."""
+def _resource_in_view(obs, good_channels, n_channels):
     o = np.asarray(obs)
-    if o.ndim == 5:                      # (T, N, 3, side, side)
-        return (o[:, :, 0] > 0).any(axis=(2, 3))
-    if o.ndim == 4:                      # (T, N, 3, k)
-        return (o[:, :, 0] > 0).any(axis=2)
-    if o.ndim == 3:                      # (T, N, 3*k) aplati
-        k = o.shape[2] // 3
-        return (o[:, :, :k] > 0).any(axis=2)
+    g = np.asarray(good_channels)
+    if o.ndim == 5:                      # (T, N, C, side, side)
+        return (o[:, :, g] > 0).any(axis=(2, 3, 4))
+    if o.ndim == 4:                      # (T, N, C, k)
+        return (o[:, :, g] > 0).any(axis=(2, 3))
+    if o.ndim == 3:                      # (T, N, C*k) aplati (channel-major)
+        k = o.shape[2] // n_channels     # taille d'un canal
+        idx = np.concatenate([np.arange(c*k, (c+1)*k) for c in g])
+        return (o[:, :, idx] > 0).any(axis=2)
     raise ValueError(f"forme d'obs inattendue : {o.shape}")
  
  
@@ -137,10 +133,10 @@ class LabMixin:
         self._plot_energy(outputs_high, exp_dir, "high_res",                     # <== NOUVEAU
                           "lab_1 — high_res (agent alone)")
 
-        vid = os.path.join(exp_dir, "videos", f"high_res_video_chunk_{self.chunk_idx+1}_lab_0.mp4")
-        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 0)), vid, 20, 10)
-        vid = os.path.join(exp_dir, "videos", f"high_res_video_chunk_{self.chunk_idx+1}_lab_1.mp4")
-        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 1)), vid, 20, 10)
+        vid = os.path.join(exp_dir, "videos", "high",f"high_res_video_chunk_{self.chunk_idx+1}_lab_0.mp4")
+        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 0)), vid, 20, 10,self.cfg.resources)
+        vid = os.path.join(exp_dir, "videos", "high", f"high_res_video_chunk_{self.chunk_idx+1}_lab_1.mp4")
+        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 1)), vid, 20, 10,self.cfg.resources)
 
         # ============ 2) LOW_RES (exploration) ============
         final_state, outputs_low = vmap_over_agents_env_lab_low_res(
@@ -153,8 +149,8 @@ class LabMixin:
                           "lab_2 — low_res (exploration)")
 
         for b in range(3):
-            vid = os.path.join(exp_dir, "videos", f"low_res_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
-            _video_worker(outputs_to_numpy(agent_slice(outputs_low, b)), vid, 20, 10)
+            vid = os.path.join(exp_dir, "videos", "low",f"low_res_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
+            _video_worker(outputs_to_numpy(agent_slice(outputs_low, b)), vid, 20, 10,self.cfg.resources)
 
         # ============ 3) CLONES (effet des pairs) ============
         final_state, outputs_clones = vmap_over_agents_env_lab_high_res_with_clones(
@@ -166,8 +162,8 @@ class LabMixin:
 
         self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
         for b in range(3):
-            vid = os.path.join(exp_dir, "videos", f"high_res_clones_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
-            _video_worker(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10)
+            vid = os.path.join(exp_dir, "videos", "high_res_clones", f"high_res_clones_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
+            _video_worker(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10,self.cfg.resources)
 
 
 
@@ -251,9 +247,10 @@ class LabMixin:
                 return hi_v - lo_v
  
             # 5) Consommation (grandeur "par état") -> fenêtre [birth_row, death_row]
-            cum_rew   = np.cumsum(rew, axis=0)                          # (T, N)
+            rew_pos   = np.maximum(rew, 0.0)                 # <-- on jette les gains négatifs
+            cum_rew   = np.cumsum(rew_pos, axis=0)
             total_rew = window_sum(cum_rew, birth_row - 1, death_row)
-            mean_rew  = total_rew / (age + 1)          # age+1 = nb de lignes vécues
+            mean_rew  = total_rew / (age + 1)
  
             # 6) Mouvement (grandeur "par transition") -> fenêtre [birth_row, death_row-1]
             delta = pos[1:] - pos[:-1]                                  # (T-1, N, 2)
@@ -281,7 +278,10 @@ class LabMixin:
             t_explore = np.where(ever_ate, first_r - birth_row, np.nan)  # (E,)
  
             # 9) Greediness : G = Cr / Tr sur des fenetres de GREED_WINDOW pas
-            saw = _resource_in_view(outputs.obs)               # (T, N)
+            delta_e       = np.array([r.delta_energy for r in self.cfg.resources])
+            n_channels    = len(self.cfg.resources) + 2       # ressources + agents + murs
+            good_channels = np.where(delta_e > 0)[0]
+            saw = _resource_in_view(outputs.obs, good_channels, n_channels)
             ate_step = np.zeros_like(saw, dtype=bool)          # consommation alignee
             if REWARD_LAG > 0:
                 ate_step[:-REWARD_LAG] = rew[REWARD_LAG:] > 0

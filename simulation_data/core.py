@@ -41,24 +41,27 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             np.concatenate(self.pop_history, axis=0),
             np.concatenate(self.res_history, axis=0),
             exp_dir,
+            self.cfg.resources,
             self.start_step,
         )
         plot_phase_portrait_png(
             np.concatenate(self.pop_history, axis=0),
             np.concatenate(self.res_history, axis=0),
             exp_dir,
+            self.cfg,
             self.start_step,
         )
         life_data = np.concatenate(self.life_history, axis=1)
         plot_mean_movement(
             np.concatenate(self.mov_history)[1500:],
-            np.concatenate(self.res_history, axis=0)[1500:],
             exp_dir, self.start_step,
         )
+        n_types = len(self.cfg.resources)
+        grid_res = state.grid[:n_types, :, :]       
         plot_current_config(
-            state.grid[0, :, :], state.grid[-1, :, :],
+            grid_res, state.grid[-1, :, :],
             state.agents.position, state.agents.alive,
-            exp_dir, name_fig=f'{self.chunk_idx}',
+            exp_dir, self.cfg.resources,name_fig=f'{self.chunk_idx}',
         )
         plot_lifetime_vs_step((life_data[1, :]), (life_data[0, :]), exp_dir, self.cfg)
         plot_life_expectancy((life_data[1, :]), (life_data[0, :]), exp_dir, bin_width=1000)

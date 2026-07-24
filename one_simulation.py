@@ -39,12 +39,19 @@ def run_simulation_chunk(state,model,keys, cfg):
     
 
     def step(state, subkey):
+        
         grid         = state.grid
         agents       = state.agents
         step_idx     = state.step
-        grid_resources, grid_agents,grid_walls = grid
-        key_env, key_action, key_respawn, key_mut = random.split(subkey, 4)
         
+        n_types = grid.shape[0] - 2          # tout sauf agents + murs
+        grid_resources = grid[:n_types]      # (n_types, L, L)  -> slice, garde l'axe type
+        grid_agents    = grid[n_types]       # (L, L)           -> index, un seul canal
+        grid_walls     = grid[n_types + 1] 
+
+        key_env, key_action, key_respawn, key_mut = random.split(subkey, 4)
+        res = jax.tree.map(lambda *xs: jnp.stack(xs), *cfg.resources) # Resource parameters
+
         # ------- 1. Evaluate alive agents and energy : -------
         energies = agents.energy
         is_alive = agents.alive > 0
@@ -87,16 +94,19 @@ def run_simulation_chunk(state,model,keys, cfg):
         
 
         # Compute intern energy : resource consumption - energy decay 
-        local_resources = grid_resources[pos[:, 0], pos[:, 1]]
-        rewards = local_resources * survives_int
+        local_resources = grid_resources[:, pos[:, 0], pos[:, 1]].T  
+        gain = local_resources @ res.delta_energy
+        rewards = survives_int * gain 
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int, cfg.energy_max)
 
 
         # ------- 3. Environment dynamic -------
         # Agents consume resources on the grid
         # Use max() instead of set() to avoid non-determinism with repeated indices on GPU
-        consumed = jnp.zeros_like(grid_resources).at[pos[:, 0], pos[:, 1]].max(survives_int)
-        grid_resources = grid_resources * (1 - consumed)
+        consumed = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=grid_resources.dtype) # (L, L)
+        consumed = consumed.at[pos[:, 0], pos[:, 1]].max(survives_int)     # (L, L)
+
+        grid_resources = grid_resources * (1 - consumed[None]) #  consumed[None]: (n_types, L , L) 
 
         # Resources spread via convolution
         if cfg.resources_growth : 
@@ -133,7 +143,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             # ------- 5. Global update -------
             # Put new born in the state with their initial state
             final_pos = pos.at[free_indices].set(new_positions)
-            final_energy = new_energy.at[free_indices].set(1.0)
+            final_energy = new_energy.at[free_indices].set(cfg.starting_energy)
             final_time_under = new_time_under.at[free_indices].set(0)
             final_time_over = new_time_over.at[free_indices].set(0)
             final_alive = survives_int.at[free_indices].set(1)
@@ -170,7 +180,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             
             
         # Update spatial grid with agents positions
-        grid_agents = jnp.zeros_like(grid_resources, dtype=jnp.int32)
+        grid_agents = jnp.zeros_like(grid_walls, dtype=jnp.int32)
         grid_agents = grid_agents.at[final_pos[:, 0], final_pos[:, 1]].add(final_alive_without_0)
         
         new_agents = agents.replace(
@@ -185,7 +195,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             params = final_params
         )
         
-        new_grid = jnp.stack((grid_resources, grid_agents,grid_walls))
+        new_grid = jnp.concatenate([grid_resources, grid_agents[None], grid_walls[None]], axis=0)
         obs = get_obs_vector(new_grid, (final_pos, new_agents.orientation), cfg.agent_view)
 
         

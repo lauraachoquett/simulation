@@ -5,9 +5,9 @@ os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes
+from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes,shuffle_resources
 from simulation.utils.plots import plot_current_config
-from simulation.data_class import Config
+from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint
 from simulation.simulation_data.core import simulation_data
@@ -71,12 +71,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
         start_chunk = chunk_id
         model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 3),
-            hidden_dim=2, output_dim=4, encoder_layers=[], hidden_layers=[4]
+            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
+            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
         )
     else:
         model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 3),
+            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
             hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
         )
         key, *subkeys = random.split(key, num_chunks_exp + 1)
@@ -87,18 +87,19 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
-    
 
     sim_data = simulation_data(cfg=cfg,start_step=start_step)
     sim_data.register_founders(state,model)
     
-    initial_grid_res = state.grid[0, :, :]
+    
+    n_types = len(cfg.resources)
+    initial_grid_res = state.grid[:n_types, :, :]       
     chunks_survived = 0
     
     key,subkey_lab = random.split(key) #same lab env for every test
     subkey_lab,subkey_env_lab = random.split(subkey_lab) #same lab env for every test
     
-    plot_current_config(initial_grid_res,state.grid[-1, :, :] ,state.agents.position, state.agents.alive, exp_dir,name_fig=f'init')
+    plot_current_config(initial_grid_res,state.grid[-1, :, :] ,state.agents.position, state.agents.alive, exp_dir , cfg.resources,name_fig=f'init')
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
@@ -137,10 +138,14 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             if current_sim_state != 'interesting':
                 sim_data.plot(state,exp_dir)
                 print(f"Stopping criterion : {current_sim_state}")
-                vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
-                outputs_np = outputs_to_numpy(outputs)
-                future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5)
-                pending_futures[future] = chunk_idx + 1
+                
+                if state.step > 100000 :
+                    
+                    vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
+                    outputs_np = outputs_to_numpy(outputs)
+                    future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
+                    pending_futures[future] = chunk_idx + 1
+                    
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
             
             ## Genealogy and MCRA
@@ -163,9 +168,21 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             if (chunk_idx + 1) % cfg.video_freq == 0 or chunk_idx==start_chunk:
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
                 outputs_np = outputs_to_numpy(outputs)
-                future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5)
+                future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                 pending_futures[future] = chunk_idx + 1
 
+            if (chunk_idx + 1) % 100  == 0:
+                new_resources = shuffle_resources(BASE_RESOURCES, subkey)
+
+                print("----------------- Change config at step : ---------------", state.step)
+                for k, (old, new) in enumerate(zip(BASE_RESOURCES, new_resources)):
+                    flag = "" if old.id == new.id else "  <-- changé"
+                    print(f"  canal {k} : {LABELS[old.id]:>7} -> {LABELS[new.id]:<7}{flag}")
+
+                cfg = cfg._replace(resources=new_resources)
+                sim_data.cfg = cfg
+
+                
         print("Simulation terminée. Attente des vidéos en cours...")
         for f in as_completed(pending_futures):
             cidx = pending_futures[f]
@@ -198,35 +215,33 @@ if __name__ =='__main__':
 
             ### AGENTS : 
             # Agents number : 
-            n_agents_max=1500,
+            n_agents_max=2000,
             n_agents_init=20,
             agent_view = 5,
             temperature=1/40,
             
             #Physiologie
-            energy_decay=0.07/4,
-            factor_energy_decay_not_moving = 0.4,
-            energy_max = 10.0,
+            energy_decay=0.07/8,
+            factor_energy_decay_not_moving = 0.3,
+            energy_max = 8.0,
             
-            time_to_die=70*4,
-            time_above_repr = 60*4,
-            min_energy_repr = 4.,
-            starting_energy= 1.0,
+            time_to_die=100*4,
+            time_above_repr = 80*4,
+            min_energy_repr = 3.,
+            starting_energy= 1.5,
             
             # Mutation parameters
             mutation_var = 0.02,
-            param_mutate = 0.9,
-            
-            # RESOURCES : 
-            prob_factor = 0.065/0.5,
-            pop_res_prob = 0.000001,
-            
+            param_mutate = 0.99,
+
+
             # INIT RESOURCES MAP
-            pre_growth_step = 1000,
-            init_number_of_resources=1,
+            pre_growth_step = 500,
             random_pos_offspring = False,
             dumb_agent = False,
+            letal_wall=False
         )
+    
     
     
 
@@ -237,18 +252,12 @@ if __name__ =='__main__':
     
 
 
-    seed = 4
-    
+    seed = 85
     key = random.PRNGKey(seed)
-    
     print(jax.devices())
     
-    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)
-
-
-    
-    
-    # Classic simulation : 
-    
+    # resume_exp = "exp/2026-07-23/2026-07-23_16-30-15"
+    # chunk_id = 300
     # cfg,_ = load_config(resume_exp)
-    # cfg = cfg._replace(n_agents_max=1000,n_agents_init=200,pre_growth_step=2000)
+    
+    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)

@@ -7,69 +7,52 @@ from moviepy import VideoFileClip
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from IPython.display import HTML, display, clear_output
 import numpy as np
+import matplotlib.colors as mcolors
+from simulation.data_class import COLOR_BY_ID
 
-def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200):
+def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200, resources=None):
     grids = outputs.grid
+    rgba = np.array([mcolors.to_rgba(COLOR_BY_ID[r.id]) for r in resources],
+                    dtype=np.float32)                 # (n_types, 4)  R,G,B,A
 
+    rgb, a = rgba[:, :3], rgba[:, 3:4]                # (n_types,3) et (n_types,1)
+    bg = np.array([1.0, 1.0, 1.0], np.float32)        # fond blanc de la vidéo
+    colors = a * rgb + (1 - a) * bg       
+    n_types = colors.shape[0]                    # déduit du tableau de couleurs
+
+    
     with VideoWriter(filename, fps=fps) as vid:
         for i in range(grids.shape[0]):
+            res = np.asarray(grids[i, :n_types])          # (n_types, L, L)
+            H, W = res.shape[1], res.shape[2]
 
-            grid_res = grids[i, 0]
+            present  = res.sum(axis=0) > 0
+            argmax_k = res.argmax(axis=0)
 
-            # --- base grid image ---
-            img = np.ones((grid_res.shape[0], grid_res.shape[1], 3), dtype=np.float32)
+            img = np.ones((H, W, 3), dtype=np.float32)
+            for k in range(n_types):
+                mask_k = present & (argmax_k == k)
+                img[mask_k] = colors[k]                    # <-- couleur par identité
 
-            mask_res = grid_res > 0
-            img[mask_res] = np.array([0.0, 1.0, 0.0])  # vert ressources
+            # --- agents overlay (inchangé) ---
+            pos   = np.array(outputs.position[i])
+            born  = np.array(outputs.born_step[i])
+            alive = np.array(outputs.alive[i])
+            step  = int(outputs.step[i])
 
-            # --- agents overlay ---
-            pos = np.array(outputs.position[i])      # (n_agents, 2)
-            born = np.array(outputs.born_step[i])    # (n_outputs,)
-            alive = np.array(outputs.alive[i])       # (n_agents,)
-            step = int(outputs.step[i])
+            age = np.clip(step - born, 0, max_age)
+            intensity = np.clip(1.0 - 0.8 * (age / max_age), 0.2, 1.0)
 
-            age = step - born
-            age = np.clip(age, 0, max_age)
-
-            # Échelle linéaire de l'intensité du rouge : 
-            # Jeune (age=0) -> 1.0 (Rouge clair)
-            # Vieux (age=max_age) -> 0.2 (Rouge foncé)
-            intensity = 1.0 - 0.8 * (age / max_age)
-            intensity = np.clip(intensity, 0.2, 1.0)
-
-            # positions valides
-            pos = pos[alive > 0]
-            intensity = intensity[alive > 0]
-
-            H, W = grid_res.shape
-
-            # Masque booléen pour effacer le fond là où se trouvent les agents
-            # Évite que le vert et le rouge se mélangent (jaune)
-            agent_mask = np.zeros((H, W), dtype=bool)
-
+            pos, intensity = pos[alive > 0], intensity[alive > 0]
             xs = pos[:, 0].astype(np.int32)
             ys = pos[:, 1].astype(np.int32)
-
             valid = (xs >= 0) & (xs < H) & (ys >= 0) & (ys < W)
-            xs, ys = xs[valid], ys[valid]
-            intensity = intensity[valid]
+            xs, ys, intensity = xs[valid], ys[valid], intensity[valid]
 
-            agent_mask[xs, ys] = True
+            img[xs, ys] = 0.0
+            img[xs, ys, 0] = intensity
 
-            # On efface le fond (R, G, B) sous les agents pour éviter la superposition de couleurs
-            img[agent_mask] = np.array([0.0, 0.0, 0.0])
-
-            # Écriture directe des intensités de rouge
-            img[xs, ys, 0] = intensity  # Rouge variable
-            img[xs, ys, 1] = 0.0        # Vert éteint
-            img[xs, ys, 2] = 0.0        # Bleu éteint
-
-            # --- upscale ---
-            img_upscaled = np.kron(
-                img,
-                np.ones((scale, scale, 1), dtype=np.float32)
-            )
-
+            img_upscaled = np.kron(img, np.ones((scale, scale, 1), dtype=np.float32))
             vid.add(img_upscaled)
             
 
