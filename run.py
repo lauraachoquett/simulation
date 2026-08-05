@@ -25,6 +25,14 @@ jax.config.update("jax_threefry_partitionable", True)
 
 
 
+def _hide_gpu():
+    """Initializer pour les process vidéo (spawn) : ils encodent sur CPU via
+    moviepy et n'ont aucun besoin du GPU. Sans ça, chaque worker ré-importe JAX
+    et préalloue ~75 % de la mémoire GPU -> OOM du process de simulation."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["JAX_PLATFORMS"] = "cpu"
+
+
 def save_script(exp_dir):
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -103,7 +111,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
-    with ProcessPoolExecutor(max_workers=n_video_workers,mp_context=ctx) as executor:
+    with ProcessPoolExecutor(max_workers=n_video_workers,mp_context=ctx,initializer=_hide_gpu) as executor:
         for chunk_idx in range(start_chunk, num_chunks_exp):
             
             # --- Collecte non-bloquante des vidéos déjà terminées ---
