@@ -22,14 +22,14 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones
+from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
                                         ENERGY_EAT_WINDOW)
-
+from simulation.data_class import LABELS
  
 GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
 REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
@@ -37,7 +37,7 @@ REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #     log.obs[t]     = observation sur laquelle l'agent DECIDE au pas t
 #     log.rewards[t] = recompense gagnee au pas t-1
 #   donc la recompense qui SUIT l'observation du pas t est log.rewards[t+1].
- 
+
 def _resource_in_view(obs, good_channels, n_channels):
     o = np.asarray(obs)
     g = np.asarray(good_channels)
@@ -111,6 +111,12 @@ def _dispersion(arr, prefix, empty=0.0):
     }
 
 
+def rotation_desc(resources, rot):
+    """Renvoie (tag, mapping lisible) pour une rotation."""
+    rotated = rotate_resources(resources, rot)
+    mapping = " ".join(f"ch{k}:{LABELS[r.id]}" for k, r in enumerate(rotated))
+    tag = "rot0_baseline" if rot == 0 else f"rot{rot}"
+    return tag, mapping
 
 class LabMixin:
 
@@ -166,7 +172,28 @@ class LabMixin:
             _video_worker(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10,self.cfg.resources)
 
 
+         # ============ 4) ADAPTATION (rotations des canaux) ============
+        final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
+            agent_params, key_env, key_sim, model, self.cfg)
+        # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
+        for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
+            out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
+
+            tag, mapping = rotation_desc(self.cfg.resources, rot)   # description par rot
+            title = f"lab_4 — adapt {tag} [{mapping}]  (config MODIFIÉE)"
+
+            agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot)
+            self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{tag}")
+            plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{tag}")
+            self._plot_energy(out_rot, exp_dir, f"adapt/{tag}", title)
+
+            resources_rot = rotate_resources(self.cfg.resources, rot)
+            for b in range(2):
+                vid = os.path.join(exp_dir, "videos", "adapt", tag,
+                                   f"adapt_{tag}_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
+                os.makedirs(os.path.dirname(vid), exist_ok=True)          # <-- crée videos/adapt/rot1/
+                _video_worker(outputs_to_numpy(agent_slice(out_rot, b)), vid, 20, 10, resources_rot)
 
     def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=10):
         """Sauve exp_dir/energy/<lab_dir>/chunk_<N>_agent_<b>.png pour les

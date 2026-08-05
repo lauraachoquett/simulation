@@ -9,7 +9,7 @@ from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
 
 import multiprocessing as mp
@@ -171,17 +171,22 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                 pending_futures[future] = chunk_idx + 1
 
-            if (chunk_idx + 1) % 100  == 0:
+            if (chunk_idx + 1) % 100 == 0:
+                new_resources = shuffle_resources(BASE_RESOURCES, subkey)
+
+                old_resources = cfg.resources                    # (2) état COURANT, pas BASE
                 new_resources = shuffle_resources(BASE_RESOURCES, subkey)
 
                 print("----------------- Change config at step : ---------------", state.step)
-                for k, (old, new) in enumerate(zip(BASE_RESOURCES, new_resources)):
+                for k, (old, new) in enumerate(zip(old_resources, new_resources)):
                     flag = "" if old.id == new.id else "  <-- changé"
                     print(f"  canal {k} : {LABELS[old.id]:>7} -> {LABELS[new.id]:<7}{flag}")
 
+                log_resource_shuffle(exp_dir, chunk_idx, int(state.step),
+                                     old_resources, new_resources)
+
                 cfg = cfg._replace(resources=new_resources)
                 sim_data.cfg = cfg
-
                 
         print("Simulation terminée. Attente des vidéos en cours...")
         for f in as_completed(pending_futures):

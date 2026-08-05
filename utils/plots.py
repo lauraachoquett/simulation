@@ -12,50 +12,61 @@ import glob
 import json
 import re 
 from simulation.data_class import COLOR_BY_ID,LABELS
+from simulation.utils.utils_sim import build_id_timeline
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
 
-def plot_evolution(pop_history, res_history, exp_dir,resources,start_step=0):
-    plot_evolution_png(pop_history, res_history, exp_dir,resources,start_step=start_step)
-    plot_evolution_html(pop_history, res_history, exp_dir,resources,start_step=start_step)
 
-def plot_evolution_png(pop_history, res_history, exp_dir,resources,start_step=0):
-    """Plot population and resource dynamics over time."""
-    generations = np.arange(start_step,start_step+len(pop_history))
+def plot_evolution(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=0):
+    plot_evolution_png(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step)
+    plot_evolution_html(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step)
+
+from matplotlib.collections import LineCollection
+from matplotlib.lines import Line2D
+
+def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
+                       initial_order_ids, start_step=0):
+    generations = np.arange(start_step, start_step + len(pop_history))
 
     fig, ax_evo_agents = plt.subplots(figsize=(12, 6))
-
-    color_agents = 'tab:red'
     ax_evo_agents.set_xlabel('Steps')
-    ax_evo_agents.set_ylabel('Population size', color=color_agents)
-    ax_evo_agents.plot(generations, pop_history, color=color_agents, linewidth=2, label='Agents')
-    ax_evo_agents.tick_params(axis='y', labelcolor=color_agents)
+    ax_evo_agents.set_ylabel('Population size', color='tab:red')
+    ax_evo_agents.plot(generations, pop_history, color='tab:red', linewidth=2)
+    ax_evo_agents.tick_params(axis='y', labelcolor='tab:red')
     ax_evo_agents.grid(True, alpha=0.3)
 
     ax_evo_res = ax_evo_agents.twinx()
     ax_evo_res.set_ylabel('Resources amount', color='tab:green')
 
-    res = np.asarray(res_history)          # (T, n_types)
-    if res.ndim == 1:                      # rétro-compat si une seule courbe
+    res = np.asarray(res_history)
+    if res.ndim == 1:
         res = res[:, None]
     n_types = res.shape[1]
 
-    ids = [r.id for r in resources]
-    colors = [COLOR_BY_ID[id] for id in ids]
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)  # (T, n_types)
 
     for k in range(n_types):
-        ax_evo_res.plot(generations, res[:, k], color=colors[k],
-                        linewidth=2, label=f'{LABELS[ids[k]]}')     # nom = identité, pas position
+        y      = res[:, k]
+        ids_k  = id_timeline[:, k]
+        points = np.array([generations, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]        # 1 couleur par segment
+        ax_evo_res.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
+
+    # LineCollection ne cadre pas seule
+    ax_evo_res.set_xlim(generations[0], generations[-1])
+    ax_evo_res.set_ylim(0, res.max() * 1.05)
     ax_evo_res.tick_params(axis='y', labelcolor='tab:green')
-    ax_evo_res.legend(loc='upper right')
+
+    # légende = les IDENTITÉS (couleur fixe), pas les canaux
+    present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
+    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i]) for i in present_ids]
+    ax_evo_res.legend(handles=handles, loc='upper right')
 
     ax_evo_agents.set_title('Simulation dynamic')
-
     plt.tight_layout()
-    path_save_fig = os.path.join(exp_dir, 'fig')
-    os.makedirs(path_save_fig, exist_ok=True)
-    plt.savefig(os.path.join(path_save_fig, f'plot_evo.png'))
-    plt.close()
+    path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, 'plot_evo.png')); plt.close()
 
 from matplotlib.collections import LineCollection
 
@@ -110,29 +121,51 @@ def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0
     
             
 
-def plot_evolution_html(pop_history, res_history, exp_dir, resources,start_step=0):
-    """Plot population and resource dynamics over time."""
+def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
+                        initial_order_ids, start_step=0):
     generations = np.arange(start_step, start_step + len(pop_history))
+    T = len(generations)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Scatter(x=generations, y=pop_history, name='Agents', line=dict(color='red', width=2)),
+        go.Scatter(x=generations, y=pop_history, name='Agents',
+                   line=dict(color='red', width=2)),
         secondary_y=False,
     )
+
     res = np.asarray(res_history)
     if res.ndim == 1:
         res = res[:, None]
     n_types = res.shape[1]
 
-    ids = [r.id for r in resources]
-    colors = [f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
-          for r, g, b, a in (mcolors.to_rgba(COLOR_BY_ID[i]) for i in ids)]
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)  # (T, n_types)
+
+    # rgba par id (une seule fois)
+    def rgba(i):
+        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
+
+    seen = set()                                  # pour n'afficher chaque id qu'une fois en légende
     for k in range(n_types):
-        fig.add_trace(
-            go.Scatter(x=generations, y=res[:, k], name=f'{LABELS[ids[k]]}',
-                       line=dict(color=colors[k], width=2)),
-            secondary_y=True,
-        )
+        ids_k = id_timeline[:, k]
+        # bornes des runs où l'id est constant
+        change = np.where(np.diff(ids_k) != 0)[0] + 1
+        bounds = [0, *change.tolist(), T]
+
+        for s, e in zip(bounds[:-1], bounds[1:]):
+            i   = int(ids_k[s])
+            sl  = slice(s, min(e + 1, T))         # +1 point pour raccorder les segments sans trou
+            show = i not in seen
+            seen.add(i)
+            fig.add_trace(
+                go.Scatter(
+                    x=generations[sl], y=res[sl, k],
+                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    line=dict(color=rgba(i), width=2),
+                ),
+                secondary_y=True,
+            )
+
     fig.update_xaxes(title_text='Steps')
     fig.update_yaxes(title_text='Population size', secondary_y=False,
                      title_font=dict(color='red'), tickfont=dict(color='red'))
@@ -142,7 +175,7 @@ def plot_evolution_html(pop_history, res_history, exp_dir, resources,start_step=
 
     path_save_fig = os.path.join(exp_dir, 'fig')
     os.makedirs(path_save_fig, exist_ok=True)
-    fig.write_html(os.path.join(path_save_fig, f'plot_evo.html'))
+    fig.write_html(os.path.join(path_save_fig, 'plot_evo.html'))
 
 
 def plot_current_config(current_grid_res, grid_walls,pos, alive, exp_dir, resources,name_fig='sim'):
@@ -582,15 +615,21 @@ def _plot_band(ax, x, S, prefix, color="C0", label="median", band=None):
     return m
  
  
-def plot_lab_metrics(exp_dir):
-    """Évolution des métriques du lab 1 (high_res) chunk après chunk."""
-    data_dir = os.path.join(exp_dir, "fig")
-    files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_summary.json")),
+def plot_lab_metrics(exp_dir, suffix=""):
+    """Évolution des métriques d'un env de lab, chunk après chunk.
+    suffix="" -> high_res ; suffix="adapt_rot1" -> l'env adapt rot1, etc."""
+    data_dir = os.path.join(exp_dir, "lab_data")
+    fig_dir  = os.path.join(exp_dir, "fig")
+
+    tag = f"_{suffix}" if suffix else ""
+    pattern = rf"chunk_\d+{re.escape(tag)}_summary\.json"        # match EXACT de cette famille
+
+    files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*{tag}_summary.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
-    files = [f for f in files                       # exclut les résumés low_res
-             if re.fullmatch(r"chunk_\d+_summary\.json", os.path.basename(f))]
+    files = [f for f in files
+             if re.fullmatch(pattern, os.path.basename(f))]      # exclut les autres suffixes
     if not files:
-        print("No summary to plot.")
+        print(f"No summary to plot (suffix={suffix!r}).")
         return
  
     S = [json.load(open(f)) for f in files]
@@ -629,7 +668,7 @@ def plot_lab_metrics(exp_dir):
     axes[0, 0].legend(loc="best")
  
     fig.tight_layout()
-    out = os.path.join(data_dir, "lab_metrics_evolution.png")
+    out = os.path.join(fig_dir, f"lab_metrics_evolution{tag}.png")   # nom de sortie distinct
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
@@ -642,7 +681,8 @@ def plot_lab_exploration(exp_dir):
       - explore_time    : délai moyen (± 1σ) avant la 1re ressource, calculé sur
                           les seuls agents qui ont mangé (grandeur conditionnelle).
     """
-    data_dir = os.path.join(exp_dir, "fig")
+    data_dir = os.path.join(exp_dir, "lab_data")
+    fig_dir = os.path.join(exp_dir, "fig")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_lowres_summary.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     if not files:
@@ -679,7 +719,7 @@ def plot_lab_exploration(exp_dir):
         ax.set_xlabel("chunk")
  
     fig.tight_layout()
-    out = os.path.join(data_dir, "lab_exploration_evolution.png")
+    out = os.path.join(fig_dir, "lab_exploration_evolution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
@@ -689,9 +729,9 @@ def plot_alone_vs_clones(exp_dir):
     """Évolution de l'EFFET DES PAIRS (env clones) chunk après chunk.
     Un sous-graphe par métrique : comportement de l'agent SEUL (high_res) vs
     comportement MOYEN des clones du même génome. L'écart entre les deux courbes
-    = effet des pairs. Le liseré ±1σ autour de la courbe clones vient de
-    delta_std (variance de l'effet apparié entre génomes)."""
-    data_dir = os.path.join(exp_dir, "fig")
+    = effet des pairs."""
+    data_dir = os.path.join(exp_dir, "lab_data")
+    fig_dir = os.path.join(exp_dir, "fig")
     files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_alone_vs_clones.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     if not files:
@@ -723,7 +763,7 @@ def plot_alone_vs_clones(exp_dir):
  
     fig.suptitle("Focal agent alone vs among identical clones", y=1.0)
     fig.tight_layout()
-    out = os.path.join(data_dir, "lab_alone_vs_clones_evolution.png")
+    out = os.path.join(fig_dir, "lab_alone_vs_clones_evolution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
@@ -1106,9 +1146,10 @@ def plot_energy_response(exp_dir, chunk, curves, cfg=None, fname=None):
     axn.grid(alpha=0.3)
  
     fig.tight_layout()
-    data_dir = os.path.join(exp_dir, "fig")
+    data_dir = os.path.join(exp_dir, "lab_data")
+    fig_dir = os.path.join(exp_dir, "fig")
     os.makedirs(data_dir, exist_ok=True)
-    out = os.path.join(data_dir, fname or f"chunk_{chunk}_energy_response.png")
+    out = os.path.join(fig_dir, fname or f"chunk_{chunk}_energy_response.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")

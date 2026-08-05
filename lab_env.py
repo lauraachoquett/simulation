@@ -129,7 +129,7 @@ from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.one_simulation import run_simulation_chunk
 
-
+ROTATIONS = (1,2)
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -144,24 +144,20 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
     
     return state,outputs
 
-
-def launch_env_high_res(agent_params,key_env,key_sim,cfg,model):
-    
-    ### High resources
+def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
     cfg = cfg._replace(
         grid_length=30,
         n_agents_max=2,
-        reproduction_on = False,
+        reproduction_on=False,
         resources_growth=False,
-        pre_growth_step = 100,
+        pre_growth_step=100,
     )
     count_by_id = {"good": 10, "medium": 5, "poison": 20}
-
     cfg = cfg._replace(resources=tuple(
         r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
     ))
-    state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
-    return state,outputs
+    cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))   # cycle des canaux
+    return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     
@@ -199,6 +195,24 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs    
 
+
+
+def rotate_resources(resources, shift):
+    """Rotation cyclique : la ressource du canal k passe au canal (k + shift) % n."""
+    n = len(resources)
+    return tuple(resources[(k - shift) % n] for k in range(n))
+
+def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
+    states, outputs = [], []
+    for rot in ROTATIONS:
+        s, o = launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=rot)
+        states.append(s)
+        outputs.append(o)
+    states  = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *states)
+    outputs = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *outputs)
+    return states, outputs
+
+
 def vmap_over_agents_env_lab_high_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 
@@ -208,3 +222,6 @@ def vmap_over_agents_env_lab_low_res(list_agents_param,key_env,key_sim,model,cfg
 def vmap_over_agents_env_lab_high_res_with_clones(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res_with_clones,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 
+def vmap_over_agents_env_lab_adapt(list_agents_param, key_env, key_sim, model, cfg):
+    return vmap(launch_adaptation_env, in_axes=(0, None, 0, None, None))(
+        list_agents_param, key_env, key_sim, cfg, model)

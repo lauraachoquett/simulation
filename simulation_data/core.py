@@ -8,6 +8,9 @@ Recombine les quatre mixins thématiques en un seul objet partageant un unique
 """
 
 import numpy as np
+import json
+from simulation.data_class import BASE_RESOURCES
+import os 
 
 from simulation.utils.plots import (
     plot_evolution,
@@ -18,6 +21,7 @@ from simulation.utils.plots import (
     plot_life_expectancy,
 )
 
+from simulation.utils.utils_sim import load_shuffle_log
 from .demography import DemographyMixin
 from .genealogy import GenealogyMixin
 from .weights import WeightsMixin
@@ -37,11 +41,15 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         # LabMixin n'a pas d'état persistant -> pas de _init_lab()
 
     def plot(self, state, exp_dir):
+        
+        shuffle_log       = load_shuffle_log(exp_dir)
+        initial_order_ids = [r.id for r in BASE_RESOURCES]# l'ordre au step 0
         plot_evolution(
             np.concatenate(self.pop_history, axis=0),
             np.concatenate(self.res_history, axis=0),
             exp_dir,
-            self.cfg.resources,
+            shuffle_log,
+            initial_order_ids,
             self.start_step,
         )
         plot_phase_portrait_png(

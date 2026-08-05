@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import dataclasses
 
 
-from simulation.data_class import AgentState,SimState, ResourceConfig
+from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config
@@ -18,6 +18,7 @@ import json
 from datetime import datetime
 import time
 import pickle
+
 
     
 
@@ -244,3 +245,33 @@ def shuffle_resources(resources, key):
     perm = np.asarray(jax.random.permutation(key, len(resources)))   # concret -> indexe un tuple
     return tuple(resources[int(i)] for i in perm)
 
+
+def log_resource_shuffle(exp_dir, chunk_idx, step, old_resources, new_resources):
+    record = {
+        "chunk_idx": int(chunk_idx),
+        "step":      int(step),
+        "order_ids": [int(r.id) for r in new_resources],       # canal k -> id  (l'état après shuffle)
+        "changes": [
+            {"channel": k, "from": LABELS[o.id], "to": LABELS[n.id]}
+            for k, (o, n) in enumerate(zip(old_resources, new_resources))
+            if o.id != n.id
+        ],
+    }
+    path = os.path.join(exp_dir, "resource_shuffles.jsonl")
+    with open(path, "a") as f:                                 # "a" = append, jamais d'écrasement
+        f.write(json.dumps(record) + "\n")
+        
+def build_id_timeline(generations, shuffle_log, initial_order_ids):
+    """(T, n_types) : id de la ressource sur chaque canal, à chaque step."""
+    steps  = np.array([e["step"] for e in shuffle_log])
+    orders = [initial_order_ids] + [e["order_ids"] for e in shuffle_log]
+    active = np.searchsorted(steps, generations, side="right")   # 0 = avant le 1er shuffle
+    return np.array([orders[a] for a in active])                 # (T, n_types)
+
+
+def load_shuffle_log(exp_dir):
+    path = os.path.join(exp_dir, "resource_shuffles.jsonl")
+    if not os.path.exists(path):
+        return []                                    # aucun shuffle encore -> log vide
+    with open(path) as f:
+        return [json.loads(l) for l in f if l.strip()] 
