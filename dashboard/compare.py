@@ -87,6 +87,8 @@ def discover_runs(root: str) -> list[dict]:
                 "raw": cfg,
             }
         )
+    # newest first, so freshly launched experiments are on top / auto-selected
+    runs.sort(key=lambda r: r["mtime"], reverse=True)
     return runs
 
 
