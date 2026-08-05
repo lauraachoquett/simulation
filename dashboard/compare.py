@@ -174,9 +174,11 @@ def main() -> None:
     groups = sorted({r["group"] for r in runs if r["group"]})
     if groups:
         picked_groups = st.sidebar.multiselect(
-            "Filter by subdirectory", groups, default=groups
+            "Subdirectories to compare", groups, default=[groups[-1]],
+            help="Defaults to the most recent subdirectory; check others to add them.",
         )
-        runs = [r for r in runs if not r["group"] or r["group"] in picked_groups]
+        if picked_groups:
+            runs = [r for r in runs if r["group"] in picked_groups]
 
     # optional param filter
     all_params = sorted({p for r in runs for p in r["params"]})
