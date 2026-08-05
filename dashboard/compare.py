@@ -143,7 +143,8 @@ def _highlight_diffs(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
     """Highlight cells in rows (params) that differ across the shown runs."""
     def _row_style(row: pd.Series):
         differs = row.nunique(dropna=False) > 1
-        color = "background-color: #4b3b00" if differs else ""
+        # semi-transparent amber: readable on both light and dark themes
+        color = "background-color: rgba(255, 193, 7, 0.35)" if differs else ""
         return [color] * len(row)
 
     return df.style.apply(_row_style, axis=1)
