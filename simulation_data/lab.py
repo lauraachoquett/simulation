@@ -120,80 +120,88 @@ def rotation_desc(resources, rot):
 
 class LabMixin:
 
-    def launch_env(self, state, key_env, subkey_sim, model, exp_dir, n):
-        survivors = self.compute_survivors(state)
-        ids = np.array([agent_id for agent_id, _ in survivors[:n]])
-        agent_params = state.agents.params[ids]
-        key_sim = random.split(subkey_sim, len(ids))
+    def launch_env(self, state, key_env, subkey_sim, model, exp_dir, n, submit_video):
+            survivors = self.compute_survivors(state)
+            ids = np.array([agent_id for agent_id, _ in survivors[:n]])
+            agent_params = state.agents.params[ids]
+            key_sim = random.split(subkey_sim, len(ids))
 
-        def agent_slice(state, b):
-            return jax.tree_util.tree_map(lambda x: x[b], state)
+            def agent_slice(state, b):
+                return jax.tree_util.tree_map(lambda x: x[b], state)
 
-        # ============ 1) HIGH_RES (agent seul) ============
-        final_state, outputs_high = vmap_over_agents_env_lab_high_res(
-            agent_params, key_env, key_sim, model, self.cfg)
-        agg, summary = self.data_lab_env(outputs_lab=outputs_high)
-        self._save_lab_data(agg, summary, exp_dir)
-        
-        plot_lab_metrics(exp_dir=exp_dir)
-        self._plot_energy(outputs_high, exp_dir, "high_res",                     # <== NOUVEAU
-                          "lab_1 — high_res (agent alone)")
+            # ============ 1) HIGH_RES (agent seul) ============
+            final_state, outputs_high = vmap_over_agents_env_lab_high_res(
+                agent_params, key_env, key_sim, model, self.cfg)
+            agg, summary = self.data_lab_env(outputs_lab=outputs_high)
+            self._save_lab_data(agg, summary, exp_dir)
 
-        vid = os.path.join(exp_dir, "videos", "high",f"high_res_video_chunk_{self.chunk_idx+1}_lab_0.mp4")
-        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 0)), vid, 20, 10,self.cfg.resources)
-        vid = os.path.join(exp_dir, "videos", "high", f"high_res_video_chunk_{self.chunk_idx+1}_lab_1.mp4")
-        _video_worker(outputs_to_numpy(agent_slice(outputs_high, 1)), vid, 20, 10,self.cfg.resources)
+            plot_lab_metrics(exp_dir=exp_dir)
+            self._plot_energy(outputs_high, exp_dir, "high_res",
+                            "lab_1 — high_res (agent alone)")
 
-        # ============ 2) LOW_RES (exploration) ============
-        final_state, outputs_low = vmap_over_agents_env_lab_low_res(
-            agent_params, key_env, key_sim, model, self.cfg)
-        agg_low, summary_low = self.data_lab_env_low_res(outputs_low)                # <== NOUVEAU
-        self._save_lab_data(agg_low, summary_low, exp_dir, suffix="lowres")          # fichiers séparés
-
-        plot_lab_exploration(exp_dir=exp_dir)
-        self._plot_energy(outputs_low, exp_dir, "low_res",                            # <== NOUVEAU
-                          "lab_2 — low_res (exploration)")
-
-        for b in range(3):
-            vid = os.path.join(exp_dir, "videos", "low",f"low_res_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
-            _video_worker(outputs_to_numpy(agent_slice(outputs_low, b)), vid, 20, 10,self.cfg.resources)
-
-        # ============ 3) CLONES (effet des pairs) ============
-        final_state, outputs_clones = vmap_over_agents_env_lab_high_res_with_clones(
-            agent_params, key_env, key_sim, model, self.cfg)
-        # comparaison APPARIÉE avec l'env high_res (mêmes génomes, même ordre) :
-        self.compare_alone_vs_clones(outputs_high, outputs_clones, exp_dir)          # <== NOUVEAU
-        self._plot_energy(outputs_clones, exp_dir, "high_res_clones",                          # <== NOUVEAU
-                          "lab_3 — high_res with clones")
-
-        self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
-        for b in range(3):
-            vid = os.path.join(exp_dir, "videos", "high_res_clones", f"high_res_clones_video_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
-            _video_worker(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10,self.cfg.resources)
-
-
-         # ============ 4) ADAPTATION (rotations des canaux) ============
-        final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
-            agent_params, key_env, key_sim, model, self.cfg)
-        # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
-
-        for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
-            out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
-
-            tag, mapping = rotation_desc(self.cfg.resources, rot)   # description par rot
-            title = f"lab_4 — adapt {tag} [{mapping}]  (config MODIFIÉE)"
-
-            agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot)
-            self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{tag}")
-            plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{tag}")
-            self._plot_energy(out_rot, exp_dir, f"adapt/{tag}", title)
-
-            resources_rot = rotate_resources(self.cfg.resources, rot)
             for b in range(2):
-                vid = os.path.join(exp_dir, "videos", "adapt", tag,
-                                   f"adapt_{tag}_chunk_{self.chunk_idx+1}_lab_{b}.mp4")
-                os.makedirs(os.path.dirname(vid), exist_ok=True)          # <-- crée videos/adapt/rot1/
-                _video_worker(outputs_to_numpy(agent_slice(out_rot, b)), vid, 20, 10, resources_rot)
+                vid = os.path.join(exp_dir, "videos", "high",
+                                f"high_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                submit_video(outputs_to_numpy(agent_slice(outputs_high, b)), vid, 20, 10,
+                            self.cfg.resources,
+                            label=f"high_res_chunk_{self.chunk_idx}_lab_{b}")
+
+            # ============ 2) LOW_RES (exploration) ============
+            final_state, outputs_low = vmap_over_agents_env_lab_low_res(
+                agent_params, key_env, key_sim, model, self.cfg)
+            agg_low, summary_low = self.data_lab_env_low_res(outputs_low)
+            self._save_lab_data(agg_low, summary_low, exp_dir, suffix="lowres")
+
+            plot_lab_exploration(exp_dir=exp_dir)
+            self._plot_energy(outputs_low, exp_dir, "low_res",
+                            "lab_2 — low_res (exploration)")
+
+            for b in range(3):
+                vid = os.path.join(exp_dir, "videos", "low",
+                                f"low_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                submit_video(outputs_to_numpy(agent_slice(outputs_low, b)), vid, 20, 10,
+                            self.cfg.resources,
+                            label=f"low_res_chunk_{self.chunk_idx}_lab_{b}")
+
+            # ============ 3) CLONES (effet des pairs) ============
+            final_state, outputs_clones = vmap_over_agents_env_lab_high_res_with_clones(
+                agent_params, key_env, key_sim, model, self.cfg)
+            # comparaison APPARIÉE avec l'env high_res (mêmes génomes, même ordre) :
+            self.compare_alone_vs_clones(outputs_high, outputs_clones, exp_dir)
+            self._plot_energy(outputs_clones, exp_dir, "high_res_clones",
+                            "lab_3 — high_res with clones")
+
+            self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
+            for b in range(3):
+                vid = os.path.join(exp_dir, "videos", "high_res_clones",
+                                f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                submit_video(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10,
+                            self.cfg.resources,
+                            label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
+
+            # ============ 4) ADAPTATION (rotations des canaux) ============
+            final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
+                agent_params, key_env, key_sim, model, self.cfg)
+            # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
+
+            for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
+                out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
+
+                tag, mapping = rotation_desc(self.cfg.resources, rot)   # description par rot
+                title = f"lab_4 — adapt {tag} [{mapping}]  (config MODIFIÉE)"
+
+                agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot)
+                self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{tag}")
+                plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{tag}")
+                self._plot_energy(out_rot, exp_dir, f"adapt/{tag}", title)
+
+                resources_rot = rotate_resources(self.cfg.resources, rot)
+                for b in range(2):
+                    vid = os.path.join(exp_dir, "videos", "adapt", tag,
+                                    f"adapt_{tag}_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                    submit_video(outputs_to_numpy(agent_slice(out_rot, b)), vid, 20, 10,
+                                resources_rot,
+                                label=f"adapt_{tag}_chunk_{self.chunk_idx}_lab_{b}")
 
     def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=10):
         """Sauve exp_dir/energy/<lab_dir>/chunk_<N>_agent_<b>.png pour les
@@ -215,7 +223,7 @@ class LabMixin:
     def _save_lab_data(self, agg, summary, exp_dir, suffix=""):
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
-        tag = f"chunk_{self.chunk_idx+1}" + (f"_{suffix}" if suffix else "")
+        tag = f"chunk_{self.chunk_idx}" + (f"_{suffix}" if suffix else "")
 
         np.savez_compressed(os.path.join(data_dir, f"{tag}.npz"), **agg)
 
@@ -483,7 +491,7 @@ class LabMixin:
             table[k] = row
  
         # affichage : médianes + IQR de l'effet apparié
-        print(f"\n--- Lab chunk {self.chunk_idx+1} | ALONE vs CLONES (peers effect) ---")
+        print(f"\n--- Lab chunk {self.chunk_idx} | ALONE vs CLONES (peers effect) ---")
         print(f"  {'metric':<22}{'alone':>10}{'clones':>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
@@ -495,7 +503,7 @@ class LabMixin:
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx+1}_alone_vs_clones.json"), "w") as f:
+        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_alone_vs_clones.json"), "w") as f:
             json.dump(payload, f, indent=2)
  
         plot_alone_vs_clones(exp_dir=exp_dir)

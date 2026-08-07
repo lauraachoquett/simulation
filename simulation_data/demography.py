@@ -20,8 +20,8 @@ class DemographyMixin:
         self.mov_history = []
         self.life_history = []
 
-    def update_data_with_chunk(self, outputs, data_dir):
-        self.chunk_idx += 1
+    def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
+        self.chunk_idx = chunk_idx
         pop_chunk  = np.array(outputs.alive.sum(axis=1))          # (T,)
         n_types = len(self.cfg.resources)
         res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3))) 
@@ -34,7 +34,7 @@ class DemographyMixin:
         self.life_history.append(life_chunk)
 
         np.savez(
-            os.path.join(data_dir, f"chunk_{self.chunk_idx+1:05d}.npz"),
+            os.path.join(data_dir, f"chunk_{self.chunk_idx:05d}.npz"),
             population    = pop_chunk,
             resources     = res_chunk,
             mean_movement = mov_chunk,

@@ -33,7 +33,6 @@ class SimState:
 
 
 @struct.dataclass
-@struct.dataclass
 class ResourceConfig:
     init_number_of_resources: int
     prob_factor: float
@@ -47,7 +46,10 @@ BASE_RESOURCES = (
     ResourceConfig(init_number_of_resources=20, prob_factor=0.065/0.5,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
     ResourceConfig(init_number_of_resources=15,  prob_factor=0.065/10,   pop_res_prob=4e-5, delta_energy=-1.0, id=2),
 )
-    
+
+
+
+
 class Config(NamedTuple):
     grid_length : int
     

@@ -56,7 +56,7 @@ def save_script(exp_dir):
 
     
         
-def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id=0,save_dir=''):
+def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir=''):
     
     start_time_sim = time.time()
     
@@ -90,19 +90,19 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey_state = jax.random.split(key)
         state = init_state(subkey_state, cfg, model)
-        start_chunk = 0
+        start_chunk = 1
         
 
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
-    sim_data = simulation_data(cfg=cfg,start_step=start_step)
+    sim_data = simulation_data(cfg=cfg,start_step=start_step, start_chunk =start_chunk)
     sim_data.register_founders(state,model)
     
     
     n_types = len(cfg.resources)
     initial_grid_res = state.grid[:n_types, :, :]       
-    chunks_survived = 0
+    chunks_survived = start_chunk
     
     key,subkey_lab = random.split(key) #same lab env for every test
     subkey_lab,subkey_env_lab = random.split(subkey_lab) #same lab env for every test
@@ -111,6 +111,10 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     pending_futures = {}  # future -> chunk_idx
     ctx = mp.get_context('spawn')
+    
+
+
+
     with ProcessPoolExecutor(max_workers=n_video_workers,mp_context=ctx,initializer=_hide_gpu) as executor:
         for chunk_idx in range(start_chunk, num_chunks_exp):
             
@@ -125,19 +129,19 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                     print(f"  [video] ERREUR chunk {cidx} : {e}")
 
             # --- Simulation GPU ---
-            subkey = subkeys[chunk_idx]
+            subkey = subkeys[chunk_idx-1]
 
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             
-            print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} START  @ {time.strftime('%H:%M:%S')}")
+            print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} START  @ {time.strftime('%H:%M:%S')}")
             state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
-            print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx+1} DONE   @ {time.strftime('%H:%M:%S')}")
+            print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} DONE   @ {time.strftime('%H:%M:%S')}")
             
   
 
-            sim_data.update_data_with_chunk(outputs,data_dir)
+            sim_data.update_data_with_chunk(outputs,data_dir,chunk_idx)
 
-            if (chunk_idx + 1) % 100  == 0 or  (chunk_idx + 1) == 10:
+            if (chunk_idx) % 100  == 0 or  (chunk_idx) == 10:
                 sim_data.plot(state,exp_dir)
                 sim_data.compute_R0_and_plot(state,state.step,exp_dir)
             
@@ -149,10 +153,10 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 
                 if state.step > 100000 :
                     
-                    vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
+                    vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
                     outputs_np = outputs_to_numpy(outputs)
                     future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
-                    pending_futures[future] = chunk_idx + 1
+                    pending_futures[future] = chunk_idx
                     
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
             
@@ -162,24 +166,29 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             
 
             
-            if ((chunk_idx + 1) % cfg.pca_save_freq == 0) or (chunk_idx ==10):
+            if ((chunk_idx) % cfg.pca_save_freq == 0) or (chunk_idx ==10):
                 subkey_lab,subkey_sim = random.split(subkey_lab)
-                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model,exp_dir = exp_dir,n=50)
+                def submit_video(outputs_np, vid_path, *args, label=None):
+                    os.makedirs(os.path.dirname(vid_path), exist_ok=True)  # avant submit
+                    fut = executor.submit(_video_worker, outputs_np, vid_path, *args)
+                    pending_futures[fut] = label if label is not None else vid_path
+                    return fut
+                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model,exp_dir = exp_dir,n=50,submit_video=submit_video)
 
             chunks_survived+=1
             # --- Checkpoint (synchrone) ---
-            if (chunk_idx + 1) % cfg.checkpoint_freq == 0:
-                ckpt_path = os.path.join(exp_dir, "checkpoints", f"state_chunk_{chunk_idx+1}.pkl")
+            if (chunk_idx) % cfg.checkpoint_freq == 0:
+                ckpt_path = os.path.join(exp_dir, "checkpoints", f"state_chunk_{chunk_idx}.pkl")
                 save_checkpoint(state, ckpt_path)
 
             # --- Vidéo (asynchrone) ---
-            if (chunk_idx + 1) % cfg.video_freq == 0 or chunk_idx==start_chunk:
-                vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx+1}.mp4")
+            if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk:
+                vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
                 outputs_np = outputs_to_numpy(outputs)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
-                pending_futures[future] = chunk_idx + 1
+                pending_futures[future] = chunk_idx
 
-            if (chunk_idx + 1) % 100 == 0:
+            if (chunk_idx) % 100 == 0:
                 new_resources = shuffle_resources(BASE_RESOURCES, subkey)
 
                 old_resources = cfg.resources                    # (2) état COURANT, pas BASE
@@ -215,7 +224,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 if __name__ =='__main__':
     
-    
     cfg = Config(
             grid_length=200,
 
@@ -236,7 +244,7 @@ if __name__ =='__main__':
             #Physiologie
             energy_decay=0.07/8,
             factor_energy_decay_not_moving = 0.3,
-            energy_max = 8.0,
+            energy_max = 7.0,
             
             time_to_die=100*4,
             time_above_repr = 80*4,
@@ -254,6 +262,7 @@ if __name__ =='__main__':
             dumb_agent = False,
             letal_wall=False
         )
+    
     
     
     

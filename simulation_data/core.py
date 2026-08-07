@@ -30,10 +30,10 @@ from .lab import LabMixin
 
 class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
 
-    def __init__(self, cfg, start_step):
+    def __init__(self, cfg, start_step,start_chunk):
         self.cfg = cfg
         self.start_step = start_step
-        self.chunk_idx = 0
+        self.chunk_idx = start_chunk
 
         self._init_demography()   # chaque mixin pose SON propre état
         self._init_genealogy()
