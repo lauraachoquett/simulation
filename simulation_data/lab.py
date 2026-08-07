@@ -22,9 +22,10 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
+from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS,HIGH_RES_COUNTS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
-                            plot_alone_vs_clones, plot_lab_energy,plot_energy_response)
+                            plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
+                            plot_eaten_by_type_boxplot)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -184,6 +185,14 @@ class LabMixin:
                 agent_params, key_env, key_sim, model, self.cfg)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
+            # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
+            # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
+            # dans les deux, seule la permutation des canaux differe.
+            eaten_baseline = self.eaten_by_type(outputs_high)
+            baseline_ids   = [r.id for r in self.cfg.resources]
+            # les stocks du lab suivent l'IDENTITE, pas le canal (cf. launch_env_high_res)
+            available_by_id = {r.id: HIGH_RES_COUNTS[LABELS[r.id]] for r in self.cfg.resources}
+
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
@@ -196,6 +205,23 @@ class LabMixin:
                 self._plot_energy(out_rot, exp_dir, f"adapt/{tag}", title)
 
                 resources_rot = rotate_resources(self.cfg.resources, rot)
+
+                # Combien de chaque type l'agent a-t-il mange sous cette permutation,
+                # compare a lui-meme dans l'env non permute ?
+                plot_eaten_by_type_boxplot(
+                    eaten          = self.eaten_by_type(out_rot),
+                    ids_by_channel = [r.id for r in resources_rot],
+                    exp_dir        = exp_dir,
+                    chunk          = self.chunk_idx,
+                    tag            = tag,
+                    mapping        = mapping,
+                    # Borne HAUTE : deux ressources du meme type tirees sur la
+                    # meme case fusionnent a l'init.
+                    available      = available_by_id,
+                    baseline       = eaten_baseline,
+                    baseline_ids   = baseline_ids,
+                )
+
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", tag,
                                     f"adapt_{tag}_chunk_{self.chunk_idx}_lab_{b}.mp4")
@@ -219,6 +245,17 @@ class LabMixin:
             n_envs          = n_envs,
             env_title       = env_title,
         )
+
+    @staticmethod
+    def eaten_by_type(outputs_lab):
+        """(B, n_types) : total mange par chaque agent, par CANAL.
+
+        Les env de lab high_res n'ont qu'UN agent vivant (n_agents_max=2, l'index
+        0 est toujours mort), donc consumed_res — global a l'env — est exactement
+        la consommation de cet agent. Un agent mort ne consomme plus
+        (survives_int=0), la somme sur tout le rollout couvre donc sa vie entiere
+        sans avoir a fenetrer sur [birth, death]."""
+        return np.asarray(outputs_lab.consumed_res).sum(axis=1)   # (B, T, n_types) -> (B, n_types)
 
     def _save_lab_data(self, agg, summary, exp_dir, suffix=""):
         data_dir = os.path.join(exp_dir, "lab_data")

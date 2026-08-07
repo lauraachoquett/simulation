@@ -72,31 +72,42 @@ from matplotlib.collections import LineCollection
 
 
 def plot_consumption(pop_history, consumed_history, exp_dir, shuffle_log,
-                     initial_order_ids, start_step=0, window=1):
+                     initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
     """Comme plot_evolution, mais l'axe droit porte le FLUX consomme par type
-    (unites retirees de la grille par step) au lieu du stock present."""
+    (unites retirees de la grille par step) au lieu du stock present.
+
+    window > 1 -> moyenne glissante sur `window` steps (courbe lissee)."""
     plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
-                         initial_order_ids, start_step=start_step, window=window)
+                         initial_order_ids, start_step=start_step, window=window,
+                         name_fig=name_fig)
     plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
-                          initial_order_ids, start_step=start_step, window=window)
+                          initial_order_ids, start_step=start_step, window=window,
+                          name_fig=name_fig)
 
 
 def _smooth_consumption(consumed, window):
-    """Moyenne glissante centree par canal. window=1 -> renvoie le brut."""
+    """Moyenne glissante centree par canal. window=1 -> renvoie le brut.
+
+    On divise par le nombre de points REELLEMENT dans la fenetre plutot que par
+    `window` : sinon les ~window/2 premiers et derniers points sont tires vers 0
+    par le zero-padding de np.convolve, ce qui ferait un faux effondrement de la
+    conso aux deux bouts du graphe."""
     consumed = np.asarray(consumed, dtype=float)
     if consumed.ndim == 1:
         consumed = consumed[:, None]
     if window <= 1 or len(consumed) < window:
         return consumed
-    kernel = np.ones(window) / window
+    kernel = np.ones(window)
+    counts = np.convolve(np.ones(len(consumed)), kernel, mode='same')   # (T,)
     return np.stack(
-        [np.convolve(consumed[:, k], kernel, mode='same') for k in range(consumed.shape[1])],
+        [np.convolve(consumed[:, k], kernel, mode='same') / counts
+         for k in range(consumed.shape[1])],
         axis=1,
     )
 
 
 def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
-                         initial_order_ids, start_step=0, window=1):
+                         initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
     generations = np.arange(start_step, start_step + len(pop_history))
 
     fig, ax_pop = plt.subplots(figsize=(12, 6))
@@ -132,14 +143,19 @@ def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
     handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i]) for i in present_ids]
     ax_conso.legend(handles=handles, loc='upper right')
 
-    ax_pop.set_title('Resource consumption')
+    ax_pop.set_title(_consumption_title(window))
     plt.tight_layout()
     path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
-    plt.savefig(os.path.join(path, 'plot_conso.png')); plt.close()
+    plt.savefig(os.path.join(path, f'{name_fig}.png')); plt.close()
+
+
+def _consumption_title(window):
+    return ('Resource consumption' if window <= 1
+            else f'Resource consumption (rolling mean, {window} steps)')
 
 
 def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
-                          initial_order_ids, start_step=0, window=1):
+                          initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
     generations = np.arange(start_step, start_step + len(pop_history))
     T = len(generations)
 
@@ -184,11 +200,90 @@ def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
                      title_font=dict(color='red'), tickfont=dict(color='red'))
     fig.update_yaxes(title_text='Resources consumed / step', secondary_y=True,
                      title_font=dict(color='green'), tickfont=dict(color='green'))
-    fig.update_layout(title='Resource consumption')
+    fig.update_layout(title=_consumption_title(window))
 
     path_save_fig = os.path.join(exp_dir, 'fig')
     os.makedirs(path_save_fig, exist_ok=True)
-    fig.write_html(os.path.join(path_save_fig, 'plot_conso.html'))
+    fig.write_html(os.path.join(path_save_fig, f'{name_fig}.html'))
+
+
+def _eaten_by_identity(eaten, ids_by_channel):
+    """Reindexe (B, n_types) de CANAL vers IDENTITE de ressource.
+
+    Indispensable : la rotation change ce que porte chaque canal, donc comparer
+    canal a canal comparerait des ressources differentes."""
+    eaten = np.asarray(eaten, dtype=float)
+    return {int(i): eaten[:, k] for k, i in enumerate(ids_by_channel)}
+
+
+def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
+                               mapping='', available=None,
+                               baseline=None, baseline_ids=None):
+    """Boxplot du nombre de ressources mangees par agent, une boite par type.
+
+    eaten          : (B, n_types) total mange par chaque agent, indexe par CANAL
+    ids_by_channel : id de ressource porte par chaque canal DANS CETTE ROTATION
+    available      : dict {id_ressource: stock initial} -> trace le plafond
+    baseline       : (B, n_types) idem pour l'env NON permute (rot0), apparie
+                     genome par genome ; baseline_ids = ses ids par canal
+    """
+    by_id = _eaten_by_identity(eaten, ids_by_channel)
+    base_by_id = (_eaten_by_identity(baseline, baseline_ids)
+                  if baseline is not None else None)
+
+    ids = sorted(by_id)                                  # good, medium, poison
+    labels = [LABELS[i] for i in ids]
+    B = np.asarray(eaten).shape[0]
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    rng = np.random.default_rng(0)
+
+    def draw(series, positions, alpha, hatch):
+        bp = ax.boxplot(series, positions=positions, widths=0.3,
+                        patch_artist=True, showmeans=True, manage_ticks=False,
+                        medianprops=dict(color='black', lw=2))
+        for patch, i in zip(bp['boxes'], ids):
+            patch.set_facecolor(COLOR_BY_ID[i])
+            patch.set_alpha(alpha)
+            if hatch:
+                patch.set_hatch(hatch)
+        # nuage de points : avec peu d'agents la boite seule cache la distribution
+        for x, col in zip(positions, series):
+            ax.plot(x + rng.normal(0, 0.035, len(col)), col, 'o', ms=2.5,
+                    color='black', alpha=0.3, zorder=3)
+
+    centers = np.arange(len(ids), dtype=float)
+    if base_by_id is None:
+        draw([by_id[i] for i in ids], centers, 0.55, None)
+    else:
+        draw([base_by_id[i] for i in ids], centers - 0.19, 0.25, '//')
+        draw([by_id[i] for i in ids],      centers + 0.19, 0.65, None)
+        ax.plot([], [], 's', color='grey', alpha=0.35, markersize=9,
+                markeredgecolor='black', label='baseline (rot0, no permutation)')
+        ax.plot([], [], 's', color='grey', alpha=0.8, markersize=9,
+                markeredgecolor='black', label=f'{tag} (permuted)')
+
+    if available is not None:
+        for x, i in zip(centers, ids):
+            ax.hlines(available[i], x - 0.42, x + 0.42, color='grey',
+                      ls='--', lw=1.2, zorder=2)
+        ax.plot([], [], color='grey', ls='--', lw=1.2, label='available on the grid')
+
+    ax.set_xticks(centers)
+    ax.set_xticklabels(labels)
+    ax.set_xlim(-0.6, len(ids) - 0.4)
+    ax.set_ylabel('Resources eaten per agent')
+    ax.set_ylim(bottom=0)
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_title(f'Resources eaten by type — {tag} (chunk {chunk}, n={B})'
+                 + (f'\n{mapping}' if mapping else ''), fontsize=10)
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'eaten_by_type_chunk_{chunk}.png'))
+    plt.close()
 
 
 def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0,

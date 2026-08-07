@@ -144,6 +144,11 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
     
     return state,outputs
 
+# stocks de l'env high_res, par IDENTITE de ressource. Expose pour que les plots
+# puissent afficher le plafond disponible sans redupliquer ces valeurs.
+HIGH_RES_COUNTS = {"good": 10, "medium": 5, "poison": 20}
+
+
 def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
     cfg = cfg._replace(
         grid_length=30,
@@ -152,7 +157,7 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         resources_growth=False,
         pre_growth_step=100,
     )
-    count_by_id = {"good": 10, "medium": 5, "poison": 20}
+    count_by_id = HIGH_RES_COUNTS
     cfg = cfg._replace(resources=tuple(
         r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
     ))
