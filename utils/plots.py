@@ -70,6 +70,127 @@ def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
 
 from matplotlib.collections import LineCollection
 
+
+def plot_consumption(pop_history, consumed_history, exp_dir, shuffle_log,
+                     initial_order_ids, start_step=0, window=1):
+    """Comme plot_evolution, mais l'axe droit porte le FLUX consomme par type
+    (unites retirees de la grille par step) au lieu du stock present."""
+    plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
+                         initial_order_ids, start_step=start_step, window=window)
+    plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
+                          initial_order_ids, start_step=start_step, window=window)
+
+
+def _smooth_consumption(consumed, window):
+    """Moyenne glissante centree par canal. window=1 -> renvoie le brut."""
+    consumed = np.asarray(consumed, dtype=float)
+    if consumed.ndim == 1:
+        consumed = consumed[:, None]
+    if window <= 1 or len(consumed) < window:
+        return consumed
+    kernel = np.ones(window) / window
+    return np.stack(
+        [np.convolve(consumed[:, k], kernel, mode='same') for k in range(consumed.shape[1])],
+        axis=1,
+    )
+
+
+def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
+                         initial_order_ids, start_step=0, window=1):
+    generations = np.arange(start_step, start_step + len(pop_history))
+
+    fig, ax_pop = plt.subplots(figsize=(12, 6))
+    ax_pop.set_xlabel('Steps')
+    ax_pop.set_ylabel('Population size', color='tab:red')
+    ax_pop.plot(generations, pop_history, color='tab:red', linewidth=2)
+    ax_pop.tick_params(axis='y', labelcolor='tab:red')
+    ax_pop.grid(True, alpha=0.3)
+
+    ax_conso = ax_pop.twinx()
+    ax_conso.set_ylabel('Resources consumed / step', color='tab:green')
+
+    conso = _smooth_consumption(consumed_history, window)
+    n_types = conso.shape[1]
+
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)  # (T, n_types)
+
+    for k in range(n_types):
+        y      = conso[:, k]
+        ids_k  = id_timeline[:, k]
+        points = np.array([generations, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]        # 1 couleur par segment
+        ax_conso.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
+
+    # LineCollection ne cadre pas seule ; max(.., 1) car la conso peut etre nulle partout
+    ax_conso.set_xlim(generations[0], generations[-1])
+    ax_conso.set_ylim(0, max(conso.max(), 1.0) * 1.05)
+    ax_conso.tick_params(axis='y', labelcolor='tab:green')
+
+    # légende = les IDENTITÉS (couleur fixe), pas les canaux
+    present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
+    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i]) for i in present_ids]
+    ax_conso.legend(handles=handles, loc='upper right')
+
+    ax_pop.set_title('Resource consumption')
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, 'plot_conso.png')); plt.close()
+
+
+def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
+                          initial_order_ids, start_step=0, window=1):
+    generations = np.arange(start_step, start_step + len(pop_history))
+    T = len(generations)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(x=generations, y=pop_history, name='Agents',
+                   line=dict(color='red', width=2)),
+        secondary_y=False,
+    )
+
+    conso = _smooth_consumption(consumed_history, window)
+    n_types = conso.shape[1]
+
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)  # (T, n_types)
+
+    def rgba(i):
+        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
+
+    seen = set()                                  # chaque id une seule fois en légende
+    for k in range(n_types):
+        ids_k = id_timeline[:, k]
+        change = np.where(np.diff(ids_k) != 0)[0] + 1
+        bounds = [0, *change.tolist(), T]
+
+        for s, e in zip(bounds[:-1], bounds[1:]):
+            i   = int(ids_k[s])
+            sl  = slice(s, min(e + 1, T))         # +1 point pour raccorder sans trou
+            show = i not in seen
+            seen.add(i)
+            fig.add_trace(
+                go.Scatter(
+                    x=generations[sl], y=conso[sl, k],
+                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    line=dict(color=rgba(i), width=2),
+                ),
+                secondary_y=True,
+            )
+
+    fig.update_xaxes(title_text='Steps')
+    fig.update_yaxes(title_text='Population size', secondary_y=False,
+                     title_font=dict(color='red'), tickfont=dict(color='red'))
+    fig.update_yaxes(title_text='Resources consumed / step', secondary_y=True,
+                     title_font=dict(color='green'), tickfont=dict(color='green'))
+    fig.update_layout(title='Resource consumption')
+
+    path_save_fig = os.path.join(exp_dir, 'fig')
+    os.makedirs(path_save_fig, exist_ok=True)
+    fig.write_html(os.path.join(path_save_fig, 'plot_conso.html'))
+
+
 def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0,
                             fixed_point=None):
     if len(pop_history) < 2000:

@@ -32,6 +32,7 @@ class StepLog(NamedTuple):
     grid:      jax.Array   # (3, L, L) -> si tes vidéos affichent la grille
     step :     int
     obs :      jax.Array
+    consumed_res: jax.Array   # (n_types,) -> unités retirées de la grille PENDANT ce step
     
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -106,7 +107,13 @@ def run_simulation_chunk(state,model,keys, cfg):
         consumed = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=grid_resources.dtype) # (L, L)
         consumed = consumed.at[pos[:, 0], pos[:, 1]].max(survives_int)     # (L, L)
 
-        grid_resources = grid_resources * (1 - consumed[None]) #  consumed[None]: (n_types, L , L) 
+        # Ce qui disparait de l'environnement, par type. A calculer AVANT la remise a zero.
+        # Attention : `consumed` est un masque par CELLULE (max sur les agents), donc une
+        # cellule occupee par plusieurs agents n'est vidée qu'une fois alors que chacun d'eux
+        # encaisse `gain` -> sum(rewards) != consumed_per_type @ delta_energy.
+        consumed_per_type = (grid_resources * consumed[None]).sum(axis=(1, 2))   # (n_types,)
+
+        grid_resources = grid_resources * (1 - consumed[None]) #  consumed[None]: (n_types, L , L)
 
         # Resources spread via convolution
         if cfg.resources_growth : 
@@ -220,6 +227,9 @@ def run_simulation_chunk(state,model,keys, cfg):
             step = step_idx,
             time_under_min_energy = state.agents.time_under_min_energy,
             obs=state.obs,
+            # Seul champ produit PENDANT le step (les autres logguent l'etat de DEBUT de step).
+            # C'est l'alignement voulu : consumed_res[t] est preleve sur le stock grid[t].
+            consumed_res = consumed_per_type,
         )
         
         return new_state, log

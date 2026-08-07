@@ -17,6 +17,7 @@ class DemographyMixin:
     def _init_demography(self):
         self.pop_history = []
         self.res_history = []
+        self.consumed_history = []
         self.mov_history = []
         self.life_history = []
 
@@ -24,12 +25,14 @@ class DemographyMixin:
         self.chunk_idx = chunk_idx
         pop_chunk  = np.array(outputs.alive.sum(axis=1))          # (T,)
         n_types = len(self.cfg.resources)
-        res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3))) 
+        res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3)))
+        consumed_chunk = np.array(outputs.consumed_res)           # (T, n_types)
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
         self.pop_history.append(pop_chunk)
         self.res_history.append(res_chunk)
+        self.consumed_history.append(consumed_chunk)
         self.mov_history.append(mov_chunk)
         self.life_history.append(life_chunk)
 
@@ -37,6 +40,7 @@ class DemographyMixin:
             os.path.join(data_dir, f"chunk_{self.chunk_idx:05d}.npz"),
             population    = pop_chunk,
             resources     = res_chunk,
+            consumed      = consumed_chunk,
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )

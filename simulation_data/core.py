@@ -14,6 +14,7 @@ import os
 
 from simulation.utils.plots import (
     plot_evolution,
+    plot_consumption,
     plot_phase_portrait_png,
     plot_mean_movement,
     plot_current_config,
@@ -47,6 +48,14 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_evolution(
             np.concatenate(self.pop_history, axis=0),
             np.concatenate(self.res_history, axis=0),
+            exp_dir,
+            shuffle_log,
+            initial_order_ids,
+            self.start_step,
+        )
+        plot_consumption(
+            np.concatenate(self.pop_history, axis=0),
+            np.concatenate(self.consumed_history, axis=0),
             exp_dir,
             shuffle_log,
             initial_order_ids,
