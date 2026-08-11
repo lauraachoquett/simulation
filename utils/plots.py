@@ -218,14 +218,17 @@ def _eaten_by_identity(eaten, ids_by_channel):
 
 def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
                                mapping='', available=None,
-                               baseline=None, baseline_ids=None):
+                               baseline=None, baseline_ids=None,
+                               baseline_available=None):
     """Boxplot du nombre de ressources mangees par agent, une boite par type.
 
     eaten          : (B, n_types) total mange par chaque agent, indexe par CANAL
     ids_by_channel : id de ressource porte par chaque canal DANS CETTE ROTATION
-    available      : dict {id_ressource: stock initial} -> trace le plafond
+    available      : dict {id_ressource: presentes sur la grille} -> plafond
     baseline       : (B, n_types) idem pour l'env NON permute (rot0), apparie
                      genome par genome ; baseline_ids = ses ids par canal
+    baseline_available : plafond de l'env baseline (peut differer de `available`,
+                     la croissance a l'init dependant du canal)
     """
     by_id = _eaten_by_identity(eaten, ids_by_channel)
     base_by_id = (_eaten_by_identity(baseline, baseline_ids)
@@ -252,32 +255,50 @@ def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
             ax.plot(x + rng.normal(0, 0.035, len(col)), col, 'o', ms=2.5,
                     color='black', alpha=0.3, zorder=3)
 
+    def ceiling(avail, positions):
+        """Un plafond AU-DESSUS DE CHAQUE boite : baseline et env permute n'ont
+        pas forcement le meme disponible."""
+        if avail is None:
+            return
+        for x, i in zip(positions, ids):
+            ax.hlines(avail[i], x - 0.16, x + 0.16, color='grey',
+                      ls='--', lw=1.2, zorder=2)
+
     centers = np.arange(len(ids), dtype=float)
     if base_by_id is None:
         draw([by_id[i] for i in ids], centers, 0.55, None)
+        ceiling(available, centers)
     else:
         draw([base_by_id[i] for i in ids], centers - 0.19, 0.25, '//')
         draw([by_id[i] for i in ids],      centers + 0.19, 0.65, None)
+        ceiling(baseline_available, centers - 0.19)
+        ceiling(available,          centers + 0.19)
         ax.plot([], [], 's', color='grey', alpha=0.35, markersize=9,
                 markeredgecolor='black', label='baseline (rot0, no permutation)')
         ax.plot([], [], 's', color='grey', alpha=0.8, markersize=9,
                 markeredgecolor='black', label=f'{tag} (permuted)')
 
     if available is not None:
-        for x, i in zip(centers, ids):
-            ax.hlines(available[i], x - 0.42, x + 0.42, color='grey',
-                      ls='--', lw=1.2, zorder=2)
         ax.plot([], [], color='grey', ls='--', lw=1.2, label='available on the grid')
 
     ax.set_xticks(centers)
     ax.set_xticklabels(labels)
     ax.set_xlim(-0.6, len(ids) - 0.4)
     ax.set_ylabel('Resources eaten per agent')
-    ax.set_ylim(bottom=0)
+    # marge en haut : sinon les plafonds les plus hauts passent sous la legende
+    tops = [np.max(v) for v in by_id.values()]
+    for av in (available, baseline_available):
+        if av is not None:
+            tops += list(av.values())
+    ax.set_ylim(0, max(tops) * 1.22)
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(loc='upper right', fontsize=8)
-    ax.set_title(f'Resources eaten by type — {tag} (chunk {chunk}, n={B})'
-                 + (f'\n{mapping}' if mapping else ''), fontsize=10)
+    ax.set_title(f'Resources eaten by type — {tag} (chunk {chunk}, n={B})',
+                 fontsize=11, pad=34 if mapping else 6)
+    if mapping:
+        # monospace : les colonnes ch0/ch1/ch2 des deux lignes doivent s'aligner
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center', va='bottom',
+                fontsize=8.5, family='monospace', color='dimgrey')
 
     plt.tight_layout()
     path = os.path.join(exp_dir, 'fig', 'adapt', tag)

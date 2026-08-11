@@ -22,11 +22,11 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS,HIGH_RES_COUNTS
+from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot)
-from simulation.utils.utils_sim import _video_worker, outputs_to_numpy
+from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
                                         ENERGY_EAT_WINDOW)
@@ -112,12 +112,40 @@ def _dispersion(arr, prefix, empty=0.0):
     }
 
 
-def rotation_desc(resources, rot):
-    """Renvoie (tag, mapping lisible) pour une rotation."""
+def rotation_name(resources, rot):
+    """Nom de la CONDITION testee : "<ce qui est remplace>_to_poison".
+
+    Le canal qui portait X se retrouve a porter le poison -> "X_to_poison".
+    C'est ce que l'agent subit : la case qu'il avait appris a manger devient
+    toxique.
+
+    C'est ce nom, et pas l'indice de rotation, qui sert de cle partout (donnees,
+    figures, videos) : `rot` n'est qu'un decalage de canaux, dont le SENS depend
+    de la config courante que shuffle_resources repermute en cours de run. Le
+    meme rot designe donc des conditions differentes au fil du temps, alors que
+    le nom designe toujours la meme -> a recalculer a chaque appel, jamais en dur.
+    """
+    if rot == 0:
+        return "baseline"
     rotated = rotate_resources(resources, rot)
-    mapping = " ".join(f"ch{k}:{LABELS[r.id]}" for k, r in enumerate(rotated))
-    tag = "rot0_baseline" if rot == 0 else f"rot{rot}"
-    return tag, mapping
+    poison_ch = next(k for k, r in enumerate(rotated) if LABELS[r.id] == "poison")
+    return f"{LABELS[resources[poison_ch].id]}_to_poison"
+
+
+def config_caption(resources, rotated, steps_in_place=None):
+    """Deux lignes alignees : config apprise vs config testee, + anciennete."""
+    fmt = lambda rs: " | ".join(f"ch{k} {LABELS[r.id]:<6}" for k, r in enumerate(rs))
+    since = ("" if steps_in_place is None
+             else f"   (in place for {steps_in_place:,} steps)".replace(",", " "))
+    return f"learned: {fmt(resources)}{since}\ntested : {fmt(rotated)}"
+
+
+def steps_since_last_shuffle(shuffle_log, step_now):
+    """Depuis combien de steps la config courante est-elle en place ?
+
+    Pas de shuffle encore -> la config initiale tient depuis le step 0."""
+    past = [e["step"] for e in shuffle_log if e["step"] <= step_now]
+    return int(step_now) - (max(past) if past else 0)
 
 class LabMixin:
 
@@ -190,21 +218,37 @@ class LabMixin:
             # dans les deux, seule la permutation des canaux differe.
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]
-            # les stocks du lab suivent l'IDENTITE, pas le canal (cf. launch_env_high_res)
-            available_by_id = {r.id: HIGH_RES_COUNTS[LABELS[r.id]] for r in self.cfg.resources}
+            # Plafond lu sur la grille de CHAQUE env : la permutation change le canal
+            # de chaque ressource, donc les tirages de croissance a l'init different
+            # legerement d'une rotation a l'autre -> un plafond par cote.
+            n_types = len(self.cfg.resources)
+            av_base = self.available_by_type(outputs_high, n_types)
+            baseline_available = {r.id: av_base[k] for k, r in enumerate(self.cfg.resources)}
+
+            # Depuis quand l'agent vit-il avec la config qu'on s'apprete a casser ?
+            # C'est ce qui dit s'il a eu le temps de l'apprendre.
+            steps_in_place = steps_since_last_shuffle(load_shuffle_log(exp_dir),
+                                                      int(state.step))
 
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
-                tag, mapping = rotation_desc(self.cfg.resources, rot)   # description par rot
-                title = f"lab_4 — adapt {tag} [{mapping}]  (config MODIFIÉE)"
+                # On indexe TOUT par la condition experimentale, pas par l'indice de
+                # rotation. `rot` n'est qu'un decalage de canaux : selon la config
+                # courante, rot1 est tantot good_to_poison tantot medium_to_poison.
+                # Grouper par rot melangerait donc deux conditions differentes dans
+                # la meme serie ; grouper par nom rassemble les memes.
+                name = rotation_name(self.cfg.resources, rot)
+                resources_rot = rotate_resources(self.cfg.resources, rot)
+                caption = config_caption(self.cfg.resources, resources_rot, steps_in_place)
+                title = f"lab_4 — adapt {name}  (config MODIFIÉE)\n{caption}"
 
                 agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot)
-                self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{tag}")
-                plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{tag}")
-                self._plot_energy(out_rot, exp_dir, f"adapt/{tag}", title)
+                self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{name}")
+                plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{name}")
+                self._plot_energy(out_rot, exp_dir, f"adapt/{name}", title)
 
-                resources_rot = rotate_resources(self.cfg.resources, rot)
+                av_rot = self.available_by_type(out_rot, n_types)
 
                 # Combien de chaque type l'agent a-t-il mange sous cette permutation,
                 # compare a lui-meme dans l'env non permute ?
@@ -213,21 +257,20 @@ class LabMixin:
                     ids_by_channel = [r.id for r in resources_rot],
                     exp_dir        = exp_dir,
                     chunk          = self.chunk_idx,
-                    tag            = tag,
-                    mapping        = mapping,
-                    # Borne HAUTE : deux ressources du meme type tirees sur la
-                    # meme case fusionnent a l'init.
-                    available      = available_by_id,
+                    tag            = name,
+                    mapping        = caption,
+                    available      = {r.id: av_rot[k] for k, r in enumerate(resources_rot)},
                     baseline       = eaten_baseline,
                     baseline_ids   = baseline_ids,
+                    baseline_available = baseline_available,
                 )
 
                 for b in range(2):
-                    vid = os.path.join(exp_dir, "videos", "adapt", tag,
-                                    f"adapt_{tag}_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                    vid = os.path.join(exp_dir, "videos", "adapt", name,
+                                    f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}.mp4")
                     submit_video(outputs_to_numpy(agent_slice(out_rot, b)), vid, 20, 10,
                                 resources_rot,
-                                label=f"adapt_{tag}_chunk_{self.chunk_idx}_lab_{b}")
+                                label=f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}")
 
     def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=10):
         """Sauve exp_dir/energy/<lab_dir>/chunk_<N>_agent_<b>.png pour les
@@ -245,6 +288,20 @@ class LabMixin:
             n_envs          = n_envs,
             env_title       = env_title,
         )
+
+    @staticmethod
+    def available_by_type(outputs_lab, n_types):
+        """(n_types,) : ressources PRESENTES sur la grille au debut du rollout, par CANAL.
+
+        A ne PAS confondre avec init_number_of_resources : init_state_lab lance
+        pre_growth_step iterations de resources_growth quoi qu'il arrive (le flag
+        cfg.resources_growth ne coupe que la repousse PENDANT l'episode), donc la
+        grille de depart contient bien plus que les graines initiales. On lit donc
+        le vrai contenu de la grille, ce qui suit automatiquement tout changement
+        de pre_growth_step. L'episode ne faisant pas repousser, ce total est aussi
+        le disponible sur toute la duree."""
+        grid0 = np.asarray(outputs_lab.grid[:, 0, :n_types])   # (B, n_types, L, L)
+        return grid0.sum(axis=(2, 3)).mean(axis=0)             # key_env partage -> grilles identiques
 
     @staticmethod
     def eaten_by_type(outputs_lab):
