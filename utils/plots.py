@@ -269,7 +269,6 @@ def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
         ax_p.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
 
     ax_p.set_xlim(generations[0], generations[-1])
-    ax_p.set_ylim(0, 1.02)                      # c'est une probabilite
     ax_p.axhline(0, color='grey', lw=0.6, alpha=0.5)
 
     present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
@@ -327,8 +326,7 @@ def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
             )
 
     fig.update_xaxes(title_text='Steps')
-    fig.update_yaxes(title_text='P(eat | in field of view)', secondary_y=False,
-                     range=[0, 1.02])
+    fig.update_yaxes(title_text='P(eat | in field of view)', secondary_y=False)
     fig.update_yaxes(title_text='Population size', secondary_y=True,
                      title_font=dict(color='red'), tickfont=dict(color='red'))
     fig.update_layout(title='P(eat | resource in field of view)'
@@ -384,7 +382,6 @@ def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
 
     ax.set_xlabel(f'{label} already eaten by this agent')
     ax.set_ylabel(f'P(eat {label} | in field of view)')
-    ax.set_ylim(0, 1.02)
     ax.set_zorder(ax_n.get_zorder() + 1); ax.patch.set_visible(False)
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(loc='upper right', fontsize=8)
