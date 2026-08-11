@@ -269,6 +269,13 @@ def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
         ax_p.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
 
     ax_p.set_xlim(generations[0], generations[-1])
+    # add_collection met a jour les limites de donnees mais ne les APPLIQUE pas :
+    # sans ce declenchement l'axe reste au defaut (0, 1) et des probabilites toutes
+    # faibles s'ecrasent en bas du cadre. Meme piege que dans plot_evolution.
+    # bottom=0 garde le zero comme ancrage : sinon une courbe oscillant entre 0.02
+    # et 0.05 remplit tout le graphe et parait tres instable.
+    ax_p.autoscale_view()
+    ax_p.set_ylim(bottom=0)
     ax_p.axhline(0, color='grey', lw=0.6, alpha=0.5)
 
     present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
