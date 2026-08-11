@@ -42,9 +42,9 @@ class ResourceConfig:
 
 
 BASE_RESOURCES = (
-    ResourceConfig(init_number_of_resources=30, prob_factor=0.065/0.75, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
-    ResourceConfig(init_number_of_resources=20, prob_factor=0.065/0.5,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
-    ResourceConfig(init_number_of_resources=15,  prob_factor=0.065/10,   pop_res_prob=4e-5, delta_energy=-1.0, id=2),
+    ResourceConfig(init_number_of_resources=30, prob_factor=0.0866, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
+    ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
+    ResourceConfig(init_number_of_resources=15,  prob_factor=0.0065,   pop_res_prob=4e-5, delta_energy=-1.0, id=2),
 )
 
 

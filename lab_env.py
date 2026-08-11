@@ -157,7 +157,7 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         n_agents_max=2,
         reproduction_on=False,
         resources_growth=False,
-        pre_growth_step=250,
+        pre_growth_step=200,
     )
     count_by_id = HIGH_RES_COUNTS
     cfg = cfg._replace(resources=tuple(
@@ -174,7 +174,7 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         n_agents_max=5,
         reproduction_on = False,
         resources_growth=False,
-        pre_growth_step = 250,
+        pre_growth_step = 200,
     )
     count_by_id =HIGH_RES_COUNTS
     

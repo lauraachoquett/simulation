@@ -165,7 +165,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             sim_data.update_mrca_and_plot(outputs,exp_dir)
             
 
-            
+            ## TEST AGENTS IN LAB ENV ##
             if ((chunk_idx) % cfg.pca_save_freq == 0) or (chunk_idx ==10):
                 subkey_lab,subkey_sim = random.split(subkey_lab)
                 def submit_video(outputs_np, vid_path, *args, label=None):
@@ -188,7 +188,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                 pending_futures[future] = chunk_idx
 
-            if (chunk_idx) % 100 == 0:
+
+            ## SHUFFLE RESOURCES ##
+            if (chunk_idx) % 200 == 0:
                 new_resources = shuffle_resources(BASE_RESOURCES, subkey)
 
                 old_resources = cfg.resources                    # (2) état COURANT, pas BASE
@@ -229,7 +231,7 @@ if __name__ =='__main__':
 
             ### Simulation computation :
             chunk_size = 1000,
-            num_chunks = 1000,
+            num_chunks = 1600,
             checkpoint_freq = 50,
             video_freq = 50,
             pca_save_freq=50,
@@ -244,15 +246,15 @@ if __name__ =='__main__':
             #Physiologie
             energy_decay=0.07/8,
             factor_energy_decay_not_moving = 0.3,
-            energy_max = 7.0,
+            energy_max = 8.0,
             
             time_to_die=100*4,
             time_above_repr = 80*4,
-            min_energy_repr = 3.,
+            min_energy_repr = 6.,
             starting_energy= 1.5,
             
             # Mutation parameters
-            mutation_var = 0.03,
+            mutation_var = 0.02,
             param_mutate = 0.99,
 
 
@@ -274,12 +276,11 @@ if __name__ =='__main__':
     
 
 
-    seed = 2
+    seed = 105
     key = random.PRNGKey(seed)
     print(jax.devices())
     
-    # resume_exp = "exp/2026-07-23/2026-07-23_16-30-15"
-    # chunk_id = 300
+    # resume_exp = "exp/2026-08-07/2026-08-07_17-45-30"
     # cfg,_ = load_config(resume_exp)
     
     state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)

@@ -55,10 +55,7 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         )
         pop_full      = np.concatenate(self.pop_history, axis=0)
         consumed_full = np.concatenate(self.consumed_history, axis=0)
-        plot_consumption(
-            pop_full, consumed_full, exp_dir, shuffle_log, initial_order_ids,
-            self.start_step,
-        )
+
         plot_consumption(
             pop_full, consumed_full, exp_dir, shuffle_log, initial_order_ids,
             self.start_step, window=100, name_fig='plot_conso_window_mean',
