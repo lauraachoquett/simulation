@@ -25,20 +25,22 @@ def init_state_lab(key, cfg, model,agent_params):
     grid_walls = grid_walls.at[-1,:].set(1)
     grid_walls = grid_walls.at[:,-1].set(1)
     
-    ## Grille ressources 
+    ## Grille ressources
     counts = tuple(r.init_number_of_resources for r in cfg.resources) #STATIQUE
     n_types = len(counts)
-    total = sum(counts)
 
-    # à quel type appartient chaque ressource : [0,...,0, 1,...,1, 2,...,2]
-    type_ids = jnp.repeat(jnp.arange(n_types), np.array(counts), total_repeat_length=total)
+    # Le tirage des positions est indexe par l'IDENTITE de la ressource, pas par
+    # le canal : une meme ressource doit occuper les memes cases quelle que soit
+    # la permutation des canaux (rotation du lab, shuffle_resources), sinon
+    # baseline et config permutee ne sont pas comparables.
+    ids = [r.id for r in cfg.resources]                    # canal -> identite
+    keys_pos = random.split(subkey_grid, max(ids) + 1)
 
-    # une position (ligne, colonne) par ressource
-    position_res = random.randint(subkey_grid, (total, 2), 0, cfg.grid_length)
-
-    # grille 3D : un plan par type
     grid_resources = jnp.zeros((n_types, cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
-    grid_resources = grid_resources.at[type_ids, position_res[:, 0], position_res[:, 1]].set(1)
+    for k, r in enumerate(cfg.resources):                  # cfg statique -> boucle deroulee
+        pos_k = random.randint(keys_pos[r.id], (r.init_number_of_resources, 2),
+                               0, cfg.grid_length)
+        grid_resources = grid_resources.at[k, pos_k[:, 0], pos_k[:, 1]].set(1)
 
     # on éteint les murs (broadcast du plan (L,L) sur l'axe type)
     grid_resources = jnp.where(grid_walls[None] == 1, 0, grid_resources)

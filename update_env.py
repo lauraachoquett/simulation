@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax
+import numpy as np
 
 from jax import random
 from functools import partial
@@ -37,10 +38,18 @@ def resources_growth(carry, cfg):
 
     prob_factor  = jnp.array([r.prob_factor  for r in cfg.resources])   # (n_types,)
     pop_res_prob = jnp.array([r.pop_res_prob for r in cfg.resources])   # (n_types,)
-    keys = jax.random.split(key_env, len(cfg.resources))
+
+    # L'alea suit l'IDENTITE de la ressource, pas l'indice de canal : sinon une
+    # ressource deplacee sur un autre canal (rotation du lab, shuffle_resources)
+    # herite d'une autre cle et pousse differemment, ce qui rend deux configs
+    # permutees incomparables. cfg est statique -> indexation statique.
+    ids = np.array([r.id for r in cfg.resources])                       # canal -> identite
+    n_ids = int(ids.max()) + 1
+    keys = jax.random.split(key_env, n_ids)[ids]
     new_plants = jax.vmap(respawn)(res_growth, keys, prob_factor, pop_res_prob)  # (n_types, L, L)
 
-    score  = random.uniform(key_tie, new_plants.shape) * new_plants
+    # meme raison pour le departage entre types
+    score  = random.uniform(key_tie, (n_ids,) + new_plants.shape[1:])[ids] * new_plants
     winner = (score == score.max(axis=0, keepdims=True)) & (new_plants > 0)
     new_plants = winner.astype(grid_resources.dtype)
     new_plants = new_plants * (1 - occupied)
