@@ -252,7 +252,7 @@ if __name__ =='__main__':
             starting_energy= 1.5,
             
             # Mutation parameters
-            mutation_var = 0.02,
+            mutation_var = 0.03,
             param_mutate = 0.99,
 
 
@@ -274,7 +274,7 @@ if __name__ =='__main__':
     
 
 
-    seed = 85
+    seed = 2
     key = random.PRNGKey(seed)
     print(jax.devices())
     
