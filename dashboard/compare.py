@@ -112,6 +112,16 @@ def _plot_key(png_path: Path, exp_dir: Path) -> str:
     return str(rel.parent / stem) if str(rel.parent) != "." else stem
 
 
+def _natural_key(path: str) -> list:
+    """Sort key treating digit runs as numbers.
+
+    Plain string sort puts `chunk_100` before `chunk_9`, so the last element was
+    not the newest chunk -- which is what "latest variant" relies on.
+    """
+    return [int(tok) if tok.isdigit() else tok.lower()
+            for tok in re.split(r"(\d+)", Path(path).name)]
+
+
 @st.cache_data(show_spinner=False)
 def discover_plots(exp_dir: str) -> dict[str, list[str]]:
     """Return {plot_key: [png paths...]} for one run, newest-numbered last."""
@@ -121,8 +131,19 @@ def discover_plots(exp_dir: str) -> dict[str, list[str]]:
         key = _plot_key(png, exp)
         groups.setdefault(key, []).append(str(png))
     for key in groups:
-        groups[key].sort()
+        groups[key].sort(key=_natural_key)
     return groups
+
+
+# The plot to show when the page opens; falls back to any non-per-chunk plots.
+_DEFAULT_PLOT = "plot_evo.png"
+
+
+def _default_plot_keys(plot_keys: list[str]) -> list[str]:
+    evo = [k for k in plot_keys if Path(k).name == _DEFAULT_PLOT]
+    if evo:
+        return evo
+    return [k for k in plot_keys if "chunk" not in k.lower()][:4] or plot_keys[:4]
 
 
 def _list_videos(exp_dir: str) -> list[str]:
@@ -150,6 +171,35 @@ def _highlight_diffs(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
         return [color] * len(row)
 
     return df.style.apply(_row_style, axis=1)
+
+
+def _plot_grid(key: str, sel_runs: list[dict], per_run_plots: dict,
+               n_cols: int, variant_mode: str) -> None:
+    """Lay one plot type out across runs, wrapping every `n_cols` figures."""
+    for start in range(0, len(sel_runs), n_cols):
+        # always allocate n_cols so a short last row keeps the same figure width
+        cols = st.columns(n_cols)
+        for col, r in zip(cols, sel_runs[start:start + n_cols]):
+            with col:
+                st.caption(r["id"])
+                paths = per_run_plots[r["id"]].get(key, [])
+                if not paths:
+                    st.write("—")
+                    continue
+                if len(paths) > 1 and variant_mode == "Pick per run":
+                    idx = st.select_slider(
+                        "variant", options=list(range(len(paths))),
+                        value=len(paths) - 1,
+                        format_func=lambda i, p=paths: Path(p[i]).name,
+                        key=f"{key}-{r['id']}",
+                    )
+                    path = paths[idx]
+                else:
+                    path = paths[-1]          # natural sort -> newest chunk
+                st.image(path, use_container_width=True)
+                if len(paths) > 1 and variant_mode == "Latest":
+                    # say which chunk is shown, since there is no slider to read
+                    st.caption(f"`{Path(path).name}`  ({len(paths)} variants)")
 
 
 def main() -> None:
@@ -231,32 +281,28 @@ def main() -> None:
             st.info("No PNG plots found in the selected runs.")
         else:
             chosen = st.multiselect(
-                "Plot types to show", plot_keys,
-                default=[k for k in plot_keys if "chunk" not in k.lower()][:4]
-                or plot_keys[:4],
+                "Plot types to show", plot_keys, default=_default_plot_keys(plot_keys),
             )
+
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                # One column per run makes each figure unreadable past ~4 runs,
+                # so wrap into a grid instead of stretching a single row.
+                n_cols = st.slider(
+                    "Figures per row", 1, 6, value=min(3, len(sel_runs)),
+                    help="Fewer columns = larger, more readable figures.",
+                )
+            with c2:
+                variant_mode = st.radio(
+                    "Per-chunk variant", ["Latest", "Pick per run"],
+                    horizontal=True,
+                    help="Plots saved once per chunk. 'Latest' avoids one slider "
+                         "per run when comparing many runs.",
+                )
+
             for key in chosen:
                 st.subheader(key)
-                cols = st.columns(len(sel_runs))
-                for col, r in zip(cols, sel_runs):
-                    with col:
-                        st.caption(r["id"])
-                        paths = per_run_plots[r["id"]].get(key, [])
-                        if not paths:
-                            st.write("—")
-                            continue
-                        # if several (per-chunk) variants, let user scrub
-                        if len(paths) > 1:
-                            idx = st.select_slider(
-                                "variant", options=list(range(len(paths))),
-                                value=len(paths) - 1,
-                                format_func=lambda i, p=paths: Path(p[i]).name,
-                                key=f"{key}-{r['id']}",
-                            )
-                            path = paths[idx]
-                        else:
-                            path = paths[0]
-                        st.image(path, use_container_width=True)
+                _plot_grid(key, sel_runs, per_run_plots, n_cols, variant_mode)
 
     # ---- Single run inspector -------------------------------------------- #
     with tab_single:
