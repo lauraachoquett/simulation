@@ -15,6 +15,7 @@ import os
 from simulation.utils.plots import (
     plot_evolution,
     plot_consumption,
+    plot_prob_eat_given_seen,
     plot_phase_portrait_png,
     plot_mean_movement,
     plot_current_config,
@@ -59,6 +60,13 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_consumption(
             pop_full, consumed_full, exp_dir, shuffle_log, initial_order_ids,
             self.start_step, window=100, name_fig='plot_conso_window_mean',
+        )
+        plot_prob_eat_given_seen(
+            pop_full,
+            np.concatenate(self.seen_history, axis=0),
+            np.concatenate(self.eaten_seen_history, axis=0),
+            exp_dir, shuffle_log, initial_order_ids,
+            self.start_step, window=100,
         )
         plot_phase_portrait_png(
             np.concatenate(self.pop_history, axis=0),

@@ -207,6 +207,200 @@ def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
     fig.write_html(os.path.join(path_save_fig, f'{name_fig}.html'))
 
 
+def plot_prob_eat_given_seen(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
+                             initial_order_ids, start_step=0, window=100,
+                             name_fig='plot_prob_eat'):
+    """P(manger le type k | type k dans le champ de vision), une courbe par identite.
+
+    n_seen / n_eaten : (T, n_types), comptes d'agents par pas (cf.
+    compute_seen_eaten_chunk). On agrege sur `window` pas puis on divise :
+    lisser le RAPPORT donnerait le meme poids a un pas ou 3 agents voient et a
+    un pas ou 300 voient."""
+    plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
+                      initial_order_ids, start_step, window, name_fig)
+    plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
+                       initial_order_ids, start_step, window, name_fig)
+
+
+def _pooled_ratio(n_seen, n_eaten, window):
+    """(T, n_types) : k/n agreges sur une fenetre glissante centree.
+
+    NaN la ou personne n'a rien vu -- P n'y est pas defini, et forcer 0 ferait
+    croire a un evitement parfait alors qu'il n'y a aucune donnee."""
+    n = np.asarray(n_seen, dtype=float)
+    k = np.asarray(n_eaten, dtype=float)
+    if n.ndim == 1:
+        n, k = n[:, None], k[:, None]
+    if window > 1 and len(n) >= window:
+        kern = np.ones(window)
+        pool = lambda a: np.stack(
+            [np.convolve(a[:, c], kern, mode='same') for c in range(a.shape[1])], axis=1)
+        n, k = pool(n), pool(k)
+    return np.divide(k, n, out=np.full_like(n, np.nan), where=n > 0)
+
+
+def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
+                      initial_order_ids, start_step=0, window=100,
+                      name_fig='plot_prob_eat'):
+    generations = np.arange(start_step, start_step + len(pop_history))
+    p = _pooled_ratio(n_seen, n_eaten, window)
+    n_types = p.shape[1]
+
+    fig, ax_pop = plt.subplots(figsize=(12, 6))
+    ax_pop.set_xlabel('Steps')
+    ax_pop.set_ylabel('Population size', color='tab:red')
+    ax_pop.plot(generations, pop_history, color='tab:red', linewidth=1.2, alpha=0.45)
+    ax_pop.tick_params(axis='y', labelcolor='tab:red')
+    ax_pop.grid(True, alpha=0.3)
+
+    ax_p = ax_pop.twinx()
+    ax_p.set_ylabel('P(eat | in field of view)')
+
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)
+
+    for k in range(n_types):
+        y     = p[:, k]
+        ids_k = id_timeline[:, k]
+        points = np.array([generations, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        # un segment touchant un NaN n'est pas trace par LineCollection -> les
+        # trous (personne n'a rien vu) restent visibles au lieu d'etre interpoles
+        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]
+        ax_p.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
+
+    ax_p.set_xlim(generations[0], generations[-1])
+    ax_p.set_ylim(0, 1.02)                      # c'est une probabilite
+    ax_p.axhline(0, color='grey', lw=0.6, alpha=0.5)
+
+    present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
+    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i])
+               for i in present_ids]
+    handles.append(Line2D([0], [0], color='tab:red', lw=1.2, alpha=0.45,
+                          label='population'))
+    ax_p.legend(handles=handles, loc='upper right', fontsize=8)
+
+    ax_pop.set_title('P(eat | resource in field of view)'
+                     + (f'  —  pooled over {window} steps' if window > 1 else ''))
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'{name_fig}.png')); plt.close()
+
+
+def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
+                       initial_order_ids, start_step=0, window=100,
+                       name_fig='plot_prob_eat'):
+    generations = np.arange(start_step, start_step + len(pop_history))
+    T = len(generations)
+    p = _pooled_ratio(n_seen, n_eaten, window)
+    n_types = p.shape[1]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(x=generations, y=pop_history, name='Agents',
+                   line=dict(color='red', width=1.2), opacity=0.45),
+        secondary_y=True,
+    )
+
+    id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)
+
+    def rgba(i):
+        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
+
+    seen = set()
+    for k in range(n_types):
+        ids_k = id_timeline[:, k]
+        change = np.where(np.diff(ids_k) != 0)[0] + 1
+        bounds = [0, *change.tolist(), T]
+        for s, e in zip(bounds[:-1], bounds[1:]):
+            i   = int(ids_k[s])
+            sl  = slice(s, min(e + 1, T))
+            show = i not in seen
+            seen.add(i)
+            fig.add_trace(
+                go.Scatter(
+                    x=generations[sl], y=p[sl, k],
+                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    line=dict(color=rgba(i), width=2),
+                ),
+                secondary_y=False,
+            )
+
+    fig.update_xaxes(title_text='Steps')
+    fig.update_yaxes(title_text='P(eat | in field of view)', secondary_y=False,
+                     range=[0, 1.02])
+    fig.update_yaxes(title_text='Population size', secondary_y=True,
+                     title_font=dict(color='red'), tickfont=dict(color='red'))
+    fig.update_layout(title='P(eat | resource in field of view)'
+                            + (f' — pooled over {window} steps' if window > 1 else ''))
+
+    path_save_fig = os.path.join(exp_dir, 'fig')
+    os.makedirs(path_save_fig, exist_ok=True)
+    fig.write_html(os.path.join(path_save_fig, f'{name_fig}.html'))
+
+
+def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
+                           label='poison', mapping='', baseline=None):
+    """P(manger `label` | `label` en vue) en fonction du nombre deja mange.
+
+    L'agent apprend-il a eviter le poison au fil de ses propres erreurs, AU COURS
+    D'UNE MEME VIE ? x = poisons deja manges avant l'observation, y = proportion
+    d'occasions saisies parmi celles ou le poison etait visible.
+
+    wilson : callable(k, n) -> (p, lo, hi), passe pour ne pas dupliquer
+    l'implementation de energy_response._wilson.
+    baseline : (n_seen, n_eaten) du meme agent dans l'env NON permute, trace en
+    reference horizontale."""
+    x = np.asarray(x_vals)
+    n = np.asarray(n_seen, dtype=float)
+    k = np.asarray(n_eaten, dtype=float)
+    p, lo, hi = wilson(k, n)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
+
+    ok = n > 0
+    ax.plot(x[ok], p[ok], 'o-', color=color, lw=2, ms=5, zorder=3,
+            label=f'P(eat {label} | {label} in view)')
+    ax.fill_between(x[ok], lo[ok], hi[ok], color=color, alpha=0.22, zorder=2,
+                    label='Wilson 95%')
+
+    if baseline is not None:
+        bn, bk = float(np.sum(baseline[0])), float(np.sum(baseline[1]))
+        if bn > 0:
+            bp, blo, bhi = wilson(np.array(bk), np.array(bn))
+            ax.axhline(float(bp), color='grey', ls='--', lw=1.4, zorder=1,
+                       label=f'baseline, no permutation ({float(bp):.2f})')
+            ax.axhspan(float(blo), float(bhi), color='grey', alpha=0.12, zorder=0)
+
+    # Le nombre d'observations s'effondre vite : au-dela de quelques poisons
+    # manges il ne reste presque plus d'agents, et une chute de P sur 3
+    # evenements ne veut rien dire. On montre donc n a cote de p.
+    ax_n = ax.twinx()
+    ax_n.bar(x, n, width=0.6, color='grey', alpha=0.16, zorder=0)
+    ax_n.set_ylabel('observations (n)', color='grey')
+    ax_n.tick_params(axis='y', labelcolor='grey')
+    ax_n.set_ylim(0, max(n.max(), 1) * 3)        # ecrase les barres en bas
+
+    ax.set_xlabel(f'{label} already eaten by this agent')
+    ax.set_ylabel(f'P(eat {label} | in field of view)')
+    ax.set_ylim(0, 1.02)
+    ax.set_zorder(ax_n.get_zorder() + 1); ax.patch.set_visible(False)
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    ax.set_title(f'Avoidance vs experience — {tag} (chunk {chunk})', fontsize=11,
+                 pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'prob_eat_{label}_vs_eaten_chunk_{chunk}.png'))
+    plt.close()
+
+
 def _eaten_by_identity(eaten, ids_by_channel):
     """Reindexe (B, n_types) de CANAL vers IDENTITE de ressource.
 

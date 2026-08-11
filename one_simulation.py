@@ -33,6 +33,8 @@ class StepLog(NamedTuple):
     step :     int
     obs :      jax.Array
     consumed_res: jax.Array   # (n_types,) -> unités retirées de la grille PENDANT ce step
+    saw_res:   jax.Array   # (N, n_types) -> ce type est-il dans le champ de vision ?
+    ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -94,11 +96,19 @@ def run_simulation_chunk(state,model,keys, cfg):
             reproduces = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,reproduces)
         
 
-        # Compute intern energy : resource consumption - energy decay 
-        local_resources = grid_resources[:, pos[:, 0], pos[:, 1]].T  
+        # Compute intern energy : resource consumption - energy decay
+        local_resources = grid_resources[:, pos[:, 0], pos[:, 1]].T
         gain = local_resources @ res.delta_energy
-        rewards = survives_int * gain 
+        rewards = survives_int * gain
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int, cfg.energy_max)
+
+        # ------- P(manger | en vue) : les deux termes, par agent et par type -------
+        # `ate` est exact, contrairement au signe de la recompense : un agent sur une
+        # case good+poison a un gain net nul et serait manque par `rewards > 0`.
+        ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
+        # obs est (N, side, side, C), canal en DERNIER ; le padding hors grille vaut
+        # -1, ecarte par le test > 0. C'est l'observation sur laquelle l'agent DECIDE.
+        saw_res_step = (state.obs[..., :n_types] > 0).any(axis=(1, 2))       # (N, n_types)
 
 
         # ------- 3. Environment dynamic -------
@@ -227,9 +237,12 @@ def run_simulation_chunk(state,model,keys, cfg):
             step = step_idx,
             time_under_min_energy = state.agents.time_under_min_energy,
             obs=state.obs,
-            # Seul champ produit PENDANT le step (les autres logguent l'etat de DEBUT de step).
-            # C'est l'alignement voulu : consumed_res[t] est preleve sur le stock grid[t].
+            # Seuls champs produits PENDANT le step (les autres logguent l'etat de DEBUT
+            # de step). C'est l'alignement voulu : consumed_res[t] est preleve sur le
+            # stock grid[t], et ate_res[t] suit l'observation saw_res[t] du meme pas.
             consumed_res = consumed_per_type,
+            saw_res = saw_res_step,
+            ate_res = ate_res_step,
         )
         
         return new_state, log

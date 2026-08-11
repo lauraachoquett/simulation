@@ -11,6 +11,30 @@ import numpy as np
 from simulation.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
 from simulation.utils.utils_sim import classify_outcome
 
+EAT_WINDOW = 5     # W : pas apres l'observation ou la consommation compte encore
+
+
+def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
+    """(T, n_types) x2 : n = agents voyant le type k, k_ = ceux qui le mangent.
+
+    On conditionne sur "type k dans le champ de vision au pas t" et on regarde
+    s'il y a consommation dans [t, t+window] : voir une ressource et l'atteindre
+    prend le temps d'y marcher, donc exiger la consommation au pas t sous-estime
+    massivement la propension (meme fenetre que energy_response).
+
+    Reduit des le chunk : garder (T, N, n_types) pour tout le run ferait
+    2000 agents x 1000 pas x 3 types et par chunk."""
+    saw = np.asarray(outputs.saw_res).astype(bool)      # (T, N, n_types)
+    ate = np.asarray(outputs.ate_res).astype(bool)      # (T, N, n_types)
+
+    ate_w = ate.copy()                                  # consommation dans [t, t+W]
+    for d in range(1, window + 1):
+        ate_w[:-d] |= ate[d:]
+
+    n_seen  = saw.sum(axis=1)                           # (T, n_types)
+    n_eaten = (saw & ate_w).sum(axis=1)                 # (T, n_types)
+    return n_seen, n_eaten
+
 
 class DemographyMixin:
 
@@ -18,6 +42,8 @@ class DemographyMixin:
         self.pop_history = []
         self.res_history = []
         self.consumed_history = []
+        self.seen_history = []
+        self.eaten_seen_history = []
         self.mov_history = []
         self.life_history = []
 
@@ -27,12 +53,15 @@ class DemographyMixin:
         n_types = len(self.cfg.resources)
         res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3)))
         consumed_chunk = np.array(outputs.consumed_res)           # (T, n_types)
+        seen_chunk, eaten_seen_chunk = compute_seen_eaten_chunk(outputs)
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
         self.pop_history.append(pop_chunk)
         self.res_history.append(res_chunk)
         self.consumed_history.append(consumed_chunk)
+        self.seen_history.append(seen_chunk)
+        self.eaten_seen_history.append(eaten_seen_chunk)
         self.mov_history.append(mov_chunk)
         self.life_history.append(life_chunk)
 
@@ -41,6 +70,8 @@ class DemographyMixin:
             population    = pop_chunk,
             resources     = res_chunk,
             consumed      = consumed_chunk,
+            n_seen        = seen_chunk,
+            n_eaten_seen  = eaten_seen_chunk,
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )

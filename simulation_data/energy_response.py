@@ -29,19 +29,29 @@ import numpy as np
 ENERGY_EAT_WINDOW = 5     # W : pas apres l'observation ou la consommation compte
 
 
-def _resource_in_view(obs):
-    """(T, N) booleen : au moins une ressource dans le champ de vision.
-    Identique au helper du bloc greediness — si lab.py le definit deja, importe
-    le sien et supprime cette copie. Canal 0 = ressources ; padding -1 ecarte
-    par le test > 0."""
+def resource_in_view(obs, channels, n_channels):
+    """(T, N) booleen : au moins un des `channels` est dans le champ de vision.
+
+    Definition UNIQUE, importee par lab.py (l'inverse ferait un cycle, lab.py
+    importe deja ce module).
+
+    Le CANAL EST LE DERNIER AXE : get_obs_vector (agent_mov.py:61) termine par
+    jnp.transpose(obs, (1, 2, 0)), donc obs vaut (T, N, side, side, C).
+    Indexer l'axe 2, comme le faisaient les deux versions precedentes, decoupe
+    en realite les premieres LIGNES de la vue tous canaux confondus : ca rate
+    une ressource au centre du champ de vision et compte un mur (canal murs
+    = 1 > 0) comme une ressource. Le padding hors grille vaut -1, ecarte par
+    le test > 0."""
     o = np.asarray(obs)
-    if o.ndim == 5:                      # (T, N, 3, side, side)
-        return (o[:, :, 0] > 0).any(axis=(2, 3))
-    if o.ndim == 4:                      # (T, N, 3, k)
-        return (o[:, :, 0] > 0).any(axis=2)
-    if o.ndim == 3:                      # (T, N, 3*k) aplati
-        k = o.shape[2] // 3
-        return (o[:, :, :k] > 0).any(axis=2)
+    g = np.asarray(channels)
+    if o.ndim == 5:                      # (T, N, side, side, C)
+        return (o[..., g] > 0).any(axis=(2, 3, 4))
+    if o.ndim == 4:                      # (T, N, k, C)
+        return (o[..., g] > 0).any(axis=(2, 3))
+    if o.ndim == 3:                      # (T, N, k*C) aplati (channel-minor)
+        k = o.shape[2] // n_channels     # nb de cases par canal
+        idx = np.concatenate([np.arange(c, k * n_channels, n_channels) for c in g])
+        return (o[:, :, idx] > 0).any(axis=2)
     raise ValueError(f"forme d'obs inattendue : {o.shape}")
 
 
@@ -121,9 +131,15 @@ def energy_response_over_envs(outputs_lab, cfg, bins=None, window=ENERGY_EAT_WIN
     if rew_all.ndim == 4 and rew_all.shape[-1] == 1:
         rew_all = rew_all[..., 0]
 
+    # canaux conditionnants : les ressources BENEFIQUES (l'ancienne version codait
+    # "canal 0" en dur, soit une ressource sur trois, et sur le mauvais axe)
+    delta_e    = np.array([r.delta_energy for r in cfg.resources])
+    channels   = np.where(delta_e > 0)[0]
+    n_channels = len(cfg.resources) + 2          # ressources + agents + murs
+
     B = alive_all.shape[0]
     for b in range(B):
-        saw = _resource_in_view(obs_all[b])                 # (T, N)
+        saw = resource_in_view(obs_all[b], channels, n_channels)   # (T, N)
         ate = np.zeros_like(saw, dtype=bool)                # consommation alignee
         if rew_lag > 0:
             ate[:-rew_lag] = rew_all[b, rew_lag:] > 0

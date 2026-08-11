@@ -25,10 +25,11 @@ from jax import random
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
-                            plot_eaten_by_type_boxplot)
+                            plot_eaten_by_type_boxplot, plot_prob_eat_vs_eaten)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
+                                        resource_in_view, _wilson,
                                         ENERGY_EAT_WINDOW)
 from simulation.data_class import LABELS
  
@@ -39,18 +40,8 @@ REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #     log.rewards[t] = recompense gagnee au pas t-1
 #   donc la recompense qui SUIT l'observation du pas t est log.rewards[t+1].
 
-def _resource_in_view(obs, good_channels, n_channels):
-    o = np.asarray(obs)
-    g = np.asarray(good_channels)
-    if o.ndim == 5:                      # (T, N, C, side, side)
-        return (o[:, :, g] > 0).any(axis=(2, 3, 4))
-    if o.ndim == 4:                      # (T, N, C, k)
-        return (o[:, :, g] > 0).any(axis=(2, 3))
-    if o.ndim == 3:                      # (T, N, C*k) aplati (channel-major)
-        k = o.shape[2] // n_channels     # taille d'un canal
-        idx = np.concatenate([np.arange(c*k, (c+1)*k) for c in g])
-        return (o[:, :, idx] > 0).any(axis=2)
-    raise ValueError(f"forme d'obs inattendue : {o.shape}")
+# definition unique dans energy_response (evite un cycle d'import)
+_resource_in_view = resource_in_view
  
  
 def _greediness(saw, ate, slot, birth_row, death_row, window=GREED_WINDOW):
@@ -230,6 +221,11 @@ class LabMixin:
             steps_in_place = steps_since_last_shuffle(load_shuffle_log(exp_dir),
                                                       int(state.step))
 
+            # Reference : la meme propension dans l'env NON permute, memes genomes.
+            # Poolee sur tout le rollout -> une seule valeur, tracee en horizontale.
+            _, n_base_poison, k_base_poison = self.prob_eat_vs_eaten(
+                outputs_high, self.cfg.resources)
+
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
@@ -264,6 +260,15 @@ class LabMixin:
                     baseline_ids   = baseline_ids,
                     baseline_available = baseline_available,
                 )
+
+                # L'agent apprend-il a eviter le poison au fil de ses erreurs ?
+                x_p, n_p, k_p = self.prob_eat_vs_eaten(out_rot, resources_rot)
+                if x_p.size:
+                    plot_prob_eat_vs_eaten(
+                        x_p, n_p, k_p, _wilson, exp_dir,
+                        chunk=self.chunk_idx, tag=name, mapping=caption,
+                        baseline=(n_base_poison, k_base_poison),
+                    )
 
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
@@ -302,6 +307,59 @@ class LabMixin:
         le disponible sur toute la duree."""
         grid0 = np.asarray(outputs_lab.grid[:, 0, :n_types])   # (B, n_types, L, L)
         return grid0.sum(axis=(2, 3)).mean(axis=0)             # key_env partage -> grilles identiques
+
+    @staticmethod
+    def prob_eat_vs_eaten(outputs_lab, resources_cfg, label="poison",
+                          window=ENERGY_EAT_WINDOW):
+        """(x, n, k) : P(manger `label` | `label` en vue) selon le nombre deja mange.
+
+        Pour chaque agent et chaque pas ou le type est visible :
+          x = combien il en a deja mange AVANT ce pas
+          y = 1 s'il en consomme dans [t, t+window]
+        On empile tous les agents par valeur de x -> n(x) observations, k(x)
+        succes. Les env de lab n'ont qu'un agent vivant, donc consumed_res (par
+        env) est sa consommation exacte, par type.
+
+        `resources_cfg` doit etre la config REELLEMENT jouee (permutee pour un
+        env adapt) : c'est elle qui dit quel canal porte le poison."""
+        ch = [k for k, r in enumerate(resources_cfg) if LABELS[r.id] == label]
+        if not ch:
+            return np.array([]), np.array([]), np.array([])
+        ch = ch[0]
+        n_channels = len(resources_cfg) + 2          # ressources + agents + murs
+
+        consumed = np.asarray(outputs_lab.consumed_res)[..., ch]   # (B, T)
+        alive    = np.asarray(outputs_lab.alive)                   # (B, T, N)
+        B, T = consumed.shape
+
+        # obs est (B, T, N, side, side, C) ; resource_in_view attend un seul axe
+        # temps devant, on replie donc B et T. reshape sur un tableau contigu est
+        # une vue -> pas de copie du (B, T, N, 11, 11, C).
+        obs = np.asarray(outputs_lab.obs)
+        saw_all = resource_in_view(obs.reshape((-1,) + obs.shape[2:]),
+                                   np.array([ch]), n_channels)     # (B*T, N)
+        saw_all = saw_all.reshape(B, T, -1)                        # (B, T, N)
+
+        counts = {}
+        for b in range(B):
+            ate = consumed[b] > 0                                  # (T,)
+            ate_w = ate.copy()                                     # dans [t, t+W]
+            for d in range(1, window + 1):
+                ate_w[:-d] |= ate[d:]
+            # cumul AVANT le pas t -> decalage de 1
+            cum = np.concatenate([[0], np.cumsum(consumed[b])[:-1]]).astype(int)
+            live = alive[b].any(axis=1)                            # (T,) un agent vivant
+            saw  = saw_all[b].any(axis=1) & live                   # (T,)
+            for t in np.where(saw)[0]:
+                n_, k_ = counts.get(cum[t], (0, 0))
+                counts[cum[t]] = (n_ + 1, k_ + int(ate_w[t]))
+
+        if not counts:
+            return np.array([]), np.array([]), np.array([])
+        x = np.array(sorted(counts))
+        n = np.array([counts[i][0] for i in x], dtype=float)
+        k = np.array([counts[i][1] for i in x], dtype=float)
+        return x, n, k
 
     @staticmethod
     def eaten_by_type(outputs_lab):
