@@ -191,7 +191,7 @@ class LabMixin:
             self._plot_energy(outputs_clones, exp_dir, "high_res_clones",
                             "lab_3 — high_res with clones")
 
-            self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
+            # self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
             for b in range(3):
                 vid = os.path.join(exp_dir, "videos", "high_res_clones",
                                 f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
