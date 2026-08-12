@@ -62,20 +62,35 @@ def resource_in_view(obs, channels, n_channels):
 
 def default_energy_bins(cfg):
     """Bins fixes ancres aux seuils physiques (comparables entre chunks).
-      e_die = energy_to_die (0)     -> frontiere letale
-      e_rep = min_energy_repr (4)   -> seuil de reproduction
-    Resolution fine entre les deux (la ou la decision est interessante),
-    grossiere au-dela. Modifie cette fonction pour changer le decoupage."""
+      e_die = energy_to_die      -> frontiere letale
+      e_rep = min_energy_repr    -> seuil de reproduction
+      e_max = energy_max         -> plafond dur (new_energy est clampe dessus)
+
+    Resolution fine entre e_die et e_rep, la ou la decision est interessante.
+
+    Le HAUT est ancre sur e_max, pas extrapole depuis e_rep. L'ancienne version
+    posait ses bornes a e_rep + 0.5*span et e_rep + 1.5*span, soit 9 et 15 pour
+    la config actuelle (e_rep=6) : au-dessus du plafond 8, donc deux bins
+    toujours VIDES et un bin [6, 9) qui agregeait tout le haut de la gamme.
+
+    Le dernier bin [e_max, inf) isole les agents colles au plafond. Ce n'est pas
+    un residu : new_energy = min(..., energy_max) fait que ce sont exactement
+    ceux qui mangent en continu, une population a part qui tirait vers le haut
+    le bin large precedent."""
     e_die = float(cfg.energy_to_die)
     e_rep = float(cfg.min_energy_repr)
-    return np.array([-np.inf, e_die,
-                     e_die + 0.25 * (e_rep - e_die),
-                     e_die + 0.50 * (e_rep - e_die),
-                     e_die + 0.75 * (e_rep - e_die),
-                     e_rep,
-                     e_rep + 0.5 * (e_rep - e_die),
-                     e_rep + 1.5 * (e_rep - e_die),
-                     np.inf])
+    span  = e_rep - e_die
+    e_max = float(getattr(cfg, "energy_max", e_rep + span))
+
+    edges = [-np.inf, e_die,
+             e_die + 0.25 * span,
+             e_die + 0.50 * span,
+             e_die + 0.75 * span,
+             e_rep]
+    if e_max > e_rep:                       # garde-fou si le plafond est sous le seuil
+        edges += [0.5 * (e_rep + e_max), e_max]
+    edges.append(np.inf)
+    return np.array(edges)
 
 
 def _ate_within_window(ate_col, window):
