@@ -422,50 +422,68 @@ def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
     plt.close()
 
 
-def plot_prob_eat_over_life(curves, exp_dir, chunk, tag, label='poison',
-                            mapping='', baseline=None):
-    """Une courbe par agent, le long de SA propre vie, + la mediane.
+def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, tag,
+                            label='poison', mapping='', baseline=None):
+    """Une courbe par agent au fil du TEMPS, + la mediane.
 
     curves : (B, n_bins) — P(manger | en vue) de chaque agent dans chaque
-    tranche de ses rencontres (cf. LabMixin.prob_eat_over_life).
+    tranche de temps (cf. LabMixin.prob_eat_over_life). NaN la ou un agent n'a
+    pas rencontre le type dans la tranche -> agregation par nanmedian.
 
-    Chaque agent etant compare a lui-meme, le biais de composition de
-    prob_eat_vs_eaten disparait : la ou cet axe-la monte meme sans
-    apprentissage, celui-ci reste plat.
+    Chaque agent etant compare a lui-meme sur un axe qui ne depend PAS de ses
+    choix, le biais de composition de prob_eat_vs_eaten disparait : la ou cet
+    axe-la monte meme sans apprentissage, celui-ci reste plat.
 
-    Le chiffre a lire est la fraction d'agents a pente negative : 50% = le
-    hasard, au-dessus = la population s'adapte."""
+    Lire la mediane en premier : les pentes par agent reposent sur peu
+    d'evenements, donc la fraction d'agents decroissants est un signal plus
+    faible que le deplacement de la mediane."""
     c = np.asarray(curves, dtype=float)
     if c.size == 0:
         return
     B, n_bins = c.shape
     x = np.arange(n_bins)
 
-    # pente par agent (regression lineaire sur ses propres tranches)
-    pentes = np.array([np.polyfit(x, ci, 1)[0] for ci in c])
-    frac_dec = float(np.mean(pentes < 0))
+    # pente par agent, sur ses tranches renseignees uniquement
+    pentes = []
+    for ci in c:
+        ok = np.isfinite(ci)
+        if ok.sum() >= 2:
+            pentes.append(np.polyfit(x[ok], ci[ok], 1)[0])
+    pentes = np.array(pentes)
+    frac_dec = float(np.mean(pentes < 0)) if pentes.size else float('nan')
+    n_pentes = pentes.size
     # test du signe contre 50% : ecart-type binomial sous H0
-    z = (frac_dec - 0.5) / (0.5 / np.sqrt(B)) if B else 0.0
+    z = (frac_dec - 0.5) / (0.5 / np.sqrt(n_pentes)) if n_pentes else 0.0
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
     color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
 
     for ci in c:                                    # faisceau individuel
         ax.plot(x, ci, color=color, alpha=0.13, lw=1, zorder=2)
-    med = np.median(c, axis=0)
-    q25, q75 = np.percentile(c, [25, 75], axis=0)
-    ax.fill_between(x, q25, q75, color=color, alpha=0.20, zorder=3,
-                    label='p25–p75 entre agents')
-    ax.plot(x, med, 'o-', color=color, lw=2.5, ms=6, zorder=4, label='médiane')
 
-    if baseline is not None and np.size(baseline):
-        b = np.asarray(baseline, dtype=float)
-        ax.axhline(float(np.median(b)), color='grey', ls='--', lw=1.4, zorder=1,
-                   label=f'baseline, no permutation ({np.median(b):.3f})')
+    # Courbe agregee : ratio POOLE, pas la mediane des ratios par agent. Avec
+    # une centaine de rencontres par agent et par tranche et p ~ 0.03, chaque
+    # valeur individuelle est un multiple de 1/n : la mediane saute entre ces
+    # niveaux discrets et bouge de +/-30% sans qu'il se passe rien.
+    n_p = np.asarray(n_pooled, dtype=float)
+    k_p = np.asarray(k_pooled, dtype=float)
+    p, lo_w, hi_w = wilson(k_p, n_p)
+    ok = n_p > 0
+    ax.fill_between(x[ok], lo_w[ok], hi_w[ok], color=color, alpha=0.22, zorder=3,
+                    label='Wilson 95%')
+    ax.plot(x[ok], p[ok], 'o-', color=color, lw=2.5, ms=6, zorder=4,
+            label='pooled over agents')
+
+    if baseline is not None and len(baseline) == 2 and np.sum(baseline[0]) > 0:
+        bn, bk = float(np.sum(baseline[0])), float(np.sum(baseline[1]))
+        bp = bk / bn
+        ax.axhline(bp, color='grey', ls='--', lw=1.4, zorder=1,
+                   label=f'baseline, no permutation ({bp:.3f})')
 
     ax.set_xticks(x)
-    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
-    ax.set_xlabel(f"agent's own {label} encounters (ordered over its life)")
+    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%\nn={int(v)}'
+                        for i, v in zip(x, n_p)], fontsize=8)
+    ax.set_xlabel(f"fraction of the agent's own lifetime")
     ax.set_ylabel(f'P(eat {label} | in field of view)')
     ax.set_ylim(bottom=0)
     ax.grid(True, axis='y', alpha=0.3)
@@ -474,11 +492,12 @@ def plot_prob_eat_over_life(curves, exp_dir, chunk, tag, label='poison',
     # peu d'evenements chacune, donc `frac_dec` bouge moins que la mediane meme
     # quand l'adaptation est franche. On affiche les deux.
     # variation RELATIVE signee : negative = l'agent mange moins en fin de vie
-    var = (med[-1] - med[0]) / med[0] if med[0] > 0 else float('nan')
+    first, last = p[ok][0], p[ok][-1]
+    var = (last - first) / first if first > 0 else float('nan')
     ax.text(0.02, 0.96,
-            f'médiane {med[0]:.3f} → {med[-1]:.3f}'
+            f'{first:.3f} → {last:.3f}'
             + (f'  ({var:+.0%})' if np.isfinite(var) else '')
-            + f'\n{frac_dec:.0%} des {B} agents décroissent  (50% = hasard, z={z:+.1f})',
+            + f'\n{frac_dec:.0%} des {n_pentes} agents décroissent  (50% = hasard, z={z:+.1f})',
             transform=ax.transAxes, ha='left', va='top', fontsize=9,
             bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
     ax.set_title(f'Within-life adaptation — {tag} (chunk {chunk})', fontsize=11,

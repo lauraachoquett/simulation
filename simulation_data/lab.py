@@ -226,7 +226,8 @@ class LabMixin:
             # Poolee sur tout le rollout -> une seule valeur, tracee en horizontale.
             _, n_base_poison, k_base_poison = self.prob_eat_vs_eaten(
                 outputs_high, self.cfg.resources)
-            life_baseline = self.prob_eat_over_life(outputs_high, self.cfg.resources)
+            _, life_bn, life_bk = self.prob_eat_over_life(outputs_high, self.cfg.resources)
+            life_baseline = (life_bn, life_bk)
 
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
@@ -274,10 +275,11 @@ class LabMixin:
 
                 # Meme question, mais chaque agent compare a LUI-MEME : c'est
                 # celle-ci qui est interpretable (cf. prob_eat_over_life).
-                life = self.prob_eat_over_life(out_rot, resources_rot)
+                life, life_n, life_k = self.prob_eat_over_life(out_rot, resources_rot)
                 if life.size:
                     plot_prob_eat_over_life(
-                        life, exp_dir, chunk=self.chunk_idx, tag=name,
+                        life, life_n, life_k, _wilson, exp_dir,
+                        chunk=self.chunk_idx, tag=name,
                         mapping=caption, baseline=life_baseline,
                     )
 
@@ -324,8 +326,9 @@ class LabMixin:
                        window=ENERGY_EAT_WINDOW):
         """Par agent : la suite ORDONNEE de ses rencontres avec `label`.
 
-        Rend une liste de B tuples (cum, y) ou, pour chaque pas t ou le type
+        Rend une liste de B tuples (t, cum, y) ou, pour chaque pas t ou le type
         etait dans le champ de vision et l'agent vivant :
+          t[i]   = le pas lui-meme
           cum[i] = combien il en avait deja mange AVANT ce pas
           y[i]   = 1 s'il en consomme dans [t, t+window]
 
@@ -360,33 +363,61 @@ class LabMixin:
             live = alive[b].any(axis=1)                            # (T,) un agent vivant
             saw  = saw_all[b].any(axis=1) & live                   # (T,)
             idx  = np.where(saw)[0]                                # deja trie
-            events.append((cum[idx], ate_w[idx].astype(int)))
-        return events
+            events.append((idx, cum[idx], ate_w[idx].astype(int)))
+        return events, T
 
     @staticmethod
     def prob_eat_over_life(outputs_lab, resources_cfg, label="poison",
                            n_bins=4, window=ENERGY_EAT_WINDOW, min_events=8):
-        """(B', n_bins) : P(manger | en vue) par agent, le long de SA propre vie.
+        """P(manger | en vue) le long de la VIE PROPRE de chaque agent.
 
-        La vie de chaque agent est decoupee en `n_bins` tranches de meme nombre
-        de RENCONTRES (pas de meme duree), puis P est calcule dans chacune.
+        Rend (courbes, n, k) : courbes (B', n_bins) par agent, et n/k (n_bins,)
+        les comptes pooles sur tous les agents.
 
-        Pourquoi pas l'axe "poison deja mange" de prob_eat_vs_eaten : cet axe est
-        un cumul de la variable mesuree, donc atteindre une valeur elevee exige
-        d'avoir beaucoup mange. La queue ne contient que les gros mangeurs et la
-        courbe monte meme SANS aucun apprentissage. Decouper la vie de chaque
-        agent supprime cette composition : chaque agent est compare a lui-meme.
+        L'intervalle [naissance, mort] de CHAQUE agent est decoupe en `n_bins`
+        tranches de duree egale. Deux raisons de normaliser par la vie plutot
+        que d'utiliser le temps absolu du rollout :
 
-        Les agents avec moins de `min_events` rencontres sont ecartes : on ne
-        peut pas decouper en `n_bins` tranches ce qui n'a presque rien dedans."""
+          - les agents ne vivent pas tous aussi longtemps (mort de faim). Sur un
+            axe en temps absolu, un agent mort tot ne peuple que les premieres
+            tranches, donc les tranches tardives ne contiennent que des
+            survivants -- et si ce sont les mangeurs de poison qui meurent, on
+            lirait une fausse decroissance. Ici chaque agent couvre TOUT l'axe.
+          - "poison deja mange" serait pire encore : c'est un cumul de la
+            variable mesuree, donc la courbe monte meme SANS apprentissage.
+
+        L'axe est le temps et non le nombre de poisons manges, car un agent
+        apprend aussi en mangeant les BONNES ressources : son experience ne se
+        resume pas a ses erreurs.
+
+        Les courbes par agent sont bruitees (peu de rencontres par tranche, donc
+        des valeurs multiples de 1/n) : c'est n et k, pooles, qui donnent la
+        courbe agregee stable. NaN quand un agent n'a rien rencontre dans une
+        tranche. Les agents avec moins de `min_events` rencontres sont ecartes."""
+        events, _T = LabMixin._poison_events(outputs_lab, resources_cfg, label, window)
+        alive = np.asarray(outputs_lab.alive)                  # (B, T, N)
+
         out = []
-        for cum, y in LabMixin._poison_events(outputs_lab, resources_cfg, label, window):
-            n = len(y)
-            if n < max(min_events, n_bins):
+        n_tot = np.zeros(n_bins, dtype=int)
+        k_tot = np.zeros(n_bins, dtype=int)
+        for b, (t, _cum, y) in enumerate(events):
+            if len(y) < min_events:
                 continue
-            out.append([float(np.mean(y[q * n // n_bins:(q + 1) * n // n_bins]))
-                        for q in range(n_bins)])
-        return np.array(out) if out else np.zeros((0, n_bins))
+            live = np.where(alive[b].any(axis=1))[0]           # pas ou il est vivant
+            if live.size == 0:
+                continue
+            lo, hi = int(live[0]), int(live[-1]) + 1           # sa vie a lui
+            duree = max(hi - lo, n_bins)
+            ligne = []
+            for q in range(n_bins):
+                a = lo + q * duree // n_bins
+                z = lo + (q + 1) * duree // n_bins
+                m = (t >= a) & (t < z)
+                n_tot[q] += int(m.sum())
+                k_tot[q] += int(y[m].sum())
+                ligne.append(float(np.mean(y[m])) if m.any() else np.nan)
+            out.append(ligne)
+        return (np.array(out) if out else np.zeros((0, n_bins))), n_tot, k_tot
 
     @staticmethod
     def prob_eat_vs_eaten(outputs_lab, resources_cfg, label="poison",
@@ -398,7 +429,8 @@ class LabMixin:
         atteignent les x eleves). Pour juger l'adaptation, utiliser plutot
         prob_eat_over_life, qui compare chaque agent a lui-meme."""
         counts = {}
-        for cum, y in LabMixin._poison_events(outputs_lab, resources_cfg, label, window):
+        events, _T = LabMixin._poison_events(outputs_lab, resources_cfg, label, window)
+        for _t, cum, y in events:
             for c, yi in zip(cum, y):
                 n_, k_ = counts.get(int(c), (0, 0))
                 counts[int(c)] = (n_ + 1, k_ + int(yi))
