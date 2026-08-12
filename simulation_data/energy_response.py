@@ -26,7 +26,12 @@ import json
 import numpy as np
 
 
-ENERGY_EAT_WINDOW = 5     # W : pas apres l'observation ou la consommation compte
+# W : pas apres l'observation ou la consommation compte encore.
+# = 2 * cfg.agent_view : dans une vue de cote 2v+1, la case la plus eloignee est
+# a une distance de MANHATTAN de 2v (les deplacements sont 4-connexes), pas v.
+# A W = v, la moitie du champ de vision etait hors de portee et ces evenements
+# comptaient quand meme au denominateur, ce qui ecrasait P vers le bas.
+ENERGY_EAT_WINDOW = 10
 
 
 def resource_in_view(obs, channels, n_channels):

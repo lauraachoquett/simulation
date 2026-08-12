@@ -11,7 +11,10 @@ import numpy as np
 from simulation.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
 from simulation.utils.utils_sim import classify_outcome
 
-EAT_WINDOW = 5     # W : pas apres l'observation ou la consommation compte encore
+# W : pas apres l'observation ou la consommation compte encore. Doit rester egal
+# a ENERGY_EAT_WINDOW (energy_response.py), sinon la sim principale et le lab ne
+# mesurent plus la meme chose. = 2 * cfg.agent_view, cf. le commentaire la-bas.
+EAT_WINDOW = 10
 
 
 def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
