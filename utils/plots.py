@@ -345,7 +345,8 @@ def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
 
 
 def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
-                           label='poison', mapping='', baseline=None):
+                           label='poison', mapping='', baseline=None,
+                           coverage=0.99):
     """P(manger `label` | `label` en vue) en fonction du nombre deja mange.
 
     L'agent apprend-il a eviter le poison au fil de ses propres erreurs, AU COURS
@@ -359,6 +360,18 @@ def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
     x = np.asarray(x_vals)
     n = np.asarray(n_seen, dtype=float)
     k = np.asarray(n_eaten, dtype=float)
+
+    # On coupe la queue : au-dela de `coverage` de la masse d'observations, les
+    # bins ne portent que quelques evenements et la courbe y part dans tous les
+    # sens. Le critere est cumulatif en x, donc il tronque un intervalle -- il ne
+    # selectionne pas des points un a un sur leur valeur.
+    if 0 < coverage < 1 and n.sum() > 0:
+        keep = np.searchsorted(np.cumsum(n) / n.sum(), coverage) + 1
+        n_drop, x_max = len(x) - keep, (x[keep - 1] if keep else None)
+        x, n, k = x[:keep], n[:keep], k[:keep]
+    else:
+        n_drop = 0
+
     p, lo, hi = wilson(k, n)
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
@@ -392,6 +405,10 @@ def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
     ax.set_zorder(ax_n.get_zorder() + 1); ax.patch.set_visible(False)
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(loc='upper right', fontsize=8)
+    if n_drop:
+        ax.text(0.99, 0.88, f'+{n_drop} bins coupés (<{1-coverage:.0%} des obs.)',
+                transform=ax.transAxes, ha='right', va='top',
+                fontsize=7.5, color='0.45')
     ax.set_title(f'Avoidance vs experience — {tag} (chunk {chunk})', fontsize=11,
                  pad=34 if mapping else 6)
     if mapping:
@@ -402,6 +419,78 @@ def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
     path = os.path.join(exp_dir, 'fig', 'adapt', tag)
     os.makedirs(path, exist_ok=True)
     plt.savefig(os.path.join(path, f'prob_eat_{label}_vs_eaten_chunk_{chunk}.png'))
+    plt.close()
+
+
+def plot_prob_eat_over_life(curves, exp_dir, chunk, tag, label='poison',
+                            mapping='', baseline=None):
+    """Une courbe par agent, le long de SA propre vie, + la mediane.
+
+    curves : (B, n_bins) — P(manger | en vue) de chaque agent dans chaque
+    tranche de ses rencontres (cf. LabMixin.prob_eat_over_life).
+
+    Chaque agent etant compare a lui-meme, le biais de composition de
+    prob_eat_vs_eaten disparait : la ou cet axe-la monte meme sans
+    apprentissage, celui-ci reste plat.
+
+    Le chiffre a lire est la fraction d'agents a pente negative : 50% = le
+    hasard, au-dessus = la population s'adapte."""
+    c = np.asarray(curves, dtype=float)
+    if c.size == 0:
+        return
+    B, n_bins = c.shape
+    x = np.arange(n_bins)
+
+    # pente par agent (regression lineaire sur ses propres tranches)
+    pentes = np.array([np.polyfit(x, ci, 1)[0] for ci in c])
+    frac_dec = float(np.mean(pentes < 0))
+    # test du signe contre 50% : ecart-type binomial sous H0
+    z = (frac_dec - 0.5) / (0.5 / np.sqrt(B)) if B else 0.0
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
+
+    for ci in c:                                    # faisceau individuel
+        ax.plot(x, ci, color=color, alpha=0.13, lw=1, zorder=2)
+    med = np.median(c, axis=0)
+    q25, q75 = np.percentile(c, [25, 75], axis=0)
+    ax.fill_between(x, q25, q75, color=color, alpha=0.20, zorder=3,
+                    label='p25–p75 entre agents')
+    ax.plot(x, med, 'o-', color=color, lw=2.5, ms=6, zorder=4, label='médiane')
+
+    if baseline is not None and np.size(baseline):
+        b = np.asarray(baseline, dtype=float)
+        ax.axhline(float(np.median(b)), color='grey', ls='--', lw=1.4, zorder=1,
+                   label=f'baseline, no permutation ({np.median(b):.3f})')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
+    ax.set_xlabel(f"agent's own {label} encounters (ordered over its life)")
+    ax.set_ylabel(f'P(eat {label} | in field of view)')
+    ax.set_ylim(bottom=0)
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    # La MEDIANE est le signal le plus net : les pentes par agent reposent sur
+    # peu d'evenements chacune, donc `frac_dec` bouge moins que la mediane meme
+    # quand l'adaptation est franche. On affiche les deux.
+    # variation RELATIVE signee : negative = l'agent mange moins en fin de vie
+    var = (med[-1] - med[0]) / med[0] if med[0] > 0 else float('nan')
+    ax.text(0.02, 0.96,
+            f'médiane {med[0]:.3f} → {med[-1]:.3f}'
+            + (f'  ({var:+.0%})' if np.isfinite(var) else '')
+            + f'\n{frac_dec:.0%} des {B} agents décroissent  (50% = hasard, z={z:+.1f})',
+            transform=ax.transAxes, ha='left', va='top', fontsize=9,
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
+    ax.set_title(f'Within-life adaptation — {tag} (chunk {chunk})', fontsize=11,
+                 pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'prob_eat_{label}_over_life_chunk_{chunk}.png'))
     plt.close()
 
 

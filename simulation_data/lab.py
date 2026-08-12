@@ -25,7 +25,8 @@ from jax import random
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
-                            plot_eaten_by_type_boxplot, plot_prob_eat_vs_eaten)
+                            plot_eaten_by_type_boxplot, plot_prob_eat_vs_eaten,
+                            plot_prob_eat_over_life)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -225,6 +226,7 @@ class LabMixin:
             # Poolee sur tout le rollout -> une seule valeur, tracee en horizontale.
             _, n_base_poison, k_base_poison = self.prob_eat_vs_eaten(
                 outputs_high, self.cfg.resources)
+            life_baseline = self.prob_eat_over_life(outputs_high, self.cfg.resources)
 
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
@@ -270,6 +272,15 @@ class LabMixin:
                         baseline=(n_base_poison, k_base_poison),
                     )
 
+                # Meme question, mais chaque agent compare a LUI-MEME : c'est
+                # celle-ci qui est interpretable (cf. prob_eat_over_life).
+                life = self.prob_eat_over_life(out_rot, resources_rot)
+                if life.size:
+                    plot_prob_eat_over_life(
+                        life, exp_dir, chunk=self.chunk_idx, tag=name,
+                        mapping=caption, baseline=life_baseline,
+                    )
+
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
                                     f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}.mp4")
@@ -309,22 +320,20 @@ class LabMixin:
         return grid0.sum(axis=(2, 3)).mean(axis=0)             # key_env partage -> grilles identiques
 
     @staticmethod
-    def prob_eat_vs_eaten(outputs_lab, resources_cfg, label="poison",
-                          window=ENERGY_EAT_WINDOW):
-        """(x, n, k) : P(manger `label` | `label` en vue) selon le nombre deja mange.
+    def _poison_events(outputs_lab, resources_cfg, label="poison",
+                       window=ENERGY_EAT_WINDOW):
+        """Par agent : la suite ORDONNEE de ses rencontres avec `label`.
 
-        Pour chaque agent et chaque pas ou le type est visible :
-          x = combien il en a deja mange AVANT ce pas
-          y = 1 s'il en consomme dans [t, t+window]
-        On empile tous les agents par valeur de x -> n(x) observations, k(x)
-        succes. Les env de lab n'ont qu'un agent vivant, donc consumed_res (par
-        env) est sa consommation exacte, par type.
+        Rend une liste de B tuples (cum, y) ou, pour chaque pas t ou le type
+        etait dans le champ de vision et l'agent vivant :
+          cum[i] = combien il en avait deja mange AVANT ce pas
+          y[i]   = 1 s'il en consomme dans [t, t+window]
 
         `resources_cfg` doit etre la config REELLEMENT jouee (permutee pour un
         env adapt) : c'est elle qui dit quel canal porte le poison."""
         ch = [k for k, r in enumerate(resources_cfg) if LABELS[r.id] == label]
         if not ch:
-            return np.array([]), np.array([]), np.array([])
+            return []
         ch = ch[0]
         n_channels = len(resources_cfg) + 2          # ressources + agents + murs
 
@@ -340,7 +349,7 @@ class LabMixin:
                                    np.array([ch]), n_channels)     # (B*T, N)
         saw_all = saw_all.reshape(B, T, -1)                        # (B, T, N)
 
-        counts = {}
+        events = []
         for b in range(B):
             ate = consumed[b] > 0                                  # (T,)
             ate_w = ate.copy()                                     # dans [t, t+W]
@@ -350,9 +359,49 @@ class LabMixin:
             cum = np.concatenate([[0], np.cumsum(consumed[b])[:-1]]).astype(int)
             live = alive[b].any(axis=1)                            # (T,) un agent vivant
             saw  = saw_all[b].any(axis=1) & live                   # (T,)
-            for t in np.where(saw)[0]:
-                n_, k_ = counts.get(cum[t], (0, 0))
-                counts[cum[t]] = (n_ + 1, k_ + int(ate_w[t]))
+            idx  = np.where(saw)[0]                                # deja trie
+            events.append((cum[idx], ate_w[idx].astype(int)))
+        return events
+
+    @staticmethod
+    def prob_eat_over_life(outputs_lab, resources_cfg, label="poison",
+                           n_bins=4, window=ENERGY_EAT_WINDOW, min_events=8):
+        """(B', n_bins) : P(manger | en vue) par agent, le long de SA propre vie.
+
+        La vie de chaque agent est decoupee en `n_bins` tranches de meme nombre
+        de RENCONTRES (pas de meme duree), puis P est calcule dans chacune.
+
+        Pourquoi pas l'axe "poison deja mange" de prob_eat_vs_eaten : cet axe est
+        un cumul de la variable mesuree, donc atteindre une valeur elevee exige
+        d'avoir beaucoup mange. La queue ne contient que les gros mangeurs et la
+        courbe monte meme SANS aucun apprentissage. Decouper la vie de chaque
+        agent supprime cette composition : chaque agent est compare a lui-meme.
+
+        Les agents avec moins de `min_events` rencontres sont ecartes : on ne
+        peut pas decouper en `n_bins` tranches ce qui n'a presque rien dedans."""
+        out = []
+        for cum, y in LabMixin._poison_events(outputs_lab, resources_cfg, label, window):
+            n = len(y)
+            if n < max(min_events, n_bins):
+                continue
+            out.append([float(np.mean(y[q * n // n_bins:(q + 1) * n // n_bins]))
+                        for q in range(n_bins)])
+        return np.array(out) if out else np.zeros((0, n_bins))
+
+    @staticmethod
+    def prob_eat_vs_eaten(outputs_lab, resources_cfg, label="poison",
+                          window=ENERGY_EAT_WINDOW):
+        """(x, n, k) : P(manger `label` | `label` en vue) selon le nombre deja mange.
+
+        ATTENTION : l'axe x est un cumul de la variable mesuree, donc la courbe
+        monte a droite meme sans apprentissage (seuls les gros mangeurs
+        atteignent les x eleves). Pour juger l'adaptation, utiliser plutot
+        prob_eat_over_life, qui compare chaque agent a lui-meme."""
+        counts = {}
+        for cum, y in LabMixin._poison_events(outputs_lab, resources_cfg, label, window):
+            for c, yi in zip(cum, y):
+                n_, k_ = counts.get(int(c), (0, 0))
+                counts[int(c)] = (n_ + 1, k_ + int(yi))
 
         if not counts:
             return np.array([]), np.array([]), np.array([])
