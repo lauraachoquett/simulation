@@ -447,11 +447,25 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     ax.plot(x[ok], p[ok], 'o-', color=color, lw=2.5, ms=6, zorder=4,
             label='pooled over agents')
 
+    # Baseline tracee COMME UNE COURBE, sur les memes tranches de vie.
+    # Une ligne horizontale (poolee sur tout le rollout) laisserait ouverte une
+    # explication concurrente : au debut de chaque rollout l'etat LSTM est remis
+    # a zero (model.reset_b), donc une partie de la chute pourrait n'etre que la
+    # convergence de la memoire recurrente, pas un apprentissage sur le poison.
+    # Si la baseline est plate et que la condition permutee plonge, l'ambiguite
+    # tombe ; si elle plonge aussi, c'est l'ECART entre les deux qu'il faut lire.
     if baseline is not None and len(baseline) == 2 and np.sum(baseline[0]) > 0:
-        bn, bk = float(np.sum(baseline[0])), float(np.sum(baseline[1]))
-        bp = bk / bn
-        ax.axhline(bp, color='grey', ls='--', lw=1.4, zorder=1,
-                   label=f'baseline, no permutation ({bp:.3f})')
+        bn = np.asarray(baseline[0], dtype=float)
+        bk = np.asarray(baseline[1], dtype=float)
+        bp_tot = bk.sum() / bn.sum()
+        if bn.shape == n_p.shape and (bn > 0).all():
+            bp, blo, bhi = wilson(bk, bn)
+            ax.fill_between(x, blo, bhi, color='grey', alpha=0.15, zorder=1)
+            ax.plot(x, bp, 's--', color='grey', lw=1.6, ms=4, zorder=2,
+                    label=f'baseline, no permutation ({bp_tot:.3f} overall)')
+        else:                       # tranches indisponibles -> repli sur le niveau
+            ax.axhline(bp_tot, color='grey', ls='--', lw=1.4, zorder=1,
+                       label=f'baseline, no permutation ({bp_tot:.3f})')
 
     ax.set_xticks(x)
     ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%\nn={int(v)}'
@@ -467,10 +481,23 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     # variation RELATIVE signee : negative = l'agent mange moins en fin de vie
     first, last = p[ok][0], p[ok][-1]
     var = (last - first) / first if first > 0 else float('nan')
+    # Meme variation pour la baseline : si elle chute autant, la baisse observee
+    # n'est pas specifique a la permutation (echauffement du LSTM plutot
+    # qu'apprentissage sur le poison).
+    ligne_base = ''
+    if baseline is not None and len(baseline) == 2:
+        bn = np.asarray(baseline[0], dtype=float)
+        bk = np.asarray(baseline[1], dtype=float)
+        if bn.shape == n_p.shape and (bn > 0).all():
+            bpc = bk / bn
+            bvar = (bpc[-1] - bpc[0]) / bpc[0] if bpc[0] > 0 else float('nan')
+            ligne_base = (f'\nbaseline {bpc[0]:.3f} → {bpc[-1]:.3f}'
+                          + (f'  ({bvar:+.0%})' if np.isfinite(bvar) else ''))
     ax.text(0.02, 0.96,
             f'{first:.3f} → {last:.3f}'
             + (f'  ({var:+.0%})' if np.isfinite(var) else '')
-            + f'\n{frac_dec:.0%} des {n_pentes} agents décroissent  (50% = hasard, z={z:+.1f})',
+            + f'\n{frac_dec:.0%} des {n_pentes} agents décroissent  (50% = hasard, z={z:+.1f})'
+            + ligne_base,
             transform=ax.transAxes, ha='left', va='top', fontsize=9,
             bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
     ax.set_title(f'Within-life adaptation — {tag} (chunk {chunk})', fontsize=11,
