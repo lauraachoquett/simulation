@@ -100,6 +100,17 @@ class Config(NamedTuple):
     # comportement actuel, lent mais correct, jamais un lab casse.
     log_obs : bool = True
 
+    # Coupe TOUTE l'information intra-vie : etat LSTM (h, c) remis a zero a
+    # chaque pas, et last_actions / rewards zerotes en entree. Le genome est
+    # inchange, seul le flux temporel est coupe -- a activer en LAB sur les
+    # memes agents pour une comparaison appariee. Si la baisse de consommation
+    # en fin de vie persiste sans memoire, elle ne vient pas d'un apprentissage.
+    ablate_memory : bool = False
+
+    # Rejouer l'env adapt une seconde fois avec ablate_memory=True, pour obtenir
+    # la comparaison appariee. Double le cout des rollouts adapt.
+    lab_memory_ablation : bool = True
+
     # Une frame sur video_stride est rendue. Le decoupage se fait avant le
     # transfert device->hote, donc ca allege aussi le pickle envoye au worker.
     # Remettre a 1 pour inspecter finement un chunk.

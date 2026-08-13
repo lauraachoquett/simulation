@@ -513,6 +513,71 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     plt.close()
 
 
+def plot_memory_ablation(n_full, k_full, n_abl, k_abl, wilson, exp_dir, chunk, tag,
+                         label='poison', mapping='', baseline=None):
+    """Meme rollout avec et sans memoire intra-vie, le long de la vie.
+
+    L'agent recoit (obs, last_action, reward, etat LSTM) : signature RL2. En
+    coupant les trois canaux temporels sur LES MEMES genomes et LES MEMES cles,
+    seule l'information intra-vie change.
+
+    C'est le controle decisif :
+      - la baisse disparait sans memoire -> c'est bien de l'apprentissage ;
+      - elle persiste -> elle vient d'autre chose (depletion des ressources,
+        physiologie), et l'interpretation "l'agent apprend" tombe.
+    """
+    nf, kf = np.asarray(n_full, float), np.asarray(k_full, float)
+    na, ka = np.asarray(n_abl, float), np.asarray(k_abl, float)
+    if nf.size == 0 or na.size == 0:
+        return
+    x = np.arange(len(nf))
+    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
+
+    fig, ax = plt.subplots(figsize=(8.5, 5))
+    lignes = []
+    for n_, k_, nom, sty, alpha in [(nf, kf, 'mémoire intacte', 'o-', 1.0),
+                                    (na, ka, 'mémoire coupée', 's--', 0.6)]:
+        ok = n_ > 0
+        if not ok.any():
+            continue
+        p, lo, hi = wilson(k_, n_)
+        ax.fill_between(x[ok], lo[ok], hi[ok], color=color, alpha=0.18 * alpha, zorder=2)
+        ax.plot(x[ok], p[ok], sty, color=color, lw=2.5, ms=6, alpha=alpha, zorder=4,
+                label=nom)
+        var = (p[ok][-1] - p[ok][0]) / p[ok][0] if p[ok][0] > 0 else float('nan')
+        lignes.append(f'{nom:<16} {p[ok][0]:.3f} → {p[ok][-1]:.3f}'
+                      + (f'  ({var:+.0%})' if np.isfinite(var) else ''))
+
+    if baseline is not None and len(baseline) == 2 and np.sum(baseline[0]) > 0:
+        bn, bk = np.asarray(baseline[0], float), np.asarray(baseline[1], float)
+        if bn.shape == nf.shape and (bn > 0).all():
+            ax.plot(x, bk / bn, ':', color='grey', lw=1.5, zorder=1,
+                    label='baseline, no permutation')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{100*i//len(nf)}–{100*(i+1)//len(nf)}%\nn={int(v)}'
+                        for i, v in zip(x, nf)], fontsize=8)
+    ax.set_xlabel("fraction of the agent's own lifetime")
+    ax.set_ylabel(f'P(eat {label} | in field of view)')
+    ax.set_ylim(bottom=0)
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    ax.text(0.02, 0.96, '\n'.join(lignes), transform=ax.transAxes,
+            ha='left', va='top', fontsize=8.5, family='monospace',
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
+    ax.set_title(f'Memory ablation — {tag} (chunk {chunk})', fontsize=11,
+                 pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'memory_ablation_chunk_{chunk}.png'))
+    plt.close()
+
+
 def _excess_ci(n_p, k_p, n_b, k_b, z=1.96):
     """(exces, lo, hi) : difference de deux proportions et son IC 95%.
 

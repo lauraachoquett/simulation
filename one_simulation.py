@@ -71,9 +71,29 @@ def run_simulation_chunk(state,model,keys, cfg):
 
 
         # ------- 2. Movement and Physiological update -------
+        # ------- Ablation de la memoire intra-vie -------
+        # La politique recoit (obs, last_action, reward, etat LSTM) : c'est la
+        # signature RL2. L'information intra-vie passe donc par DEUX canaux, et
+        # couper le seul LSTM laisserait le retour immediat "je viens de manger
+        # un truc a -1" au pas suivant. On coupe les deux.
+        # A utiliser en LAB, sur les memes genomes : comparaison appariee.
+        state_in = state
+        if cfg.ablate_memory:
+            state_in = state.replace(
+                last_actions=jnp.zeros_like(state.last_actions),
+                rewards=jnp.zeros_like(state.rewards),
+            )
+
         actions_logit, new_policy_states = model.get_actions(
-            state, state.agents.params, state.agents.policy_states
+            state_in, state.agents.params, state.agents.policy_states
         )
+        if cfg.ablate_memory:
+            # remis a zero a CHAQUE pas : le carry n'accumule jamais rien
+            new_policy_states = metaRNNPolicyState_bcppr(
+                lstm_h=jnp.zeros_like(new_policy_states.lstm_h),
+                lstm_c=jnp.zeros_like(new_policy_states.lstm_c),
+                keys=new_policy_states.keys,
+            )
         if cfg.dumb_agent:  
             actions_id = jax.nn.one_hot(
                 random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=4),

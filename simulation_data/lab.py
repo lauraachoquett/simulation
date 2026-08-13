@@ -26,7 +26,8 @@ from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agent
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
-                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
+                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess,
+                            plot_memory_ablation)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -205,6 +206,16 @@ class LabMixin:
                 agent_params, key_env, key_sim, model, self.cfg)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
+            # Le MEME rollout, memes genomes, memes cles, memoire coupee. C'est
+            # le controle de l'adaptation intra-vie : si la baisse persiste sans
+            # memoire, elle ne vient pas d'un apprentissage. Ablation au moment
+            # du TEST et non a l'evolution, pour que la comparaison reste appariee.
+            outputs_adapt_abl = None
+            if self.cfg.lab_memory_ablation:
+                _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
+                    agent_params, key_env, key_sim, model,
+                    self.cfg._replace(ablate_memory=True))
+
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
@@ -299,6 +310,18 @@ class LabMixin:
                     par_type, base_par_type, exp_dir,
                     chunk=self.chunk_idx, tag=name, mapping=caption,
                 )
+
+                # Le controle : meme rollout, memes genomes, memoire coupee.
+                if outputs_adapt_abl is not None:
+                    out_abl = jax.tree_util.tree_map(lambda x: x[:, j],
+                                                     outputs_adapt_abl)
+                    _, n_abl, k_abl = self.prob_eat_over_life(out_abl, resources_rot)
+                    if n_abl.sum():
+                        plot_memory_ablation(
+                            life_n, life_k, n_abl, k_abl, _wilson, exp_dir,
+                            chunk=self.chunk_idx, tag=name, mapping=caption,
+                            baseline=life_baseline,
+                        )
 
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
