@@ -94,6 +94,13 @@ class Config(NamedTuple):
     resources_growth : bool = True
     letal_wall : bool = True
     energy_to_die : float = 0.0
+
+    # Frein de surpopulation : au-dela de crowd_limit cases occupees, un type
+    # retombe sur ces taux de croissance lents. Le seuil porte sur le nombre de
+    # cases d'UN type, pas sur le total.
+    crowd_limit : int = 1500
+    crowd_prob_factor : float = 0.0065
+    crowd_pop_res_prob : float = 4e-5
     
 
 

@@ -39,6 +39,14 @@ def resources_growth(carry, cfg):
     prob_factor  = jnp.array([r.prob_factor  for r in cfg.resources])   # (n_types,)
     pop_res_prob = jnp.array([r.pop_res_prob for r in cfg.resources])   # (n_types,)
 
+    # Frein de surpopulation, par TYPE : un type qui occupe plus de crowd_limit
+    # cases retombe sur une croissance lente. Le compte depend de la grille, donc
+    # c'est une valeur tracee -> jnp.where et non un if Python.
+    count = grid_resources.sum(axis=(1, 2))                             # (n_types,)
+    trop  = count > cfg.crowd_limit
+    prob_factor  = jnp.where(trop, cfg.crowd_prob_factor,  prob_factor)
+    pop_res_prob = jnp.where(trop, cfg.crowd_pop_res_prob, pop_res_prob)
+
     # L'alea suit l'IDENTITE de la ressource, pas l'indice de canal : sinon une
     # ressource deplacee sur un autre canal (rotation du lab, shuffle_resources)
     # herite d'une autre cle et pousse differemment, ce qui rend deux configs
