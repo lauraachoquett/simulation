@@ -513,6 +513,79 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     plt.close()
 
 
+def plot_prob_eat_over_life_by_type(per_type, baseline_per_type, wilson, exp_dir,
+                                    chunk, tag, mapping=''):
+    """P(manger X | X en vue) pour LES TROIS identites, le long de la vie.
+
+    per_type / baseline_per_type : {id_ressource: (n, k)} par tranche de vie,
+    pour l'env permute et pour l'env non permute.
+
+    Repond a deux questions d'un coup :
+
+      - la permutation deplace le poison sur le canal d'une autre ressource ;
+        celle-ci est-elle davantage consommee en retour ?
+      - la baisse du poison en fin de vie est-elle de la SELECTIVITE, ou juste
+        un appetit general qui retombe (les agents mangent tot puis explorent) ?
+        Si les trois courbes descendent ensemble, c'est l'appetit ; si seul le
+        poison descend, c'est de la selectivite.
+
+    C'est cette comparaison entre types qui tranche, et non un axe en "ressources
+    deja mangees" : ce dernier est un cumul de la variable mesuree, donc ses bins
+    de droite ne contiennent que les gros mangeurs et la courbe monte meme sans
+    aucun apprentissage.
+    """
+    ids = sorted(per_type)
+    if not ids:
+        return
+    n_bins = len(next(iter(per_type.values()))[0])
+    x = np.arange(n_bins)
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    lignes = []
+    for i in ids:
+        n_i, k_i = (np.asarray(v, dtype=float) for v in per_type[i])
+        ok = n_i > 0
+        if not ok.any():
+            continue
+        p, lo, hi = wilson(k_i, n_i)
+        c = COLOR_BY_ID[i]
+        ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
+        ax.plot(x[ok], p[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
+                label=f'{LABELS[i]} (permuted)')
+        var = (p[ok][-1] - p[ok][0]) / p[ok][0] if p[ok][0] > 0 else float('nan')
+        lignes.append(f'{LABELS[i]:<7} {p[ok][0]:.3f} → {p[ok][-1]:.3f}'
+                      + (f'  ({var:+.0%})' if np.isfinite(var) else ''))
+
+        b = baseline_per_type.get(i)
+        if b is not None:
+            bn, bk = (np.asarray(v, dtype=float) for v in b)
+            if (bn > 0).all():
+                ax.plot(x, bk / bn, 's--', color=c, lw=1.3, ms=3.5, alpha=0.55,
+                        zorder=3, label=f'{LABELS[i]} (baseline)')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
+    ax.set_xlabel("fraction of the agent's own lifetime")
+    ax.set_ylabel('P(eat X | X in field of view)')
+    ax.set_ylim(bottom=0)
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=7.5, ncol=2)
+    ax.text(0.02, 0.96, '\n'.join(lignes), transform=ax.transAxes,
+            ha='left', va='top', fontsize=8.5, family='monospace',
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
+    ax.set_title(f'Selectivity over life — {tag} (chunk {chunk})', fontsize=11,
+                 pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'selectivity_over_life_chunk_{chunk}.png'))
+    plt.close()
+
+
 def _eaten_by_identity(eaten, ids_by_channel):
     """Reindexe (B, n_types) de CANAL vers IDENTITE de ressource.
 

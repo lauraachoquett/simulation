@@ -25,7 +25,8 @@ from jax import random
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
-                            plot_eaten_by_type_boxplot, plot_prob_eat_over_life)
+                            plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
+                            plot_prob_eat_over_life_by_type)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -225,6 +226,15 @@ class LabMixin:
             _, life_bn, life_bk = self.prob_eat_over_life(outputs_high, self.cfg.resources)
             life_baseline = (life_bn, life_bk)
 
+            # Idem pour CHAQUE identite. Calcule une seule fois : la baseline ne
+            # depend pas de la rotation, la recalculer par rotation serait deux
+            # fois le meme balayage de `obs`.
+            base_par_type = {}
+            for r in self.cfg.resources:
+                _, bn_i, bk_i = self.prob_eat_over_life(
+                    outputs_high, self.cfg.resources, label=LABELS[r.id])
+                base_par_type[r.id] = (bn_i, bk_i)
+
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
@@ -269,6 +279,20 @@ class LabMixin:
                         chunk=self.chunk_idx, tag=name,
                         mapping=caption, baseline=life_baseline,
                     )
+
+                # Les TROIS identites sur les memes tranches. Repond a la fois a
+                # "la ressource qui prend la place du poison est-elle plus
+                # consommee ?" et a "la baisse du poison est-elle de la
+                # selectivite ou un appetit general qui retombe ?".
+                par_type = {}
+                for r in resources_rot:
+                    _, n_i, k_i = self.prob_eat_over_life(
+                        out_rot, resources_rot, label=LABELS[r.id])
+                    par_type[r.id] = (n_i, k_i)
+                plot_prob_eat_over_life_by_type(
+                    par_type, base_par_type, _wilson, exp_dir,
+                    chunk=self.chunk_idx, tag=name, mapping=caption,
+                )
 
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
