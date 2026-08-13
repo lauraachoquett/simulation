@@ -344,84 +344,6 @@ def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
     fig.write_html(os.path.join(path_save_fig, f'{name_fig}.html'))
 
 
-def plot_prob_eat_vs_eaten(x_vals, n_seen, n_eaten, wilson, exp_dir, chunk, tag,
-                           label='poison', mapping='', baseline=None,
-                           coverage=0.99):
-    """P(manger `label` | `label` en vue) en fonction du nombre deja mange.
-
-    L'agent apprend-il a eviter le poison au fil de ses propres erreurs, AU COURS
-    D'UNE MEME VIE ? x = poisons deja manges avant l'observation, y = proportion
-    d'occasions saisies parmi celles ou le poison etait visible.
-
-    wilson : callable(k, n) -> (p, lo, hi), passe pour ne pas dupliquer
-    l'implementation de energy_response._wilson.
-    baseline : (n_seen, n_eaten) du meme agent dans l'env NON permute, trace en
-    reference horizontale."""
-    x = np.asarray(x_vals)
-    n = np.asarray(n_seen, dtype=float)
-    k = np.asarray(n_eaten, dtype=float)
-
-    # On coupe la queue : au-dela de `coverage` de la masse d'observations, les
-    # bins ne portent que quelques evenements et la courbe y part dans tous les
-    # sens. Le critere est cumulatif en x, donc il tronque un intervalle -- il ne
-    # selectionne pas des points un a un sur leur valeur.
-    if 0 < coverage < 1 and n.sum() > 0:
-        keep = np.searchsorted(np.cumsum(n) / n.sum(), coverage) + 1
-        n_drop, x_max = len(x) - keep, (x[keep - 1] if keep else None)
-        x, n, k = x[:keep], n[:keep], k[:keep]
-    else:
-        n_drop = 0
-
-    p, lo, hi = wilson(k, n)
-
-    fig, ax = plt.subplots(figsize=(8.5, 5))
-    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
-
-    ok = n > 0
-    ax.plot(x[ok], p[ok], 'o-', color=color, lw=2, ms=5, zorder=3,
-            label=f'P(eat {label} | {label} in view)')
-    ax.fill_between(x[ok], lo[ok], hi[ok], color=color, alpha=0.22, zorder=2,
-                    label='Wilson 95%')
-
-    if baseline is not None:
-        bn, bk = float(np.sum(baseline[0])), float(np.sum(baseline[1]))
-        if bn > 0:
-            bp, blo, bhi = wilson(np.array(bk), np.array(bn))
-            ax.axhline(float(bp), color='grey', ls='--', lw=1.4, zorder=1,
-                       label=f'baseline, no permutation ({float(bp):.2f})')
-            ax.axhspan(float(blo), float(bhi), color='grey', alpha=0.12, zorder=0)
-
-    # Le nombre d'observations s'effondre vite : au-dela de quelques poisons
-    # manges il ne reste presque plus d'agents, et une chute de P sur 3
-    # evenements ne veut rien dire. On montre donc n a cote de p.
-    ax_n = ax.twinx()
-    ax_n.bar(x, n, width=0.6, color='grey', alpha=0.16, zorder=0)
-    ax_n.set_ylabel('observations (n)', color='grey')
-    ax_n.tick_params(axis='y', labelcolor='grey')
-    ax_n.set_ylim(0, max(n.max(), 1) * 3)        # ecrase les barres en bas
-
-    ax.set_xlabel(f'{label} already eaten by this agent')
-    ax.set_ylabel(f'P(eat {label} | in field of view)')
-    ax.set_zorder(ax_n.get_zorder() + 1); ax.patch.set_visible(False)
-    ax.grid(True, axis='y', alpha=0.3)
-    ax.legend(loc='upper right', fontsize=8)
-    if n_drop:
-        ax.text(0.99, 0.88, f'+{n_drop} bins coupés (<{1-coverage:.0%} des obs.)',
-                transform=ax.transAxes, ha='right', va='top',
-                fontsize=7.5, color='0.45')
-    ax.set_title(f'Avoidance vs experience — {tag} (chunk {chunk})', fontsize=11,
-                 pad=34 if mapping else 6)
-    if mapping:
-        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
-                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
-
-    plt.tight_layout()
-    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
-    os.makedirs(path, exist_ok=True)
-    plt.savefig(os.path.join(path, f'prob_eat_{label}_vs_eaten_chunk_{chunk}.png'))
-    plt.close()
-
-
 def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, tag,
                             label='poison', mapping='', baseline=None):
     """Une courbe par agent au fil du TEMPS, + la mediane.
@@ -430,9 +352,9 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     tranche de temps (cf. LabMixin.prob_eat_over_life). NaN la ou un agent n'a
     pas rencontre le type dans la tranche -> agregation par nanmedian.
 
-    Chaque agent etant compare a lui-meme sur un axe qui ne depend PAS de ses
-    choix, le biais de composition de prob_eat_vs_eaten disparait : la ou cet
-    axe-la monte meme sans apprentissage, celui-ci reste plat.
+    Chaque agent est compare a lui-meme sur un axe qui ne depend PAS de ses
+    choix : pas de biais de composition, contrairement a un axe indexe sur le
+    nombre deja mange, qui monte a droite meme sans apprentissage.
 
     Lire la mediane en premier : les pentes par agent reposent sur peu
     d'evenements, donc la fraction d'agents decroissants est un signal plus

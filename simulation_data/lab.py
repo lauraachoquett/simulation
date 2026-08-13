@@ -25,8 +25,7 @@ from jax import random
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
-                            plot_eaten_by_type_boxplot, plot_prob_eat_vs_eaten,
-                            plot_prob_eat_over_life)
+                            plot_eaten_by_type_boxplot, plot_prob_eat_over_life)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -223,9 +222,6 @@ class LabMixin:
                                                       int(state.step))
 
             # Reference : la meme propension dans l'env NON permute, memes genomes.
-            # Poolee sur tout le rollout -> une seule valeur, tracee en horizontale.
-            _, n_base_poison, k_base_poison = self.prob_eat_vs_eaten(
-                outputs_high, self.cfg.resources)
             _, life_bn, life_bk = self.prob_eat_over_life(outputs_high, self.cfg.resources)
             life_baseline = (life_bn, life_bk)
 
@@ -264,17 +260,8 @@ class LabMixin:
                     baseline_available = baseline_available,
                 )
 
-                # L'agent apprend-il a eviter le poison au fil de ses erreurs ?
-                x_p, n_p, k_p = self.prob_eat_vs_eaten(out_rot, resources_rot)
-                if x_p.size:
-                    plot_prob_eat_vs_eaten(
-                        x_p, n_p, k_p, _wilson, exp_dir,
-                        chunk=self.chunk_idx, tag=name, mapping=caption,
-                        baseline=(n_base_poison, k_base_poison),
-                    )
-
-                # Meme question, mais chaque agent compare a LUI-MEME : c'est
-                # celle-ci qui est interpretable (cf. prob_eat_over_life).
+                # L'agent apprend-il a eviter le poison au fil de sa vie ?
+                # Chaque agent est compare a LUI-MEME (cf. prob_eat_over_life).
                 life, life_n, life_k = self.prob_eat_over_life(out_rot, resources_rot)
                 if life.size:
                     plot_prob_eat_over_life(
@@ -418,29 +405,6 @@ class LabMixin:
                 ligne.append(float(np.mean(y[m])) if m.any() else np.nan)
             out.append(ligne)
         return (np.array(out) if out else np.zeros((0, n_bins))), n_tot, k_tot
-
-    @staticmethod
-    def prob_eat_vs_eaten(outputs_lab, resources_cfg, label="poison",
-                          window=ENERGY_EAT_WINDOW):
-        """(x, n, k) : P(manger `label` | `label` en vue) selon le nombre deja mange.
-
-        ATTENTION : l'axe x est un cumul de la variable mesuree, donc la courbe
-        monte a droite meme sans apprentissage (seuls les gros mangeurs
-        atteignent les x eleves). Pour juger l'adaptation, utiliser plutot
-        prob_eat_over_life, qui compare chaque agent a lui-meme."""
-        counts = {}
-        events, _T = LabMixin._poison_events(outputs_lab, resources_cfg, label, window)
-        for _t, cum, y in events:
-            for c, yi in zip(cum, y):
-                n_, k_ = counts.get(int(c), (0, 0))
-                counts[int(c)] = (n_ + 1, k_ + int(yi))
-
-        if not counts:
-            return np.array([]), np.array([]), np.array([])
-        x = np.array(sorted(counts))
-        n = np.array([counts[i][0] for i in x], dtype=float)
-        k = np.array([counts[i][1] for i in x], dtype=float)
-        return x, n, k
 
     @staticmethod
     def eaten_by_type(outputs_lab):
