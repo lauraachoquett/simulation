@@ -26,7 +26,7 @@ from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agent
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
-                            plot_prob_eat_over_life_by_type)
+                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -291,6 +291,12 @@ class LabMixin:
                     par_type[r.id] = (n_i, k_i)
                 plot_prob_eat_over_life_by_type(
                     par_type, base_par_type, _wilson, exp_dir,
+                    chunk=self.chunk_idx, tag=name, mapping=caption,
+                )
+                # Le meme contenu, mais l'ecart au non-permute trace directement :
+                # la baisse d'appetit liee a l'age s'annule dans la soustraction.
+                plot_prob_eat_excess(
+                    par_type, base_par_type, exp_dir,
                     chunk=self.chunk_idx, tag=name, mapping=caption,
                 )
 

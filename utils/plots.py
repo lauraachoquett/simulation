@@ -513,6 +513,102 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     plt.close()
 
 
+def _excess_ci(n_p, k_p, n_b, k_b, z=1.96):
+    """(exces, lo, hi) : difference de deux proportions et son IC 95%.
+
+    exces = p_permute - p_baseline. Zero = l'agent se comporte comme sans
+    permutation. L'IC est celui de la DIFFERENCE (variances additionnees), pas
+    la juxtaposition des deux IC : c'est lui qui dit si l'ecart est reel.
+    """
+    n_p, k_p = np.asarray(n_p, float), np.asarray(k_p, float)
+    n_b, k_b = np.asarray(n_b, float), np.asarray(k_b, float)
+    ok = (n_p > 0) & (n_b > 0)
+    d = np.full(n_p.shape, np.nan)
+    lo = np.full(n_p.shape, np.nan)
+    hi = np.full(n_p.shape, np.nan)
+    pp = np.divide(k_p, n_p, out=np.zeros_like(n_p), where=ok)
+    pb = np.divide(k_b, n_b, out=np.zeros_like(n_b), where=ok)
+    se = np.sqrt(np.divide(pp * (1 - pp), n_p, out=np.zeros_like(n_p), where=ok)
+                 + np.divide(pb * (1 - pb), n_b, out=np.zeros_like(n_b), where=ok))
+    d[ok] = (pp - pb)[ok]
+    lo[ok] = d[ok] - z * se[ok]
+    hi[ok] = d[ok] + z * se[ok]
+    return d, lo, hi
+
+
+def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
+                         mapping=''):
+    """Ecart `permute - non permute` par type, le long de la vie.
+
+    Les agents mangent moins en vieillissant, quelle que soit la ressource : sur
+    les courbes brutes les trois types descendent, ce qui empeche de conclure.
+    Cette baisse d'appetit touche AUSSI la condition non permutee, donc la
+    soustraction l'annule. Ce qui reste est imputable a la seule permutation.
+
+    Zero = l'agent se comporte comme si de rien n'etait. Au-dessus = il mange ce
+    qu'il ne devrait pas (il est piege) ; en dessous = il evite a tort une
+    ressource devenue comestible. Un ecart qui se resorbe au fil de la vie EST
+    l'adaptation recherchee.
+    """
+    ids = sorted(per_type)
+    if not ids:
+        return
+    n_bins = len(next(iter(per_type.values()))[0])
+    x = np.arange(n_bins)
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    lignes = []
+    trace = False
+    for i in ids:
+        b = baseline_per_type.get(i)
+        if b is None:
+            continue
+        d, lo, hi = _excess_ci(*per_type[i], *b)
+        ok = np.isfinite(d)
+        if not ok.any():
+            continue
+        trace = True
+        c = COLOR_BY_ID[i]
+        ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
+        ax.plot(x[ok], d[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
+                label=LABELS[i])
+        # le rapport en annexe : "5x trop" parle mieux que "+0.113" quand les
+        # niveaux absolus sont petits
+        n_p, k_p = (np.asarray(v, float) for v in per_type[i])
+        n_b, k_b = (np.asarray(v, float) for v in b)
+        pb0 = k_b[ok][0] / n_b[ok][0] if n_b[ok][0] else np.nan
+        pp0 = k_p[ok][0] / n_p[ok][0] if n_p[ok][0] else np.nan
+        fois = f'  ({pp0/pb0:.1f}x)' if np.isfinite(pb0) and pb0 > 0 else ''
+        lignes.append(f'{LABELS[i]:<7} {d[ok][0]:+.3f} → {d[ok][-1]:+.3f}{fois}')
+
+    if not trace:
+        plt.close(); return
+
+    ax.axhline(0, color='black', lw=1.2, zorder=3)
+    ax.text(0.995, 0.02, 'ligne 0 = comportement normal', transform=ax.transAxes,
+            ha='right', va='bottom', fontsize=7.5, color='0.45')
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
+    ax.set_xlabel("fraction of the agent's own lifetime")
+    ax.set_ylabel('P(eat X | X visible) : permuted − baseline')
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    ax.text(0.02, 0.96, '\n'.join(lignes), transform=ax.transAxes,
+            ha='left', va='top', fontsize=8.5, family='monospace',
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
+    ax.set_title(f'Permutation-specific excess — {tag} (chunk {chunk})',
+                 fontsize=11, pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'excess_over_life_chunk_{chunk}.png'))
+    plt.close()
+
+
 def plot_prob_eat_over_life_by_type(per_type, baseline_per_type, wilson, exp_dir,
                                     chunk, tag, mapping=''):
     """P(manger X | X en vue) pour LES TROIS identites, le long de la vie.
