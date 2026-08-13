@@ -27,7 +27,8 @@ import jax
 from jax.flatten_util import ravel_pytree
 
 from simulation.genealogy.genealogy import find_root
-from simulation.utils.plots import plots_metrics_weight_distance
+from simulation.utils.plots import (plots_metrics_weight_distance,
+                                    plots_weight_selection)
 
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
@@ -58,9 +59,17 @@ def _iter_named_leaves(tree, prefix=""):
 def _group_reduce(leaf_tree, include_bias=False):
     """leaf_tree : chaque feuille réduite à (M,). -> {groupe: (M,)}.
 
-    Moyenne NON pondérée sur les couches du groupe : une conv de 10k poids pèse
-    autant qu'une couche de 100. Ce choix n'est pas neutre pour la variance, ce
-    qui est précisément pourquoi le contrôle neutre doit passer par ici aussi.
+    SOMME des moyennes par couche, pas une seconde moyenne : le bloc vaut le
+    cumul de ses couches, donc un bloc à 4 couches pèse 4× un bloc à 1 couche.
+    Une conv de 10k poids et une couche de 100 comptent toujours autant l'une que
+    l'autre — sommer n'est que multiplier par le nombre de couches, l'erreur
+    RELATIVE et la domination par la plus petite couche sont inchangées.
+
+    Conséquence pour le contrôle : l'espérance du neutre devient
+    n_couches * p*sigma^2*g, et non plus p*sigma^2*g. Elle diffère donc d'un bloc
+    à l'autre, et l'axe y partagé entre panneaux (share_y) les rend d'autant
+    moins comparables. Le neutre passe par la même fonction, donc la comparaison
+    observé/neutre reste juste.
     """
     buckets = {}
     for name, leaf in _iter_named_leaves(leaf_tree):
@@ -68,7 +77,7 @@ def _group_reduce(leaf_tree, include_bias=False):
         if g is None:
             continue
         buckets.setdefault(g, []).append(leaf)
-    return {g: np.mean(np.stack(v), axis=0) for g, v in buckets.items()}
+    return {g: np.sum(np.stack(v), axis=0) for g, v in buckets.items()}
 
 
 def _dist_per_layer(struct):
@@ -391,3 +400,11 @@ class WeightsMixin:
             neutral=self.weight_neutral,
             gen_depth=self.gen_depth,
             x_axis=x_axis)
+
+        # Le rapport observe/neutre : une seule echelle, sans unite, reference a
+        # 1. La croissance en p*sigma^2*g commune aux quatre blocs s'annule, et
+        # le choix de reduction par couche aussi puisque numerateur et
+        # denominateur y passent tous les deux. C'est la figure a montrer.
+        plots_weight_selection(
+            self.weight_dist, self.weight_neutral, exp_dir,
+            steps=self.metric_steps, gen_depth=self.gen_depth, x_axis=x_axis)
