@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -34,14 +35,42 @@ import streamlit as st
 # --------------------------------------------------------------------------- #
 
 # Params that are per-run bookkeeping rather than something you compare on.
+# seeds/seeds_full hold one key per chunk -- thousands of values, useless raw.
+# They come back as the compact derived fields built by _seed_params().
 _HIDDEN_PARAMS = {"seeds", "seeds_full", "env"}
+
+
+def _seed_params(cfg: dict) -> dict:
+    """Compact, comparable summary of a run's random stream.
+
+    Two runs can share every parameter and still differ entirely because they
+    were drawn from different seeds. Hiding the seed lists made those runs look
+    identical in the table, so we surface a fingerprint of them instead.
+
+    `seed_fingerprint` digests the full keys: same value = same random stream.
+    `seed_first` is the first key, readable enough to tell runs apart at a
+    glance. `prng_impl` matters too -- identical seeds under a different PRNG
+    implementation do not give the same simulation.
+    """
+    out: dict[str, object] = {}
+    raw = cfg.get("seeds_full") or cfg.get("seeds")
+    if raw:
+        blob = json.dumps(raw, sort_keys=True).encode()
+        out["seed_fingerprint"] = hashlib.sha1(blob).hexdigest()[:8]
+        first = raw[0]
+        out["seed_first"] = first[0] if isinstance(first, list) else first
+    env = cfg.get("env") or {}
+    for k in ("jax_version", "prng_impl", "threefry_partitionable"):
+        if k in env:
+            out[k] = env[k]
+    return out
 
 
 def _flatten(cfg: dict) -> dict:
     """Flatten a config.json into a single {param: scalar} dict.
 
     `resources` is a list of dicts -> expand to resources[i].<field>.
-    `env`/seeds are dropped from the comparison view.
+    Seeds and env are replaced by the compact fields of _seed_params().
     """
     flat: dict[str, object] = {}
     for k, v in cfg.items():
@@ -58,6 +87,7 @@ def _flatten(cfg: dict) -> dict:
             flat[k] = json.dumps(v, sort_keys=True)
         else:
             flat[k] = v
+    flat.update(_seed_params(cfg))
     return flat
 
 
