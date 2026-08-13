@@ -166,7 +166,14 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             
 
             ## TEST AGENTS IN LAB ENV ##
-            if ((chunk_idx) % cfg.pca_save_freq == 0) or (chunk_idx ==10):
+            # pca_save_freq divise cycle_period, donc la grille reguliere ne tombe
+            # que sur 4 phases du cycle et laisse un trou entre 0 et 50 000 steps
+            # apres un shuffle -- justement la ou le genome est le plus inadapte
+            # et ou l'apprentissage en cours de vie devrait le plus compter.
+            # Le shuffle a lieu PLUS BAS dans la boucle, donc la phase 0 est
+            # l'etat juste AVANT permutation ; ces offsets sont bien apres.
+            phase = (chunk_idx) % cfg.cycle_period
+            if ((chunk_idx) % cfg.pca_save_freq == 0) or (phase in cfg.lab_after_shuffle):
                 subkey_lab,subkey_sim = random.split(subkey_lab)
                 def submit_video(outputs_np, vid_path, *args, label=None):
                     os.makedirs(os.path.dirname(vid_path), exist_ok=True)  # avant submit

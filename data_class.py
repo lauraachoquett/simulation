@@ -112,6 +112,13 @@ class Config(NamedTuple):
     # l'ecosysteme s'installe.
     cycle_period : int = 200
 
+    # Chunks APRES un shuffle ou lancer une analyse de lab, en plus de la grille
+    # reguliere pca_save_freq. Celle-ci divise cycle_period, donc elle ne tombe
+    # que sur quelques phases du cycle et rate le juste-apres-permutation, ou le
+    # genome est le plus inadapte. Remplace l'ancien cas special chunk_idx == 10,
+    # qui ne servait que le premier cycle.
+    lab_after_shuffle : tuple = (5, 10, 20)
+
     # Frein de surpopulation : au-dela de crowd_limit cases occupees, un type
     # retombe sur ces taux de croissance lents. Le seuil porte sur le nombre de
     # cases d'un type
