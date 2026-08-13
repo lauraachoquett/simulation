@@ -72,16 +72,26 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # ------- 2. Movement and Physiological update -------
         # ------- Ablation de la memoire intra-vie -------
-        # La politique recoit (obs, last_action, reward, etat LSTM) : c'est la
-        # signature RL2. L'information intra-vie passe donc par DEUX canaux, et
-        # couper le seul LSTM laisserait le retour immediat "je viens de manger
-        # un truc a -1" au pas suivant. On coupe les deux.
+        # La politique recoit (obs, last_action, reward, energie, etat LSTM).
+        # L'information intra-vie passe donc par QUATRE canaux :
+        #   - l'etat LSTM, memoire a plusieurs pas ;
+        #   - last_action et reward, retour immediat au pas suivant ;
+        #   - l'ENERGIE, qui accumule tout l'historique alimentaire de l'agent.
+        # N'en couper qu'une partie laisserait une voie ouverte : un agent peut
+        # changer de comportement au fil de sa vie par la seule energie.
+        #
+        # L'energie ne peut pas etre mise a zero, elle gouverne la mort. On masque
+        # donc uniquement ce que la POLITIQUE en voit, en la figeant a
+        # starting_energy ; la physiologie continue de lire state.agents.energy,
+        # inchangee. Seule l'INFORMATION est retiree, pas la dynamique.
         # A utiliser en LAB, sur les memes genomes : comparaison appariee.
         state_in = state
         if cfg.ablate_memory:
             state_in = state.replace(
                 last_actions=jnp.zeros_like(state.last_actions),
                 rewards=jnp.zeros_like(state.rewards),
+                agents=state.agents.replace(
+                    energy=jnp.full_like(state.agents.energy, cfg.starting_energy)),
             )
 
         actions_logit, new_policy_states = model.get_actions(
