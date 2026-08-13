@@ -13,6 +13,7 @@ from simulation.data_class import BASE_RESOURCES
 import os 
 
 from simulation.utils.plots import (
+    block_edges, block_apply, block_steps,
     plot_evolution,
     plot_consumption,
     plot_prob_eat_given_seen,
@@ -46,39 +47,54 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         
         shuffle_log       = load_shuffle_log(exp_dir)
         initial_order_ids = [r.id for r in BASE_RESOURCES]# l'ordre au step 0
-        plot_evolution(
-            np.concatenate(self.pop_history, axis=0),
-            np.concatenate(self.res_history, axis=0),
-            exp_dir,
-            shuffle_log,
-            initial_order_ids,
-            self.start_step,
-        )
-        pop_full      = np.concatenate(self.pop_history, axis=0)
-        consumed_full = np.concatenate(self.consumed_history, axis=0)
 
+        # Toutes les series d'historique sont reduites par blocs AVANT tracage.
+        # Sans ca, chaque figure coute lineairement en longueur de run pour un
+        # rendu identique (une figure de 1200 px ne resout pas 1,6 M de points),
+        # et plot() etant appele periodiquement, le total est quadratique.
+        # Les donnees pleine resolution restent dans les .npz : tools/replot.py
+        # les rejoue a la demande.
+        pop_full      = np.concatenate(self.pop_history, axis=0)
+        res_full      = np.concatenate(self.res_history, axis=0)
+        consumed_full = np.concatenate(self.consumed_history, axis=0)
+        seen_full     = np.concatenate(self.seen_history, axis=0)
+        eaten_full    = np.concatenate(self.eaten_seen_history, axis=0)
+
+        edges = block_edges(len(pop_full), self.start_step,
+                            cut_steps=[e["step"] for e in shuffle_log])
+        steps_r = block_steps(edges, self.start_step)
+        pop_r      = block_apply(pop_full,      edges, "mean")
+        res_r      = block_apply(res_full,      edges, "mean")
+        consumed_r = block_apply(consumed_full, edges, "mean")
+        # comptes -> SOMME, le ratio se fait ensuite (cf. block_apply)
+        seen_r     = block_apply(seen_full,  edges, "sum")
+        eaten_r    = block_apply(eaten_full, edges, "sum")
+
+        plot_evolution(
+            pop_r, res_r, exp_dir, shuffle_log, initial_order_ids,
+            self.start_step, steps=steps_r,
+        )
+        # window=1 : le bloc a deja lisse, un second lissage ferait double emploi
         plot_consumption(
-            pop_full, consumed_full, exp_dir, shuffle_log, initial_order_ids,
-            self.start_step, window=100, name_fig='plot_conso_window_mean',
+            pop_r, consumed_r, exp_dir, shuffle_log, initial_order_ids,
+            self.start_step, window=1, name_fig='plot_conso_window_mean',
+            steps=steps_r,
         )
         plot_prob_eat_given_seen(
-            pop_full,
-            np.concatenate(self.seen_history, axis=0),
-            np.concatenate(self.eaten_seen_history, axis=0),
-            exp_dir, shuffle_log, initial_order_ids,
-            self.start_step, window=100,
+            pop_r, seen_r, eaten_r, exp_dir, shuffle_log, initial_order_ids,
+            self.start_step, window=1, steps=steps_r,
         )
         plot_phase_portrait_png(
-            np.concatenate(self.pop_history, axis=0),
-            np.concatenate(self.res_history, axis=0),
-            exp_dir,
-            self.cfg,
-            self.start_step,
+            pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
         life_data = np.concatenate(self.life_history, axis=1)
+        mov_full = np.concatenate(self.mov_history)[1500:]
+        mov_edges = block_edges(len(mov_full), self.start_step + 1500,
+                                cut_steps=[e["step"] for e in shuffle_log])
         plot_mean_movement(
-            np.concatenate(self.mov_history)[1500:],
+            block_apply(mov_full, mov_edges, "mean"),
             exp_dir, self.start_step,
+            steps=block_steps(mov_edges, self.start_step + 1500),
         )
         n_types = len(self.cfg.resources)
         grid_res = state.grid[:n_types, :, :]       

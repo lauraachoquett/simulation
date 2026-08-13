@@ -17,16 +17,60 @@ from simulation.utils.utils_sim import build_id_timeline
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
 
 
-def plot_evolution(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=0):
-    plot_evolution_png(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step)
-    plot_evolution_html(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step)
+def block_edges(n, start_step=0, n_target=2000, cut_steps=()):
+    """Bornes de blocs pour reduire une serie de `n` pas a ~`n_target` points.
+
+    Une figure de 1200 px ne resout pas plus de ~1200 points ; en tracer 1,6 M
+    coute lineairement en longueur de run pour un resultat identique. On agrege
+    donc par blocs, ce qui rend le cout des figures CONSTANT.
+
+    Les bornes sont forcees a tomber sur les `cut_steps` (les shuffles) : un bloc
+    a cheval sur deux configs melangerait deux identites de ressources et
+    recevrait une seule couleur via build_id_timeline.
+    """
+    coupes = sorted({0, n} | {int(s) - start_step for s in cut_steps
+                              if 0 < int(s) - start_step < n})
+    par_bloc = max(1, n // max(n_target, 1))
+    edges = []
+    for a, b in zip(coupes[:-1], coupes[1:]):
+        k = max(1, round((b - a) / par_bloc))
+        edges.extend(a + (b - a) * i // k for i in range(k))
+    edges.append(n)
+    return np.array(sorted(set(edges)))
+
+
+def block_apply(arr, edges, how="mean"):
+    """Agrege arr (n,) ou (n, c) par blocs. how = 'mean' (niveaux) ou 'sum' (comptes).
+
+    Les COMPTES doivent etre sommes, jamais moyennes : pour un ratio k/n, moyenner
+    les ratios donnerait le meme poids a un bloc ou 3 agents voient et a un ou 300
+    voient. On somme n et k separement, on divise ensuite.
+    """
+    a = np.asarray(arr, dtype=float)
+    plat = a.ndim == 1
+    if plat:
+        a = a[:, None]
+    f = np.mean if how == "mean" else np.sum
+    out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
+    return out[:, 0] if plat else out
+
+
+def block_steps(edges, start_step=0):
+    """Position en x de chaque bloc : son centre."""
+    return start_step + 0.5 * (edges[:-1] + edges[1:])
+
+
+def plot_evolution(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=0,steps=None):
+    plot_evolution_png(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps)
+    plot_evolution_html(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps)
 
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 
 def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
-                       initial_order_ids, start_step=0):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                       initial_order_ids, start_step=0, steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
 
     fig, ax_evo_agents = plt.subplots(figsize=(12, 6))
     ax_evo_agents.set_xlabel('Steps')
@@ -72,17 +116,18 @@ from matplotlib.collections import LineCollection
 
 
 def plot_consumption(pop_history, consumed_history, exp_dir, shuffle_log,
-                     initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
+                     initial_order_ids, start_step=0, window=1, name_fig='plot_conso',
+                     steps=None):
     """Comme plot_evolution, mais l'axe droit porte le FLUX consomme par type
     (unites retirees de la grille par step) au lieu du stock present.
 
     window > 1 -> moyenne glissante sur `window` steps (courbe lissee)."""
     plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
                          initial_order_ids, start_step=start_step, window=window,
-                         name_fig=name_fig)
+                         name_fig=name_fig, steps=steps)
     plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
                           initial_order_ids, start_step=start_step, window=window,
-                          name_fig=name_fig)
+                          name_fig=name_fig, steps=steps)
 
 
 def _smooth_consumption(consumed, window):
@@ -107,8 +152,10 @@ def _smooth_consumption(consumed, window):
 
 
 def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
-                         initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                         initial_order_ids, start_step=0, window=1, name_fig='plot_conso',
+                         steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
 
     fig, ax_pop = plt.subplots(figsize=(12, 6))
     ax_pop.set_xlabel('Steps')
@@ -155,8 +202,10 @@ def _consumption_title(window):
 
 
 def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
-                          initial_order_ids, start_step=0, window=1, name_fig='plot_conso'):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                          initial_order_ids, start_step=0, window=1, name_fig='plot_conso',
+                          steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
     T = len(generations)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -209,7 +258,7 @@ def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
 
 def plot_prob_eat_given_seen(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
                              initial_order_ids, start_step=0, window=100,
-                             name_fig='plot_prob_eat'):
+                             name_fig='plot_prob_eat', steps=None):
     """P(manger le type k | type k dans le champ de vision), une courbe par identite.
 
     n_seen / n_eaten : (T, n_types), comptes d'agents par pas (cf.
@@ -217,9 +266,9 @@ def plot_prob_eat_given_seen(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
     lisser le RAPPORT donnerait le meme poids a un pas ou 3 agents voient et a
     un pas ou 300 voient."""
     plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
-                      initial_order_ids, start_step, window, name_fig)
+                      initial_order_ids, start_step, window, name_fig, steps)
     plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
-                       initial_order_ids, start_step, window, name_fig)
+                       initial_order_ids, start_step, window, name_fig, steps)
 
 
 def _pooled_ratio(n_seen, n_eaten, window):
@@ -241,8 +290,9 @@ def _pooled_ratio(n_seen, n_eaten, window):
 
 def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
                       initial_order_ids, start_step=0, window=100,
-                      name_fig='plot_prob_eat'):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                      name_fig='plot_prob_eat', steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
     p = _pooled_ratio(n_seen, n_eaten, window)
     n_types = p.shape[1]
 
@@ -294,8 +344,9 @@ def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
 
 def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
                        initial_order_ids, start_step=0, window=100,
-                       name_fig='plot_prob_eat'):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                       name_fig='plot_prob_eat', steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
     T = len(generations)
     p = _pooled_ratio(n_seen, n_eaten, window)
     n_types = p.shape[1]
@@ -535,20 +586,28 @@ def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
     plt.close()
 
 
-def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0,
-                            fixed_point=None):
-    if len(pop_history) < 2000:
-        return
+BURN_IN_STEPS = 2000      # transitoire initial ecarte du portrait de phase
 
+
+def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0,
+                            fixed_point=None, steps=None):
     res     = np.asarray(res_history)                      # (T, n_types)
     delta_e = np.array([r.delta_energy for r in cfg.resources])
     good    = np.where(delta_e > 0)[0]
     R_full  = res[:, good].sum(axis=1)                     # (T,) total bonnes ressources
 
-    R = R_full[2000:]
-    N = np.asarray(pop_history)[2000:]
-    start_step = 2000
-    steps = np.arange(start_step, start_step + len(N))
+    # Le burn-in se compte en STEPS, pas en indices : sur des donnees agregees par
+    # blocs un indice ne vaut plus un pas, et decouper a l'indice 2000 jetterait
+    # tout le run.
+    pos = (np.asarray(steps) if steps is not None
+           else np.arange(start_step, start_step + len(pop_history)))
+    garde = pos >= BURN_IN_STEPS
+    if garde.sum() < 2:
+        return
+
+    R = R_full[garde]
+    N = np.asarray(pop_history)[garde]
+    steps = pos[garde]
 
     # Segments consécutifs pour colorer la ligne par le temps
     points = np.array([R, N]).T.reshape(-1, 1, 2)
@@ -587,8 +646,9 @@ def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0
             
 
 def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
-                        initial_order_ids, start_step=0):
-    generations = np.arange(start_step, start_step + len(pop_history))
+                        initial_order_ids, start_step=0, steps=None):
+    generations = (np.asarray(steps) if steps is not None
+                   else np.arange(start_step, start_step + len(pop_history)))
     T = len(generations)
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -842,13 +902,14 @@ def compute_mean_movement_chunk(outputs, n):
                         (magnitude * same).sum(axis=1) / n_valid, 0.0)
     return mean_mov   # (T-1,)
 
-def plot_mean_movement(mov_history, exp_dir, start_step=0, name_fig='sim'):
-    plot_mean_movement_png(mov_history, exp_dir, start_step=start_step, name_fig=name_fig)
-    plot_mean_movement_html(mov_history, exp_dir, start_step=start_step, name_fig=name_fig)
+def plot_mean_movement(mov_history, exp_dir, start_step=0, name_fig='sim', steps=None):
+    plot_mean_movement_png(mov_history, exp_dir, start_step=start_step, name_fig=name_fig, steps=steps)
+    plot_mean_movement_html(mov_history, exp_dir, start_step=start_step, name_fig=name_fig, steps=steps)
 
-def plot_mean_movement_png(mov_history, exp_dir, start_step=0, name_fig='sim'):
+def plot_mean_movement_png(mov_history, exp_dir, start_step=0, name_fig='sim', steps=None):
     """Plot mean movement of the population over time."""
-    steps = np.arange(start_step, start_step + len(mov_history))
+    steps = (np.asarray(steps) if steps is not None
+             else np.arange(start_step, start_step + len(mov_history)))
 
     _, ax = plt.subplots(figsize=(12, 4))
     ax.set_xlabel('Steps')
@@ -864,9 +925,10 @@ def plot_mean_movement_png(mov_history, exp_dir, start_step=0, name_fig='sim'):
     plt.close()
 
 def plot_mean_movement_html(mov_history, exp_dir,
-                            start_step=0, name_fig='sim'):
+                            start_step=0, name_fig='sim', steps=None):
     """Plot mean movement, points colored by resource presence."""
-    steps = np.arange(start_step, start_step + len(mov_history))
+    steps = (np.asarray(steps) if steps is not None
+             else np.arange(start_step, start_step + len(mov_history)))
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
