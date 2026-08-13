@@ -95,17 +95,13 @@ class Config(NamedTuple):
     letal_wall : bool = True
     energy_to_die : float = 0.0
 
-    # Periode des cycles, EN CHUNKS (meme unite que checkpoint_freq / video_freq).
-    # Sert a deux choses : la frequence des shuffles de ressources, et le moment
-    # ou le frein de surpopulation entre en jeu -- soit cycle_period * chunk_size
-    # steps. Le premier cycle se deroule donc sans bride, le temps que
-    # l'ecosysteme s'installe.
+
     cycle_period : int = 200
 
     # Frein de surpopulation : au-dela de crowd_limit cases occupees, un type
     # retombe sur ces taux de croissance lents. Le seuil porte sur le nombre de
-    # cases d'UN type, pas sur le total.
-    crowd_limit : int = 1500
+    # cases d'un type
+    crowd_limit : int = 3000
     crowd_prob_factor : float = 0.0065
     crowd_pop_res_prob : float = 4e-5
     

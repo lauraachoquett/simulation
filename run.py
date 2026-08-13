@@ -262,7 +262,9 @@ if __name__ =='__main__':
             pre_growth_step = 500,
             random_pos_offspring = False,
             dumb_agent = False,
-            letal_wall=False
+            letal_wall=False,
+            
+            cycle_period = 100
         )
     
     

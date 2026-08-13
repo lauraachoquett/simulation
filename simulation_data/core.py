@@ -87,7 +87,7 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             state.agents.position, state.agents.alive,
             exp_dir, self.cfg.resources,name_fig=f'{self.chunk_idx}',
         )
-        plot_lifetime_vs_step((life_data[1, :]), (life_data[0, :]), exp_dir, self.cfg)
+        # plot_lifetime_vs_step((life_data[1, :]), (life_data[0, :]), exp_dir, self.cfg)
         plot_life_expectancy((life_data[1, :]), (life_data[0, :]), exp_dir, bin_width=1000)
         if self.coalesced:                    # -> WeightsMixin
             print("PLOT metrics")
