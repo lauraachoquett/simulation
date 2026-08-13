@@ -5,6 +5,7 @@ import jax
 from jax import random
 import jax.numpy as jnp
 import dataclasses
+from typing import NamedTuple
 
 
 from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
@@ -156,6 +157,36 @@ def outputs_to_numpy(outputs):
     """
     import jax
     return jax.tree_util.tree_map(np.array, outputs)
+
+
+class VideoPayload(NamedTuple):
+    """Le strict nécessaire pour save_chunk_video, et rien d'autre.
+
+    Le pytree complet fait ~5,4 Go par chunk et part par PICKLE dans un pipe vers
+    le process worker. save_chunk_video ne lit que ces cinq champs
+    (utils_video.py:14, 38-41) ; `grid` domine, le reste est marginal.
+    """
+    grid:      np.ndarray
+    position:  np.ndarray
+    born_step: np.ndarray
+    alive:     np.ndarray
+    step:      np.ndarray
+
+
+def video_payload(outputs, stride=1):
+    """Extrait la charge vidéo, en ne transférant qu'une frame sur `stride`.
+
+    Le découpage est fait AVANT le transfert device->hôte : inutile de rapatrier
+    puis de pickler des frames qu'on ne rendra jamais.
+    """
+    take = lambda x: np.asarray(x[::stride])
+    return VideoPayload(
+        grid      = take(outputs.grid),
+        position  = take(outputs.position),
+        born_step = take(outputs.born_step),
+        alive     = take(outputs.alive),
+        step      = take(outputs.step),
+    )
 
 
 # --- Wrapper picklable pour le worker ---

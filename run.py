@@ -5,7 +5,7 @@ os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,sec_to_minutes,shuffle_resources
+from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
@@ -184,7 +184,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # --- Vidéo (asynchrone) ---
             if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk:
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
-                outputs_np = outputs_to_numpy(outputs)
+                outputs_np = video_payload(outputs, stride=cfg.video_stride)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                 pending_futures[future] = chunk_idx
 
@@ -263,8 +263,9 @@ if __name__ =='__main__':
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
-            
-            cycle_period = 100
+            cycle_period = 100,
+            # ~84% du log, jamais lu hors du lab (qui le reactive de son cote)
+            log_obs = False,
         )
     
     

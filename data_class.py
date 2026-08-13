@@ -95,7 +95,21 @@ class Config(NamedTuple):
     letal_wall : bool = True
     energy_to_die : float = 0.0
 
+    # obs pese ~84% du log (T,N,11,11,C) et n'est lu QUE par le lab. La sim
+    # principale peut donc s'en passer. Defaut True : un oubli redonne le
+    # comportement actuel, lent mais correct, jamais un lab casse.
+    log_obs : bool = True
 
+    # Une frame sur video_stride est rendue. Le decoupage se fait avant le
+    # transfert device->hote, donc ca allege aussi le pickle envoye au worker.
+    # Remettre a 1 pour inspecter finement un chunk.
+    video_stride : int = 4
+
+    # Periode des cycles, EN CHUNKS (meme unite que checkpoint_freq / video_freq).
+    # Sert a deux choses : la frequence des shuffles de ressources, et le moment
+    # ou le frein de surpopulation entre en jeu -- soit cycle_period * chunk_size
+    # steps. Le premier cycle se deroule donc sans bride, le temps que
+    # l'ecosysteme s'installe.
     cycle_period : int = 200
 
     # Frein de surpopulation : au-dela de crowd_limit cases occupees, un type

@@ -236,7 +236,10 @@ def run_simulation_chunk(state,model,keys, cfg):
             grid=state.grid,    # retire-le si tes vidéos n'en ont pas besoin
             step = step_idx,
             time_under_min_energy = state.agents.time_under_min_energy,
-            obs=state.obs,
+            # ~84% du log, lu uniquement par le lab. Vide -> empile en (T, 0)
+            # sous le scan. saw_res ci-dessous est calcule depuis state.obs, l'etat
+            # vivant, donc il reste correct meme quand le log est vide.
+            obs = state.obs if cfg.log_obs else jnp.zeros((0,), dtype=state.obs.dtype),
             # Seuls champs produits PENDANT le step (les autres logguent l'etat de DEBUT
             # de step). C'est l'alignement voulu : consumed_res[t] est preleve sur le
             # stock grid[t], et ate_res[t] suit l'observation saw_res[t] du meme pas.

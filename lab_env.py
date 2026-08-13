@@ -159,6 +159,7 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         reproduction_on=False,
         resources_growth=False,
         pre_growth_step=200,
+        log_obs=True,          # le lab en a besoin, quoi que fasse la sim principale
     )
     count_by_id = HIGH_RES_COUNTS
     cfg = cfg._replace(resources=tuple(
@@ -176,6 +177,7 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         reproduction_on = False,
         resources_growth=False,
         pre_growth_step = 200,
+        log_obs=True,          # idem
     )
     count_by_id =HIGH_RES_COUNTS
     
@@ -191,8 +193,9 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
         grid_length=30,
         n_agents_max=2,
         reproduction_on = False,
-        resources_growth=False, 
+        resources_growth=False,
         pre_growth_step = 50,
+        log_obs=True,          # idem
     )
     count_by_id = {"good": 3, "medium": 2, "poison": 10}
     
