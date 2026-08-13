@@ -154,7 +154,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 if state.step > 100000 :
                     
                     vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
-                    outputs_np = outputs_to_numpy(outputs)
+                    outputs_np = video_payload(outputs, stride=cfg.video_stride)
                     future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                     pending_futures[future] = chunk_idx
                     
