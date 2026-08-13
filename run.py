@@ -190,7 +190,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 
             ## SHUFFLE RESOURCES ##
-            if (chunk_idx) % 200 == 0:
+            if (chunk_idx) % cfg.cycle_period == 0:
                 new_resources = shuffle_resources(BASE_RESOURCES, subkey)
 
                 old_resources = cfg.resources                    # (2) état COURANT, pas BASE

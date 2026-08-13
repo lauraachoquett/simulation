@@ -95,7 +95,8 @@ def init_state_lab(key, cfg, model,agent_params):
     grid_resources_grown, _ = jax.lax.fori_loop(
         0,
         cfg.pre_growth_step,
-        lambda i, carry: resources_growth(carry, cfg),
+        # pas de frein pendant la pre-croissance (cf. init_state)
+        lambda i, carry: resources_growth(carry, cfg, crowd_brake=False),
         init_carry
     )
     

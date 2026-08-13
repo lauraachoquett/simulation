@@ -99,7 +99,9 @@ def init_state(key, cfg, model):
     grid_resources_grown, _ = jax.lax.fori_loop(
         0,
         cfg.pre_growth_step,
-        lambda i, carry: resources_growth(carry, cfg),
+        # pas de frein pendant la pre-croissance : elle amene la grille a son
+        # etat de depart, le frein la briderait avant meme le premier pas
+        lambda i, carry: resources_growth(carry, cfg, crowd_brake=False),
         init_carry
     )
     

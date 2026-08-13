@@ -22,9 +22,22 @@ def respawn(x, subkey, prob_factor,pop_res_prob):
 respawn_jit = jit(respawn)
 
 
-@partial(jax.jit, static_argnames=("cfg"))
-def resources_growth(carry, cfg):
+@partial(jax.jit, static_argnames=("cfg", "crowd_brake"))
+def resources_growth(carry, cfg, crowd_brake=True, step=None):
+    """crowd_brake=False -> pas de frein de surpopulation du tout.
+
+    Utilise pour la pre-croissance (init_state / init_state_lab) : elle sert a
+    amener la grille a son etat de depart, et le frein l'empecherait d'atteindre
+    des densites que la simulation doit pouvoir montrer des le premier pas.
+
+    `step` est le pas GLOBAL de simulation : le frein ne mord qu'a partir du
+    premier cycle, soit cfg.cycle_period * cfg.chunk_size steps. Il est tracee
+    (contrairement a crowd_brake), donc la condition passe par jnp.where. Requis
+    quand crowd_brake=True -- l'oublier desactiverait le frein en silence, d'ou
+    l'erreur explicite."""
     grid_resources, key = carry                      # (n_types, L, L)
+    if crowd_brake and step is None:
+        raise ValueError("resources_growth : `step` est requis quand crowd_brake=True")
     key, key_env, key_tie = jax.random.split(key, 3)
 
     up    = jnp.roll(grid_resources, 1,  axis=1)
@@ -41,11 +54,16 @@ def resources_growth(carry, cfg):
 
     # Frein de surpopulation, par TYPE : un type qui occupe plus de crowd_limit
     # cases retombe sur une croissance lente. Le compte depend de la grille, donc
-    # c'est une valeur tracee -> jnp.where et non un if Python.
-    count = grid_resources.sum(axis=(1, 2))                             # (n_types,)
-    trop  = count > cfg.crowd_limit
-    prob_factor  = jnp.where(trop, cfg.crowd_prob_factor,  prob_factor)
-    pop_res_prob = jnp.where(trop, cfg.crowd_pop_res_prob, pop_res_prob)
+    # c'est une valeur tracee -> jnp.where et non un if Python. En revanche
+    # crowd_brake est statique, d'ou le if Python autour.
+    if crowd_brake:
+        count = grid_resources.sum(axis=(1, 2))                         # (n_types,)
+        # `step` est tracee -> tout passe par jnp.where. `commence` est un
+        # scalaire booleen, diffuse sur les n_types.
+        commence = step >= cfg.cycle_period * cfg.chunk_size
+        trop = (count > cfg.crowd_limit) & commence
+        prob_factor  = jnp.where(trop, cfg.crowd_prob_factor,  prob_factor)
+        pop_res_prob = jnp.where(trop, cfg.crowd_pop_res_prob, pop_res_prob)
 
     # L'alea suit l'IDENTITE de la ressource, pas l'indice de canal : sinon une
     # ressource deplacee sur un autre canal (rotation du lab, shuffle_resources)
