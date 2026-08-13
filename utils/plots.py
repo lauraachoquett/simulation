@@ -1790,7 +1790,8 @@ def plots_metrics_weight_distance(dist_list, exp_dir, steps,
 
 
 def plots_weight_selection(dist_list, neutral, exp_dir, steps, gen_depth=None,
-                           x_axis="step", fname="weight_selection.png"):
+                           x_axis="step", fname="weight_selection.png",
+                           shuffle_steps=()):
     """Écart à la neutralité — le graphe à regarder en premier.
 
     Panneau gauche, rapport observé/neutre :
@@ -1807,15 +1808,33 @@ def plots_weight_selection(dist_list, neutral, exp_dir, steps, gen_depth=None,
     x, xlab = _xaxis(steps, gen_depth, x_axis)
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
+    # En abscisse GENERATIONS, x n'est PAS monotone : la profondeur genealogique
+    # moyenne recule quand une bouffee de naissances meurt, les survivants etant
+    # les vieux agents, donc les moins profonds. Relier les points par un trait
+    # ferait alors revenir la courbe sur elle-meme, ce qui se lit comme une
+    # anomalie. On ne trace donc que les marqueurs, et un degrade indique le sens
+    # du temps.
+    recule = np.any(np.diff(np.asarray(x, float)) < 0)
     for i, g in enumerate(GROUPS):
         m  = np.array([d[g][0] for d in dist_list])
         nm = np.array([n[g][0] for n in neutral])
         ns = np.array([n[g][1] for n in neutral])
 
-        axes[0].plot(x, m / np.where(nm > 0, nm, np.nan),
-                     marker="o", ms=3.5, color=f"C{i}", label=g)
-        axes[1].plot(x, (m - nm) / np.where(ns > 0, ns, np.nan),
-                     marker="o", ms=3.5, color=f"C{i}", label=g)
+        style = dict(marker="o", ms=3.5, color=f"C{i}", label=g)
+        if recule:
+            style.update(ls="none")
+        axes[0].plot(x, m / np.where(nm > 0, nm, np.nan), **style)
+        axes[1].plot(x, (m - nm) / np.where(ns > 0, ns, np.nan), **style)
+
+    # Permutations des ressources : converties dans l'unite de l'axe. `steps` est
+    # croissant, donc l'interpolation est valide meme si gen_depth ne l'est pas.
+    for j, s in enumerate(np.atleast_1d(np.asarray(shuffle_steps, float))):
+        if s < np.min(steps) or s > np.max(steps):
+            continue
+        xv = s if x_axis != "generation" else float(np.interp(s, steps, gen_depth))
+        for ax in axes:
+            ax.axvline(xv, color="0.35", ls=":", lw=1.2, zorder=0,
+                       label="permutation" if j == 0 else None)
 
     axes[0].axhline(1.0, color="k", ls="--", lw=1.5, label="neutre")
     axes[0].set_yscale("log")

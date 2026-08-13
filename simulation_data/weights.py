@@ -27,6 +27,7 @@ import jax
 from jax.flatten_util import ravel_pytree
 
 from simulation.genealogy.genealogy import find_root
+from simulation.utils.utils_sim import load_shuffle_log
 from simulation.utils.plots import (plots_metrics_weight_distance,
                                     plots_weight_selection)
 
@@ -405,6 +406,8 @@ class WeightsMixin:
         # 1. La croissance en p*sigma^2*g commune aux quatre blocs s'annule, et
         # le choix de reduction par couche aussi puisque numerateur et
         # denominateur y passent tous les deux. C'est la figure a montrer.
+        shuffle_steps = [e["step"] for e in load_shuffle_log(exp_dir)]
         plots_weight_selection(
             self.weight_dist, self.weight_neutral, exp_dir,
-            steps=self.metric_steps, gen_depth=self.gen_depth, x_axis=x_axis)
+            steps=self.metric_steps, gen_depth=self.gen_depth, x_axis=x_axis,
+            shuffle_steps=shuffle_steps)
