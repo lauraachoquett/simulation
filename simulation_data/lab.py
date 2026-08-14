@@ -26,8 +26,7 @@ from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agent
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
-                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess,
-                            plot_memory_ablation)
+                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -210,11 +209,16 @@ class LabMixin:
             # le controle de l'adaptation intra-vie : si la baisse persiste sans
             # memoire, elle ne vient pas d'un apprentissage. Ablation au moment
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
-            outputs_adapt_abl = None
+            outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
+                cfg_abl = self.cfg._replace(ablate_memory=True)
                 _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
-                    agent_params, key_env, key_sim, model,
-                    self.cfg._replace(ablate_memory=True))
+                    agent_params, key_env, key_sim, model, cfg_abl)
+                # La baseline doit etre ablatee ELLE AUSSI : l'exces est
+                # permute - baseline, et soustraire une baseline a memoire intacte
+                # d'un permute ablate melangerait les deux conditions.
+                _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
+                    agent_params, key_env, key_sim, model, cfg_abl)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
@@ -245,6 +249,15 @@ class LabMixin:
                 _, bn_i, bk_i = self.prob_eat_over_life(
                     outputs_high, self.cfg.resources, label=LABELS[r.id])
                 base_par_type[r.id] = (bn_i, bk_i)
+
+            # La meme chose sous ablation, pour que l'exces ablate se calcule
+            # entierement dans la condition ablatee.
+            base_par_type_abl = {}
+            if outputs_high_abl is not None:
+                for r in self.cfg.resources:
+                    _, bn_i, bk_i = self.prob_eat_over_life(
+                        outputs_high_abl, self.cfg.resources, label=LABELS[r.id])
+                    base_par_type_abl[r.id] = (bn_i, bk_i)
 
             for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
@@ -311,17 +324,25 @@ class LabMixin:
                     chunk=self.chunk_idx, tag=name, mapping=caption,
                 )
 
-                # Le controle : meme rollout, memes genomes, memoire coupee.
-                if outputs_adapt_abl is not None:
+                # LE CONTROLE : le meme exces, entierement recalcule dans la
+                # condition ablatee (permute ET baseline sans memoire). A lire
+                # cote a cote avec la figure ci-dessus : sans memoire la politique
+                # est une fonction de `obs` seule, donc l'exces ne devrait pas
+                # bouger le long de la vie. S'il bouge quand meme, c'est
+                # l'environnement qui derive, pas l'agent qui apprend.
+                if outputs_adapt_abl is not None and base_par_type_abl:
                     out_abl = jax.tree_util.tree_map(lambda x: x[:, j],
                                                      outputs_adapt_abl)
-                    _, n_abl, k_abl = self.prob_eat_over_life(out_abl, resources_rot)
-                    if n_abl.sum():
-                        plot_memory_ablation(
-                            life_n, life_k, n_abl, k_abl, _wilson, exp_dir,
-                            chunk=self.chunk_idx, tag=name, mapping=caption,
-                            baseline=life_baseline,
-                        )
+                    par_type_abl = {}
+                    for r in resources_rot:
+                        _, n_i, k_i = self.prob_eat_over_life(
+                            out_abl, resources_rot, label=LABELS[r.id])
+                        par_type_abl[r.id] = (n_i, k_i)
+                    plot_prob_eat_excess(
+                        par_type_abl, base_par_type_abl, exp_dir,
+                        chunk=self.chunk_idx, tag=name, mapping=caption,
+                        suffix='_no_memory', titre=' (memory ablated)',
+                    )
 
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,

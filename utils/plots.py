@@ -602,7 +602,7 @@ def _excess_ci(n_p, k_p, n_b, k_b, z=1.96):
 
 
 def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
-                         mapping=''):
+                         mapping='', suffix='', titre=''):
     """Ecart `permute - non permute` par type, le long de la vie.
 
     Les agents mangent moins en vieillissant, quelle que soit la ressource : sur
@@ -659,7 +659,7 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
     ax.text(0.02, 0.96, '\n'.join(lignes), transform=ax.transAxes,
             ha='left', va='top', fontsize=8.5, family='monospace',
             bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
-    ax.set_title(f'Permutation-specific excess — {tag} (chunk {chunk})',
+    ax.set_title(f'Permutation-specific excess{titre} — {tag} (chunk {chunk})',
                  fontsize=11, pad=34 if mapping else 6)
     if mapping:
         ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
@@ -668,7 +668,7 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
     plt.tight_layout()
     path = os.path.join(exp_dir, 'fig', 'adapt', tag)
     os.makedirs(path, exist_ok=True)
-    plt.savefig(os.path.join(path, f'excess_over_life_chunk_{chunk}.png'))
+    plt.savefig(os.path.join(path, f'excess_over_life{suffix}_chunk_{chunk}.png'))
     plt.close()
 
 

@@ -162,10 +162,20 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
+    # Meme croissance pour les trois types, calee sur celle du poison. En
+    # gardant les taux de la sim principale, le medium repousserait 20x plus
+    # vite que le poison : une asymetrie de consommation entre types serait
+    # alors indissociable d'une asymetrie de REPOUSSE. L'env de test n'a pas a
+    # etre ecologiquement realiste, il doit etre symetrique et stationnaire.
+    # Lu depuis le poison plutot qu'en dur, pour suivre BASE_RESOURCES.
+    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+                  prob_factor=poison.prob_factor,
+                  pop_res_prob=poison.pop_res_prob)
+        for r in cfg.resources
     ))
-    cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))   
+    cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
     return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
