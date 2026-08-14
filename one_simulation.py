@@ -68,23 +68,7 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         new_time_over = jnp.where(reproduces, 0, new_time_over) # If going to reproduce reset reproduction time to zero
         survives_int = jnp.where(survives, 1, 0) #Bool alive array to Int alive array
-
-
-        # ------- 2. Movement and Physiological update -------
-        # ------- Ablation de la memoire intra-vie -------
-        # La politique recoit (obs, last_action, reward, energie, etat LSTM).
-        # L'information intra-vie passe donc par QUATRE canaux :
-        #   - l'etat LSTM, memoire a plusieurs pas ;
-        #   - last_action et reward, retour immediat au pas suivant ;
-        #   - l'ENERGIE, qui accumule tout l'historique alimentaire de l'agent.
-        # N'en couper qu'une partie laisserait une voie ouverte : un agent peut
-        # changer de comportement au fil de sa vie par la seule energie.
-        #
-        # L'energie ne peut pas etre mise a zero, elle gouverne la mort. On masque
-        # donc uniquement ce que la POLITIQUE en voit, en la figeant a
-        # starting_energy ; la physiologie continue de lire state.agents.energy,
-        # inchangee. Seule l'INFORMATION est retiree, pas la dynamique.
-        # A utiliser en LAB, sur les memes genomes : comparaison appariee.
+        
         state_in = state
         if cfg.ablate_memory:
             state_in = state.replace(
@@ -98,7 +82,6 @@ def run_simulation_chunk(state,model,keys, cfg):
             state_in, state.agents.params, state.agents.policy_states
         )
         if cfg.ablate_memory:
-            # remis a zero a CHAQUE pas : le carry n'accumule jamais rien
             new_policy_states = metaRNNPolicyState_bcppr(
                 lstm_h=jnp.zeros_like(new_policy_states.lstm_h),
                 lstm_c=jnp.zeros_like(new_policy_states.lstm_c),
@@ -132,12 +115,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         rewards = survives_int * gain
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int, cfg.energy_max)
 
-        # ------- P(manger | en vue) : les deux termes, par agent et par type -------
-        # `ate` est exact, contrairement au signe de la recompense : un agent sur une
-        # case good+poison a un gain net nul et serait manque par `rewards > 0`.
         ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
-        # obs est (N, side, side, C), canal en DERNIER ; le padding hors grille vaut
-        # -1, ecarte par le test > 0. C'est l'observation sur laquelle l'agent DECIDE.
         saw_res_step = (state.obs[..., :n_types] > 0).any(axis=(1, 2))       # (N, n_types)
 
 
@@ -147,10 +125,6 @@ def run_simulation_chunk(state,model,keys, cfg):
         consumed = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=grid_resources.dtype) # (L, L)
         consumed = consumed.at[pos[:, 0], pos[:, 1]].max(survives_int)     # (L, L)
 
-        # Ce qui disparait de l'environnement, par type. A calculer AVANT la remise a zero.
-        # Attention : `consumed` est un masque par CELLULE (max sur les agents), donc une
-        # cellule occupee par plusieurs agents n'est vidée qu'une fois alors que chacun d'eux
-        # encaisse `gain` -> sum(rewards) != consumed_per_type @ delta_energy.
         consumed_per_type = (grid_resources * consumed[None]).sum(axis=(1, 2))   # (n_types,)
 
         grid_resources = grid_resources * (1 - consumed[None]) #  consumed[None]: (n_types, L , L)
@@ -263,16 +237,10 @@ def run_simulation_chunk(state,model,keys, cfg):
             born_step=state.agents.born_step,
             actions=state.last_actions,
             rewards=state.rewards,
-            grid=state.grid,    # retire-le si tes vidéos n'en ont pas besoin
+            grid=state.grid,   
             step = step_idx,
             time_under_min_energy = state.agents.time_under_min_energy,
-            # ~84% du log, lu uniquement par le lab. Vide -> empile en (T, 0)
-            # sous le scan. saw_res ci-dessous est calcule depuis state.obs, l'etat
-            # vivant, donc il reste correct meme quand le log est vide.
             obs = state.obs if cfg.log_obs else jnp.zeros((0,), dtype=state.obs.dtype),
-            # Seuls champs produits PENDANT le step (les autres logguent l'etat de DEBUT
-            # de step). C'est l'alignement voulu : consumed_res[t] est preleve sur le
-            # stock grid[t], et ate_res[t] suit l'observation saw_res[t] du meme pas.
             consumed_res = consumed_per_type,
             saw_res = saw_res_step,
             ate_res = ate_res_step,

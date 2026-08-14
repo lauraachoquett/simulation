@@ -650,8 +650,6 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
         plt.close(); return
 
     ax.axhline(0, color='black', lw=1.2, zorder=3)
-    ax.text(0.995, 0.02, 'ligne 0 = comportement normal', transform=ax.transAxes,
-            ha='right', va='bottom', fontsize=7.5, color='0.45')
     ax.set_xticks(x)
     ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
     ax.set_xlabel("fraction of the agent's own lifetime")
@@ -1756,14 +1754,7 @@ def plots_metrics_weight_distance(dist_list, exp_dir, steps,
             if show_origin:
                 _connect_origin(ax, x, nm, "0.25", alpha=0.35)
 
-            # Fraction de points sous le neutre : >0.5 suggère une contrainte
-            # sélective, <0.5 une dérive accélérée. Purement indicatif.
-            ok = np.isfinite(m) & np.isfinite(nm)
-            if ok.any():
-                frac = float(np.mean(m[ok] < nm[ok]))
-                ax.text(0.97, 0.05, f"{frac:.0%} sous le neutre",
-                        transform=ax.transAxes, ha="right", va="bottom",
-                        fontsize=8, color="0.35")
+
 
         ax.set_title(g, fontsize=11)
         ax.grid(alpha=0.3)

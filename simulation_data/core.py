@@ -107,4 +107,4 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_life_expectancy((life_data[1, :]), (life_data[0, :]), exp_dir, bin_width=1000)
         if self.coalesced:                    # -> WeightsMixin
             print("PLOT metrics")
-            self.plot_weight_metrics(exp_dir)
+            self.plot_weight_metrics(exp_dir,x_axis='generation')

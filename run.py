@@ -270,8 +270,7 @@ if __name__ =='__main__':
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
-            cycle_period = 100,
-            # ~84% du log, jamais lu hors du lab (qui le reactive de son cote)
+            cycle_period = 200,
             log_obs = False,
         )
     

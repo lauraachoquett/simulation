@@ -95,47 +95,23 @@ class Config(NamedTuple):
     letal_wall : bool = True
     energy_to_die : float = 0.0
 
-    # obs pese ~84% du log (T,N,11,11,C) et n'est lu QUE par le lab. La sim
-    # principale peut donc s'en passer. Defaut True : un oubli redonne le
-    # comportement actuel, lent mais correct, jamais un lab casse.
     log_obs : bool = True
 
-    # Coupe TOUTE l'information intra-vie : etat LSTM (h, c) remis a zero a
-    # chaque pas, et last_actions / rewards zerotes en entree. Le genome est
-    # inchange, seul le flux temporel est coupe -- a activer en LAB sur les
-    # memes agents pour une comparaison appariee. Si la baisse de consommation
-    # en fin de vie persiste sans memoire, elle ne vient pas d'un apprentissage.
     ablate_memory : bool = False
 
-    # Rejouer l'env adapt une seconde fois avec ablate_memory=True, pour obtenir
-    # la comparaison appariee. Double le cout des rollouts adapt.
     lab_memory_ablation : bool = True
 
-    # Une frame sur video_stride est rendue. Le decoupage se fait avant le
-    # transfert device->hote, donc ca allege aussi le pickle envoye au worker.
-    # Remettre a 1 pour inspecter finement un chunk.
-    video_stride : int = 4
+    video_stride : int = 2
 
-    # Periode des cycles, EN CHUNKS (meme unite que checkpoint_freq / video_freq).
-    # Sert a deux choses : la frequence des shuffles de ressources, et le moment
-    # ou le frein de surpopulation entre en jeu -- soit cycle_period * chunk_size
-    # steps. Le premier cycle se deroule donc sans bride, le temps que
-    # l'ecosysteme s'installe.
     cycle_period : int = 200
 
-    # Chunks APRES un shuffle ou lancer une analyse de lab, en plus de la grille
-    # reguliere pca_save_freq. Celle-ci divise cycle_period, donc elle ne tombe
-    # que sur quelques phases du cycle et rate le juste-apres-permutation, ou le
-    # genome est le plus inadapte. Remplace l'ancien cas special chunk_idx == 10,
-    # qui ne servait que le premier cycle.
     lab_after_shuffle : tuple = (5, 10, 20)
 
-    # Frein de surpopulation : au-dela de crowd_limit cases occupees, un type
-    # retombe sur ces taux de croissance lents. Le seuil porte sur le nombre de
-    # cases d'un type
     crowd_limit : int = 3000
     crowd_prob_factor : float = 0.0065
     crowd_pop_res_prob : float = 4e-5
+    
+    lab_time_steps : int = 1000
     
 
 

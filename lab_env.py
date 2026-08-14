@@ -141,7 +141,7 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
     # import jax
     # jax.debug.print("inj ok ? {b}", b=jnp.allclose(state.agents.params[1], agent_params))
     key, subkey = jax.random.split(key_sim)
-    keys_chunk = jax.random.split(subkey, 1000)
+    keys_chunk = jax.random.split(subkey, cfg.lab_time_steps)
     state, outputs = run_simulation_chunk(state,model,keys_chunk, cfg)
 
     
@@ -149,7 +149,7 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
 
 # stocks de l'env high_res, par IDENTITE de ressource. Expose pour que les plots
 # puissent afficher le plafond disponible sans redupliquer ces valeurs.
-HIGH_RES_COUNTS = {"good": 10, "medium": 5, "poison": 20}
+HIGH_RES_COUNTS = {"good": 5, "medium": 3, "poison": 60}
 
 
 def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
@@ -157,15 +157,15 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         grid_length=30,
         n_agents_max=2,
         reproduction_on=False,
-        resources_growth=False,
+        resources_growth=True,
         pre_growth_step=200,
-        log_obs=True,          # le lab en a besoin, quoi que fasse la sim principale
+        log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
     cfg = cfg._replace(resources=tuple(
         r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
     ))
-    cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))   # cycle des canaux
+    cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))   
     return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
@@ -175,7 +175,7 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         grid_length=30,
         n_agents_max=5,
         reproduction_on = False,
-        resources_growth=False,
+        resources_growth=True,
         pre_growth_step = 200,
         log_obs=True,          # idem
     )
