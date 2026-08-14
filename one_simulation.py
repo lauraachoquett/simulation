@@ -69,19 +69,29 @@ def run_simulation_chunk(state,model,keys, cfg):
         new_time_over = jnp.where(reproduces, 0, new_time_over) # If going to reproduce reset reproduction time to zero
         survives_int = jnp.where(survives, 1, 0) #Bool alive array to Int alive array
         
+        # bools Python, cfg statique -> les branches disparaissent a la trace
+        cut_rec = cfg.ablate_memory or cfg.ablate_recurrence
+        cut_int = cfg.ablate_memory or cfg.ablate_interoception
+        cut_fb  = cfg.ablate_memory or cfg.ablate_feedback
+
         state_in = state
-        if cfg.ablate_memory:
-            state_in = state.replace(
+        if cut_fb:
+            state_in = state_in.replace(
                 last_actions=jnp.zeros_like(state.last_actions),
                 rewards=jnp.zeros_like(state.rewards),
-                agents=state.agents.replace(
+            )
+        if cut_int:
+            # constante, pas zero : zero est la valeur de MORT (energy_to_die)
+            state_in = state_in.replace(
+                agents=state_in.agents.replace(
                     energy=jnp.full_like(state.agents.energy, cfg.starting_energy)),
             )
 
         actions_logit, new_policy_states = model.get_actions(
             state_in, state.agents.params, state.agents.policy_states
         )
-        if cfg.ablate_memory:
+        if cut_rec:
+            # apres l'appel : rien ne passe au pas suivant
             new_policy_states = metaRNNPolicyState_bcppr(
                 lstm_h=jnp.zeros_like(new_policy_states.lstm_h),
                 lstm_c=jnp.zeros_like(new_policy_states.lstm_c),

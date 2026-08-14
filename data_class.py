@@ -97,7 +97,10 @@ class Config(NamedTuple):
 
     log_obs : bool = True
 
-    ablate_memory : bool = False
+    ablate_memory : bool = False          # coupe les trois canaux ci-dessous
+    ablate_recurrence : bool = False      # lstm_h / lstm_c
+    ablate_interoception : bool = False   # energie
+    ablate_feedback : bool = False        # reward + action precedente
 
     lab_memory_ablation : bool = True
 

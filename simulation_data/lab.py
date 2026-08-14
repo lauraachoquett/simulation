@@ -211,7 +211,14 @@ class LabMixin:
             # memoire, elle ne vient pas d'un apprentissage. Ablation au moment
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
             outputs_adapt_abl = outputs_high_abl = None
-            if self.cfg.lab_memory_ablation:
+            # Si la sim tourne deja avec une ablation, le bras "memoire intacte"
+            # ne l'est pas : la comparaison serait mal etiquetee.
+            deja_ablate = (self.cfg.ablate_memory or self.cfg.ablate_recurrence
+                           or self.cfg.ablate_interoception
+                           or self.cfg.ablate_feedback)
+            if self.cfg.lab_memory_ablation and deja_ablate:
+                print("Lab: ablation deja active dans la sim, comparaison sautee.")
+            if self.cfg.lab_memory_ablation and not deja_ablate:
                 cfg_abl = self.cfg._replace(ablate_memory=True)
                 _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
                     agent_params, key_env, key_sim, model, cfg_abl)
