@@ -281,6 +281,18 @@ class LabMixin:
                 plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{name}")
                 self._plot_energy(out_rot, exp_dir, f"adapt/{name}", title)
 
+                # Duree de vie avec et sans memoire SOUS CETTE PERMUTATION. Le
+                # meme genome des deux cotes (memes cles, seul ablate_memory
+                # differe), donc un simple appariement. C'est ici que l'ecart
+                # doit se creuser : dans l'env non permute le genome peut suffire.
+                out_abl = None
+                if outputs_adapt_abl is not None:
+                    out_abl = jax.tree_util.tree_map(lambda x: x[:, j],
+                                                     outputs_adapt_abl)
+                    self.compare_memory(out_rot, out_abl, exp_dir,
+                                        suffix=f"_adapt_{name}",
+                                        env_titre=f"adapt {name}")
+
                 av_rot = self.available_by_type(out_rot, n_types)
 
                 # Combien de chaque type l'agent a-t-il mange sous cette permutation,
@@ -343,8 +355,6 @@ class LabMixin:
                 # bouger le long de la vie. S'il bouge quand meme, c'est
                 # l'environnement qui derive, pas l'agent qui apprend.
                 if outputs_adapt_abl is not None and base_par_type_abl:
-                    out_abl = jax.tree_util.tree_map(lambda x: x[:, j],
-                                                     outputs_adapt_abl)
                     par_type_abl = {}
                     for r in resources_rot:
                         _, n_i, k_i = self.prob_eat_over_life(
@@ -801,8 +811,15 @@ class LabMixin:
         plot_alone_vs_clones(exp_dir=exp_dir)
         return table
 
-    def compare_memory(self, outputs_full, outputs_abl, exp_dir):
+    def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",
+                       env_titre="high_res (unpermuted)"):
         """Compare, PAR GENOME, l'agent avec et sans memoire intra-vie.
+
+        `suffix` indexe la famille de fichiers, donc une comparaison par
+        environnement : "" pour l'env non permute, "_adapt_<condition>" pour
+        chaque permutation. C'est sous permutation que la memoire est censee
+        servir le plus -- l'env non permute est celui pour lequel le genome a
+        deja ete selectionne, l'agent peut y survivre en aveugle.
 
         Meme patron apparie que compare_alone_vs_clones : memes agent_params,
         memes key_env / key_sim, seul ablate_memory differe -> l'index b designe
@@ -838,7 +855,8 @@ class LabMixin:
             row.update(_dispersion(delta,      "delta",    empty=float("nan")))
             table[k] = row
 
-        print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE ---")
+        print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE"
+              f" | {env_titre} ---")
         print(f"  {'metric':<22}{'memory':>10}{'ablated':>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
@@ -849,15 +867,17 @@ class LabMixin:
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_memory.json"), "w") as fh:
+        tag = f"memory{suffix}"
+        with open(os.path.join(data_dir,
+                               f"chunk_{self.chunk_idx}_{tag}.json"), "w") as fh:
             json.dump(payload, fh, indent=2)
 
         plot_alone_vs_clones(
-            exp_dir=exp_dir, tag="memory",
+            exp_dir=exp_dir, tag=tag,
             prefixes=("memory", "ablated"),
             labels=("memory intact", "memory ablated"),
-            titre="Same genomes, with and without within-life memory",
-            fname="lab_memory_ablation_evolution.png")
+            titre=f"Same genomes, with and without within-life memory — {env_titre}",
+            fname=f"lab_memory_ablation_evolution{suffix}.png")
         return table
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
