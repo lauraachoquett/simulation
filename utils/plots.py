@@ -1511,17 +1511,25 @@ def plot_lab_exploration(exp_dir):
     print(f"Figure saved: {out}")
  
  
-def plot_alone_vs_clones(exp_dir):
-    """Évolution de l'EFFET DES PAIRS (env clones) chunk après chunk.
-    Un sous-graphe par métrique : comportement de l'agent SEUL (high_res) vs
-    comportement MOYEN des clones du même génome. L'écart entre les deux courbes
-    = effet des pairs."""
+def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
+                         prefixes=("alone", "clones"),
+                         labels=("alone", "clones (median of peers)"),
+                         titre="Focal agent alone vs among identical clones",
+                         fname="lab_alone_vs_clones_evolution.png"):
+    """Évolution d'une comparaison APPARIÉE, chunk après chunk.
+
+    Un sous-graphe par métrique, deux courbes : les deux conditions comparées.
+    Générique — sert à l'effet des pairs (seul vs clones) comme à l'ablation de
+    mémoire (intacte vs coupée), qui partagent exactement la même structure de
+    données. `tag` sélectionne la famille de fichiers, `labels` les clés de
+    dispersion écrites par la comparaison correspondante."""
     data_dir = os.path.join(exp_dir, "lab_data")
     fig_dir = os.path.join(exp_dir, "fig")
-    files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_alone_vs_clones.json")),
+    os.makedirs(fig_dir, exist_ok=True)   # ne pas dependre d'un plot appele avant
+    files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
     if not files:
-        print("No alone_vs_clones data to plot.")
+        print(f"No {tag} data to plot.")
         return
  
     P = [json.load(open(f)) for f in files]
@@ -1539,17 +1547,17 @@ def plot_alone_vs_clones(exp_dir):
  
     for ax, k in zip(axes, metrics):
         Sk = [p["metrics"][k] for p in P]        # une entrée par chunk
-        _plot_band(ax, x, Sk, "alone",  color="C0", label="alone")
-        _plot_band(ax, x, Sk, "clones", color="C1", label="clones (median of peers)")
+        _plot_band(ax, x, Sk, prefixes[0], color="C0", label=labels[0])
+        _plot_band(ax, x, Sk, prefixes[1], color="C1", label=labels[1])
         ax.set_title(titles[k])
         ax.grid(alpha=0.3)
         ax.set_xlabel("chunk")
  
     axes[0].legend(loc="best")      # 6 métriques : la grille 2x3 est pleine
  
-    fig.suptitle("Focal agent alone vs among identical clones", y=1.0)
+    fig.suptitle(titre, y=1.0)
     fig.tight_layout()
-    out = os.path.join(fig_dir, "lab_alone_vs_clones_evolution.png")
+    out = os.path.join(fig_dir, fname)
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")

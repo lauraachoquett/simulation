@@ -219,6 +219,9 @@ class LabMixin:
                 # d'un permute ablate melangerait les deux conditions.
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
+                # La comparaison la plus simple : duree de vie et compagnie, par
+                # genome, avec et sans memoire. Sans conditionnement ni fenetrage.
+                self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
@@ -778,6 +781,65 @@ class LabMixin:
             json.dump(payload, f, indent=2)
  
         plot_alone_vs_clones(exp_dir=exp_dir)
+        return table
+
+    def compare_memory(self, outputs_full, outputs_abl, exp_dir):
+        """Compare, PAR GENOME, l'agent avec et sans memoire intra-vie.
+
+        Meme patron apparie que compare_alone_vs_clones : memes agent_params,
+        memes key_env / key_sim, seul ablate_memory differe -> l'index b designe
+        le meme genome des deux cotes.
+
+        C'est la comparaison la plus simple et la plus robuste dont on dispose :
+        la DUREE DE VIE est un scalaire par agent, sans conditionnement, sans
+        fenetrage, sans biais de composition. Si la memoire rallonge la vie, elle
+        sert fonctionnellement a quelque chose, et ce constat ne depend d'aucune
+        des hypotheses qui fragilisent les mesures "par tranche de vie".
+
+        Elle a d'ailleurs une consequence sur celles-ci : des durees de vie
+        differentes rendent les tranches "0-25% de sa vie" non comparables entre
+        les deux conditions, puisqu'elles couvrent des pas absolus differents,
+        donc des etats d'environnement differents."""
+        f = self.data_lab_env_grouped(outputs_full)
+        a = self.data_lab_env_grouped(outputs_abl)
+
+        metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
+                   "greediness"]
+        labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
+                   "mean_speed": "movement /step", "energy_end": "final energy",
+                   "wall_death": "fraction wall deaths",
+                   "greediness": "greediness G = Cr/Tr"}
+
+        table = {}
+        for k in metrics:
+            mask  = ~(np.isnan(f[k]) | np.isnan(a[k]))
+            delta = a[k][mask] - f[k][mask]          # ablate - intact
+            row = {"n": int(mask.sum())}
+            row.update(_dispersion(f[k][mask], "memory",   empty=float("nan")))
+            row.update(_dispersion(a[k][mask], "ablated",  empty=float("nan")))
+            row.update(_dispersion(delta,      "delta",    empty=float("nan")))
+            table[k] = row
+
+        print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE ---")
+        print(f"  {'metric':<22}{'memory':>10}{'ablated':>10}{'Δ median':>11}{'Δ IQR':>20}")
+        for k in metrics:
+            r = table[k]
+            print(f"  {labels[k]:<22}{r['memory_p50']:>10.3f}{r['ablated_p50']:>10.3f}"
+                  f"{r['delta_p50']:>11.3f}"
+                  f"{'[' + format(r['delta_p25'], '.3f') + ', ' + format(r['delta_p75'], '.3f') + ']':>20}")
+
+        data_dir = os.path.join(exp_dir, "lab_data")
+        os.makedirs(data_dir, exist_ok=True)
+        payload = {"chunk": self.chunk_idx + 1, "metrics": table}
+        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_memory.json"), "w") as fh:
+            json.dump(payload, fh, indent=2)
+
+        plot_alone_vs_clones(
+            exp_dir=exp_dir, tag="memory",
+            prefixes=("memory", "ablated"),
+            labels=("memory intact", "memory ablated"),
+            titre="Same genomes, with and without within-life memory",
+            fname="lab_memory_ablation_evolution.png")
         return table
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
