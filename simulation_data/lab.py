@@ -26,7 +26,8 @@ from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agent
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
-                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
+                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess,
+                            plot_prob_eat_ratio)
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
@@ -326,6 +327,14 @@ class LabMixin:
                     par_type, base_par_type, exp_dir,
                     chunk=self.chunk_idx, tag=name, mapping=caption,
                 )
+                # Le meme ecart en RAPPORT. La soustraction ci-dessus n'annule
+                # qu'un effet additif ; la baisse d'appetit liee a l'age
+                # multiplie les deux conditions, et un exces se contracte alors
+                # meme quand l'erreur relative de l'agent n'a pas bouge.
+                plot_prob_eat_ratio(
+                    par_type, base_par_type, exp_dir,
+                    chunk=self.chunk_idx, tag=name, mapping=caption,
+                )
 
                 # LE CONTROLE : le meme exces, entierement recalcule dans la
                 # condition ablatee (permute ET baseline sans memoire). A lire
@@ -342,6 +351,15 @@ class LabMixin:
                             out_abl, resources_rot, label=LABELS[r.id])
                         par_type_abl[r.id] = (n_i, k_i)
                     plot_prob_eat_excess(
+                        par_type_abl, base_par_type_abl, exp_dir,
+                        chunk=self.chunk_idx, tag=name, mapping=caption,
+                        suffix='_no_memory', titre=' (memory ablated)',
+                    )
+                    # C'est CETTE figure qui valide la mesure : sans memoire le
+                    # rapport doit etre PLAT. S'il l'est alors que l'exces
+                    # ablate se contractait, la contraction etait bien un
+                    # artefact d'echelle et non une adaptation.
+                    plot_prob_eat_ratio(
                         par_type_abl, base_par_type_abl, exp_dir,
                         chunk=self.chunk_idx, tag=name, mapping=caption,
                         suffix='_no_memory', titre=' (memory ablated)',

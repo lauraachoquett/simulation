@@ -672,6 +672,126 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
     plt.close()
 
 
+RATIO_MIN_EVENTS = 10
+
+
+def _ratio_ci(n_p, k_p, n_b, k_b, z=1.96, min_events=RATIO_MIN_EVENTS):
+    """(rapport, lo, hi) : p_permute / p_baseline et son IC 95%.
+
+    L'IC est calcule sur le LOG du rapport puis ramene par exponentielle. Le
+    rapport n'est pas symetrique (2x et 0.5x sont deux ecarts egaux mais
+    opposes) ; son log l'est, et c'est sur cette echelle que l'approximation
+    normale tient. Par la methode delta, Var(log p) = (1-p)/(n p), soit ~1/k
+    quand p est petit : c'est le NOMBRE D'EVENEMENTS, pas la taille de
+    l'echantillon, qui fixe la precision.
+
+    D'ou le masquage : sous `min_events` reussites d'un cote ou de l'autre, le
+    rapport est domine par le bruit du denominateur et n'est pas trace. Un
+    denominateur nul donnerait un rapport infini -- il vaut mieux un trou dans
+    la courbe qu'un point faux.
+    """
+    n_p, k_p = np.asarray(n_p, float), np.asarray(k_p, float)
+    n_b, k_b = np.asarray(n_b, float), np.asarray(k_b, float)
+    ok = (n_p > 0) & (n_b > 0) & (k_p >= min_events) & (k_b >= min_events)
+    r = np.full(n_p.shape, np.nan)
+    lo = np.full(n_p.shape, np.nan)
+    hi = np.full(n_p.shape, np.nan)
+    if not ok.any():
+        return r, lo, hi
+    pp = k_p[ok] / n_p[ok]
+    pb = k_b[ok] / n_b[ok]
+    se = np.sqrt((1 - pp) / k_p[ok] + (1 - pb) / k_b[ok])
+    lr = np.log(pp / pb)
+    r[ok] = np.exp(lr)
+    lo[ok] = np.exp(lr - z * se)
+    hi[ok] = np.exp(lr + z * se)
+    return r, lo, hi
+
+
+def plot_prob_eat_ratio(per_type, baseline_per_type, exp_dir, chunk, tag,
+                        mapping='', suffix='', titre=''):
+    """Rapport `permute / non permute` par type, le long de la vie.
+
+    Pourquoi un rapport et pas la difference de `plot_prob_eat_excess` : les
+    agents mangent moins en vieillissant, et cette baisse d'appetit MULTIPLIE
+    les deux conditions au lieu de leur retirer la meme quantite. Une
+    soustraction n'annule qu'un effet additif ; face a une division elle laisse
+    l'exces se contracter tout seul. Sur les figures ablatees -- ou la politique
+    est pourtant une fonction de `obs` seule, donc figee -- les trois types se
+    contractaient d'un facteur quasi identique (~0.24) : un seul facteur commun,
+    pas trois adaptations.
+
+    Le rapport, lui, est sans dimension : si l'environnement multiplie les deux
+    conditions par f(t), f se simplifie et la courbe reste plate.
+
+    1 = l'agent se comporte comme sans permutation. Au-dessus = il mange ce
+    qu'il ne devrait pas (il est piege) ; en dessous = il evite a tort une
+    ressource devenue comestible. Une courbe qui converge vers 1 au fil de la
+    vie EST l'adaptation recherchee -- et cette fois la convergence ne peut plus
+    venir d'un effondrement d'echelle.
+
+    Contrepartie : quand la baseline est minuscule le rapport devient tres
+    bruite. D'ou l'echelle log et le masquage de `_ratio_ci`.
+    """
+    ids = sorted(per_type)
+    if not ids:
+        return
+    n_bins = len(next(iter(per_type.values()))[0])
+    x = np.arange(n_bins)
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    lignes = []
+    trace = False
+    for i in ids:
+        b = baseline_per_type.get(i)
+        if b is None:
+            continue
+        r, lo, hi = _ratio_ci(*per_type[i], *b)
+        ok = np.isfinite(r)
+        if not ok.any():
+            lignes.append(f'{LABELS[i]:<7} (trop peu d\'evenements)')
+            continue
+        trace = True
+        c = COLOR_BY_ID[i]
+        ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
+        ax.plot(x[ok], r[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
+                label=LABELS[i])
+        # trous eventuels : on signale combien de tranches ont ete masquees
+        manque = int((~ok).sum())
+        note = f'  [{manque} tranche(s) masquee(s)]' if manque else ''
+        lignes.append(f'{LABELS[i]:<7} {r[ok][0]:5.2f}x → {r[ok][-1]:5.2f}x{note}')
+
+    if not trace:
+        plt.close(); return
+
+    ax.axhline(1, color='black', lw=1.2, zorder=3)
+    ax.set_yscale('log')
+    # graduations lisibles en facteurs, pas en puissances de 10
+    ax.set_yticks([0.1, 0.25, 0.5, 1, 2, 4, 10, 25])
+    ax.set_yticklabels(['0.1x', '0.25x', '0.5x', '1x', '2x', '4x', '10x', '25x'])
+    ax.minorticks_off()
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
+    ax.set_xlabel("fraction of the agent's own lifetime")
+    ax.set_ylabel('P(eat X | X visible) : permuted / baseline')
+    ax.grid(True, axis='y', alpha=0.3)
+    ax.legend(loc='upper right', fontsize=8)
+    ax.text(0.02, 0.96, '\n'.join(lignes), transform=ax.transAxes,
+            ha='left', va='top', fontsize=8.5, family='monospace',
+            bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='0.8', alpha=0.85))
+    ax.set_title(f'Permutation-specific ratio{titre} — {tag} (chunk {chunk})',
+                 fontsize=11, pad=34 if mapping else 6)
+    if mapping:
+        ax.text(0.5, 1.005, mapping, transform=ax.transAxes, ha='center',
+                va='bottom', fontsize=8.5, family='monospace', color='dimgrey')
+
+    plt.tight_layout()
+    path = os.path.join(exp_dir, 'fig', 'adapt', tag)
+    os.makedirs(path, exist_ok=True)
+    plt.savefig(os.path.join(path, f'ratio_over_life{suffix}_chunk_{chunk}.png'))
+    plt.close()
+
+
 def plot_prob_eat_over_life_by_type(per_type, baseline_per_type, wilson, exp_dir,
                                     chunk, tag, mapping=''):
     """P(manger X | X en vue) pour LES TROIS identites, le long de la vie.
