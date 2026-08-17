@@ -27,7 +27,9 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 # --------------------------------------------------------------------------- #
@@ -181,6 +183,172 @@ def _list_videos(exp_dir: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# Step-range series, rebuilt from data/chunk_*.npz
+# --------------------------------------------------------------------------- #
+# The saved PNG/HTML figures cover the whole run at a fixed resolution. The raw
+# per-step history is on disk though, so we replot it here over any step window.
+# Kept dependency-free (numpy + plotly) so the dashboard still runs outside the
+# simulation environment -- hence the local copies of LABELS / build_id_timeline.
+
+_LABELS = ("good", "medium", "poison")
+_COLOR_BY_ID = {0: "#2A9131", 1: "#3933F3", 2: "#9C27B0"}
+_DASHES = ("solid", "dash", "dot", "dashdot", "longdash")
+
+_CHUNK_NPZ = re.compile(r"chunk_(\d+)\.npz$")
+
+# metric -> (npz keys, how to aggregate a block, per-identity?)
+_METRICS = {
+    "population":   (("population",), "mean", False),
+    "resources":    (("resources",), "mean", True),
+    "consumed":     (("consumed",), "mean", True),
+    "P(eat|seen)":  (("n_seen", "n_eaten_seen"), "sum", True),
+}
+
+
+@st.cache_data(show_spinner="Loading step history…", max_entries=16)
+def load_series(exp_dir: str, keys: tuple[str, ...]) -> dict | None:
+    """Concatenate `keys` across data/chunk_*.npz, in numeric chunk order.
+
+    Returns None when a run has no data/ dir (older runs, or lab-only exports).
+    """
+    files = sorted(Path(exp_dir).glob("data/chunk_*.npz"),
+                   key=lambda p: int(_CHUNK_NPZ.search(p.name).group(1)))
+    if not files:
+        return None
+    parts: dict[str, list] = {k: [] for k in keys}
+    for f in files:
+        with np.load(f) as z:
+            for k in keys:
+                if k not in z.files:
+                    return None
+                parts[k].append(z[k])
+    out = {k: np.concatenate(v, axis=0) for k, v in parts.items()}
+    n = len(next(iter(out.values())))
+    chunk_size = n // len(files)
+    first = int(_CHUNK_NPZ.search(files[0].name).group(1))
+    out["_start"] = first * chunk_size
+    out["_n"] = n
+    return out
+
+
+def _id_timeline(steps: np.ndarray, shuffle_log: list, initial_ids: list) -> np.ndarray:
+    """(T, n_types): which resource identity sits on each channel, per step."""
+    if not shuffle_log:
+        return np.tile(np.asarray(initial_ids), (len(steps), 1))
+    cuts = np.array([e["step"] for e in shuffle_log])
+    orders = [initial_ids] + [e["order_ids"] for e in shuffle_log]
+    active = np.searchsorted(cuts, steps, side="right")
+    return np.array([orders[a] for a in active])
+
+
+def _by_identity(series: np.ndarray, timeline: np.ndarray, ident: int) -> np.ndarray:
+    """Follow one resource across channel permutations.
+
+    Each row of `timeline` is a permutation, so `timeline == ident` selects
+    exactly one column per row and the result stays (T,) in step order. Plotting
+    a channel instead would splice two different resources at every shuffle.
+    """
+    return series[timeline == ident]
+
+
+def _block_reduce(y: np.ndarray, n_target: int, how: str) -> np.ndarray:
+    """Aggregate into ~n_target blocks. Blocks, not striding: a stride would
+    step over the spikes, which is most of what these series are about."""
+    n = len(y)
+    if n <= n_target:
+        return y
+    edges = np.linspace(0, n, n_target + 1).astype(int)
+    fn = np.add.reduceat(y, edges[:-1])
+    if how == "mean":
+        fn = fn / np.diff(edges)
+    return fn
+
+
+def _block_x(steps: np.ndarray, n_target: int) -> np.ndarray:
+    n = len(steps)
+    if n <= n_target:
+        return steps
+    edges = np.linspace(0, n, n_target + 1).astype(int)
+    return steps[edges[:-1]]
+
+
+def _series_figure(metric: str, sel_runs: list[dict], lo: int, hi: int,
+                   idents: list[int], n_target: int) -> go.Figure | None:
+    keys, how, per_id = _METRICS[metric]
+    fig = go.Figure()
+    drew = False
+
+    for r_i, r in enumerate(sel_runs):
+        data = load_series(r["dir"], keys)
+        if data is None:
+            continue
+        start, n = data["_start"], data["_n"]
+        steps = np.arange(start, start + n)
+        m = (steps >= lo) & (steps <= hi)
+        if not m.any():
+            continue
+        drew = True
+        x = _block_x(steps[m], n_target)
+        dash = _DASHES[r_i % len(_DASHES)]
+
+        if not per_id:
+            y = _block_reduce(data[keys[0]][m], n_target, how)
+            fig.add_scatter(x=x, y=y, name=r["id"], mode="lines",
+                            line=dict(width=2, dash=dash))
+            continue
+
+        initial_ids = [res["id"] for res in r["raw"].get("resources", [])]
+        tl = _id_timeline(steps[m], _load_shuffles(r["dir"]), initial_ids)
+        for ident in idents:
+            if ident not in initial_ids:
+                continue
+            cols = [_by_identity(data[k][m], tl, ident) for k in keys]
+            if len(cols) == 1:
+                y = _block_reduce(cols[0], n_target, how)
+            else:
+                # pooled ratio: sum both counts over the block, THEN divide.
+                # Averaging per-step ratios would weight a step where 3 agents
+                # see a resource like one where 300 do.
+                seen = _block_reduce(cols[0], n_target, "sum")
+                eaten = _block_reduce(cols[1], n_target, "sum")
+                y = np.divide(eaten, seen, out=np.full_like(seen, np.nan,
+                                                            dtype=float),
+                              where=seen > 0)
+            fig.add_scatter(
+                x=x, y=y, mode="lines",
+                name=f"{_LABELS[ident]} — {r['id']}",
+                line=dict(width=2, dash=dash,
+                          color=_COLOR_BY_ID.get(ident)),
+            )
+
+    if not drew:
+        return None
+
+    # shuffle markers only for a single run: several runs shuffle at different
+    # steps and the lines stop meaning anything
+    if len(sel_runs) == 1:
+        for e in _load_shuffles(sel_runs[0]["dir"]):
+            if lo <= e["step"] <= hi:
+                fig.add_vline(x=e["step"], line=dict(color="grey", width=1,
+                                                     dash="dot"))
+
+    fig.update_layout(
+        title=metric, xaxis_title="step", height=420,
+        margin=dict(l=40, r=20, t=50, b=40),
+        legend=dict(orientation="h", y=-0.2),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _load_shuffles(exp_dir: str) -> list[dict]:
+    path = Path(exp_dir) / "resource_shuffles.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+
+# --------------------------------------------------------------------------- #
 # UI
 # --------------------------------------------------------------------------- #
 
@@ -285,8 +453,9 @@ def main() -> None:
         st.info("Select at least one run above.")
         st.stop()
 
-    tab_cfg, tab_plots, tab_single = st.tabs(
-        ["📋 Config comparison", "🖼 Plots side by side", "🔍 Single run"]
+    tab_cfg, tab_plots, tab_range, tab_single = st.tabs(
+        ["📋 Config comparison", "🖼 Plots side by side",
+         "📈 Step range", "🔍 Single run"]
     )
 
     # ---- Config comparison ----------------------------------------------- #
@@ -333,6 +502,55 @@ def main() -> None:
             for key in chosen:
                 st.subheader(key)
                 _plot_grid(key, sel_runs, per_run_plots, n_cols, variant_mode)
+
+    # ---- Step range ------------------------------------------------------- #
+    with tab_range:
+        spans = {}
+        for r in sel_runs:
+            d = load_series(r["dir"], ("population",))
+            if d is not None:
+                spans[r["id"]] = (d["_start"], d["_start"] + d["_n"] - 1)
+
+        if not spans:
+            st.info(
+                "No `data/chunk_*.npz` found in the selected runs. This tab "
+                "replots the raw per-step history, which only runs writing "
+                "that directory have."
+            )
+        else:
+            gmin = min(s for s, _ in spans.values())
+            gmax = max(e for _, e in spans.values())
+            missing = [r["id"] for r in sel_runs if r["id"] not in spans]
+            if missing:
+                st.caption(f"No history for: {', '.join(missing)}")
+
+            lo, hi = st.slider("Step range", gmin, gmax, (gmin, gmax), step=1000)
+
+            c1, c2, c3 = st.columns([2, 2, 1])
+            with c1:
+                metrics = st.multiselect("Metrics", list(_METRICS),
+                                         default=["population", "resources"])
+            with c2:
+                idents = st.multiselect(
+                    "Resources", list(range(len(_LABELS))),
+                    default=list(range(len(_LABELS))),
+                    format_func=lambda i: _LABELS[i],
+                    help="Followed by identity across shuffles, not by channel.",
+                )
+            with c3:
+                n_target = st.select_slider("Points", [500, 1000, 2000, 5000],
+                                            value=2000)
+
+            st.caption(
+                f"{hi - lo + 1:,} steps selected — "
+                f"{'full resolution' if hi - lo + 1 <= n_target else f'blocks of ~{(hi - lo + 1) // n_target:,} steps'}"
+            )
+            for metric in metrics:
+                fig = _series_figure(metric, sel_runs, lo, hi, idents, n_target)
+                if fig is None:
+                    st.write(f"— no data for {metric}")
+                else:
+                    st.plotly_chart(fig, use_container_width=True)
 
     # ---- Single run inspector -------------------------------------------- #
     with tab_single:
