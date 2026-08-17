@@ -22,8 +22,11 @@ canaux de base : leur greediness est juste. Et dans les figures adapt, seule la
 greediness l'était — durée de vie, consommation, mouvement et causes de mort ne
 lisent pas delta_energy.
 
-    python -m simulation.tools.fix_adapt_greediness exp/2026-08-14_10-00-00
-    python -m simulation.tools.fix_adapt_greediness exp/... --apply
+Prend une expérience ou une racine : tous les `lab_data/` situés dessous sont
+traités, quelle que soit la profondeur.
+
+    python -m simulation.tools.fix_adapt_greediness exp/           # simulation
+    python -m simulation.tools.fix_adapt_greediness exp/ --apply   # tous les runs
 """
 from __future__ import annotations
 
@@ -80,7 +83,8 @@ def corrige_npz(chemin, apply):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("exp_dir", nargs="+", help="dossier(s) d'expérience")
+    ap.add_argument("exp_dir", nargs="+",
+                    help="dossier(s) : une expérience, ou une racine à explorer")
     ap.add_argument("--apply", action="store_true",
                     help="écrire (sans ce drapeau : simulation seule)")
     args = ap.parse_args(argv)
@@ -88,13 +92,23 @@ def main(argv=None):
     if not args.apply:
         print("SIMULATION — rien n'est écrit. Ajouter --apply pour appliquer.\n")
 
+    # On descend chercher les lab_data/ : la profondeur varie (exp/<date>/<run>/),
+    # et passer une racine doit marcher comme passer un run. Set : donner à la
+    # fois un parent et son enfant ne doit pas traiter deux fois le même dossier.
+    runs = sorted({os.path.dirname(os.path.realpath(os.path.join(r, d)))
+                   for arg in args.exp_dir
+                   for r, ds, _ in os.walk(arg)
+                   for d in ds if d == "lab_data"})
+    if not runs:
+        print(f"Aucun lab_data/ trouvé sous {', '.join(args.exp_dir)}")
+        return
+
     total_s = total_n = 0
-    for exp in args.exp_dir:
+    for exp in runs:
         data_dir = os.path.join(exp, "lab_data")
-        if not os.path.isdir(data_dir):
-            print(f"{exp} : pas de lab_data/, ignoré")
-            continue
         sums, arch = _summaries(data_dir), _archives(data_dir)
+        if not sums and not arch:
+            continue                       # lab_data sans env adapt : rien à faire
         ns = sum(corrige_summary(f, args.apply) for f in sums)
         na = sum(corrige_npz(f, args.apply) for f in arch)
         total_s += ns
