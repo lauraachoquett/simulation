@@ -283,7 +283,8 @@ class LabMixin:
                 caption = config_caption(self.cfg.resources, resources_rot, steps_in_place)
                 title = f"lab_4 — adapt {name}  (config MODIFIÉE)\n{caption}"
 
-                agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot)
+                agg_r, summary_r = self.data_lab_env(outputs_lab=out_rot,
+                                                     resources=resources_rot)
                 self._save_lab_data(agg_r, summary_r, exp_dir, suffix=f"adapt_{name}")
                 plot_lab_metrics(exp_dir=exp_dir, suffix=f"adapt_{name}")
                 self._plot_energy(out_rot, exp_dir, f"adapt/{name}", title)
@@ -298,7 +299,8 @@ class LabMixin:
                                                      outputs_adapt_abl)
                     self.compare_memory(out_rot, out_abl, exp_dir,
                                         suffix=f"_adapt_{name}",
-                                        env_titre=f"adapt {name}")
+                                        env_titre=f"adapt {name}",
+                                        resources=resources_rot)
 
                 av_rot = self.available_by_type(out_rot, n_types)
 
@@ -543,10 +545,15 @@ class LabMixin:
    # =================================================================
     #  INCHANGÉ
     # =================================================================
-    def _per_agent_metrics(self, outputs):
+    def _per_agent_metrics(self, outputs, resources=None):
             """Métriques par agent, alignées par événement de fin de vie
             (mort OU survie jusqu'au dernier pas = censure à droite).
-            Toutes les sorties sont des tableaux 1D de longueur D (nb d'événements)."""
+            Toutes les sorties sont des tableaux 1D de longueur D (nb d'événements).
+
+            `resources` donne le contenu de chaque CANAL pour ce rollout. L'env
+            adapt permute les canaux : sans ce paramètre, delta_energy serait lu
+            dans l'ordre de base et greediness comme adapt_score porteraient sur
+            les mauvais canaux."""
             alive  = np.asarray(outputs.alive)         # (T, N)
             born   = np.asarray(outputs.born_step)     # (T, N) step de naissance
             step   = np.asarray(outputs.step)                 # (T,)   step global de la ligne
@@ -622,8 +629,9 @@ class LabMixin:
             t_explore = np.where(ever_ate, first_r - birth_row, np.nan)  # (E,)
  
             # 9) Greediness : G = Cr / Tr sur des fenetres de GREED_WINDOW pas
-            delta_e       = np.array([r.delta_energy for r in self.cfg.resources])
-            n_channels    = len(self.cfg.resources) + 2       # ressources + agents + murs
+            res_ch        = resources if resources is not None else self.cfg.resources
+            delta_e       = np.array([r.delta_energy for r in res_ch])
+            n_channels    = len(res_ch) + 2                   # ressources + agents + murs
             good_channels = np.where(delta_e > 0)[0]
             saw = _resource_in_view(outputs.obs, good_channels, n_channels)
             ate_step = np.zeros_like(saw, dtype=bool)          # consommation alignee
@@ -633,7 +641,33 @@ class LabMixin:
                 ate_step = rew > 0
             greediness, greed_Tr, greed_Cr = _greediness(
                 saw, ate_step, slot, birth_row, death_row)
-            
+
+            # 10) Score d'adaptation = différentiel de sélection
+            #
+            #     Δe moyen de ce qu'il a MANGÉ  −  Δe moyen de ce qu'il a VU
+            #
+            # 0 = mange indifféremment ce qu'il croise, >0 = choisit mieux que
+            # l'offre. Normalisé par la disponibilité, donc insensible à un env
+            # plus riche ou plus pauvre, et sans dimension de durée.
+            #
+            # À préférer à l'énergie récoltée Σ mangé·Δe, qui vaut par
+            # conservation (E_fin − E_début) + décroissance, soit essentiellement
+            # la durée de vie : elle ne dit rien de la qualité des choix.
+            saw_t = np.asarray(outputs.saw_res).astype(float)   # (T, N, n_types)
+            ate_t = np.asarray(outputs.ate_res).astype(float)
+            n_vu   = np.stack([window_sum(np.cumsum(saw_t[:, :, i], axis=0),
+                                          birth_row - 1, death_row)
+                               for i in range(len(delta_e))])   # (n_types, D)
+            n_mange = np.stack([window_sum(np.cumsum(ate_t[:, :, i], axis=0),
+                                           birth_row - 1, death_row)
+                                for i in range(len(delta_e))])
+            def _moyenne_ponderee(w):
+                tot = w.sum(axis=0)
+                return np.divide((w * delta_e[:, None]).sum(axis=0), tot,
+                                 out=np.full(tot.shape, np.nan), where=tot > 0)
+            # NaN si l'agent n'a rien vu ou rien mangé : indéfini, pas nul
+            adapt_score = _moyenne_ponderee(n_mange) - _moyenne_ponderee(n_vu)
+
             return {
                 "slot":       slot,        # (slot, born) pour recroiser avec la généalogie
                 "born":       b_dead,
@@ -650,21 +684,22 @@ class LabMixin:
                 "greediness": greediness,  # G = Cr / Tr (NaN si Tr = 0)      <== NOUVEAU
                 "greed_Tr":   greed_Tr,    # fenêtres avec ressource visible  <== NOUVEAU
                 "greed_Cr":   greed_Cr,    # fenêtres avec consommation       <== NOUVEAU
+                "adapt_score": adapt_score,  # Δe mangé − Δe vu (NaN si rien)
             }
  
     # =================================================================
     #  MODIFIÉ — _stat supprimé, remplacé par **_dispersion
     # =================================================================
-    def data_lab_env(self, outputs_lab):
+    def data_lab_env(self, outputs_lab, resources=None):
         keys = ["age", "total_rew", "mean_rew", "total_move",
                 "mean_speed", "energy_end", "wall_death", "died",
-                "greediness"]                                  # <== NOUVEAU
+                "greediness", "adapt_score"]
         agg = {k: [] for k in keys}
  
         B = outputs_lab.alive.shape[0]          # nb d'environnements = nb d'agents testés
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
-            m = self._per_agent_metrics(single)
+            m = self._per_agent_metrics(single, resources)
             if m is None:
                 continue
             for k in keys:
@@ -693,6 +728,8 @@ class LabMixin:
             **_dispersion(agg["mean_speed"], "mouvement"),
             # G indéfini (NaN) pour les agents n'ayant jamais vu de ressource
             **_dispersion(_clean(agg["greediness"]), "greediness", empty=float("nan")),
+            # NaN pour un agent n'ayant rien vu ou rien mange
+            **_dispersion(_clean(agg["adapt_score"]), "adapt_score", empty=float("nan")),
         }
         return agg, summary
  
@@ -737,7 +774,7 @@ class LabMixin:
     # =================================================================
     #  INCHANGÉ
     # =================================================================
-    def data_lab_env_grouped(self, outputs_lab):
+    def data_lab_env_grouped(self, outputs_lab, resources=None):
         """Réduit le comportement À L'INTÉRIEUR de chaque environnement.
         Dans clones, les agents vivants partagent le même génome ; on les
         moyenne -> un seul profil comportemental par génome. Pour high_res
@@ -748,14 +785,14 @@ class LabMixin:
         génome (même ordre que agent_params / key_sim).
         """
         keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                "died", "greediness"]                          # <== NOUVEAU
+                "died", "greediness", "adapt_score"]
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)
  
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
-            m = self._per_agent_metrics(single)
+            m = self._per_agent_metrics(single, resources)
             if m is None:
                 continue
             n_peers[b] = m["age"].size                     # nb de clones vivants
@@ -783,11 +820,12 @@ class LabMixin:
         c = self.data_lab_env_grouped(outputs_clones)
  
         metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                   "greediness"]                               # <== NOUVEAU
+                   "greediness", "adapt_score"]
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
                    "wall_death": "fraction wall deaths",
-                   "greediness": "greediness G = Cr/Tr"}
+                   "greediness": "greediness G = Cr/Tr",
+                   "adapt_score": "adaptation (de eaten - seen)"}
  
         table = {}
         for k in metrics:
@@ -819,7 +857,7 @@ class LabMixin:
         return table
 
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",
-                       env_titre="high_res (unpermuted)"):
+                       env_titre="high_res (unpermuted)", resources=None):
         """Compare, PAR GENOME, l'agent avec et sans memoire intra-vie.
 
         `suffix` indexe la famille de fichiers, donc une comparaison par
@@ -842,15 +880,16 @@ class LabMixin:
         differentes rendent les tranches "0-25% de sa vie" non comparables entre
         les deux conditions, puisqu'elles couvrent des pas absolus differents,
         donc des etats d'environnement differents."""
-        f = self.data_lab_env_grouped(outputs_full)
-        a = self.data_lab_env_grouped(outputs_abl)
+        f = self.data_lab_env_grouped(outputs_full, resources)
+        a = self.data_lab_env_grouped(outputs_abl, resources)
 
         metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                   "greediness"]
+                   "greediness", "adapt_score"]
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
                    "wall_death": "fraction wall deaths",
-                   "greediness": "greediness G = Cr/Tr"}
+                   "greediness": "greediness G = Cr/Tr",
+                   "adapt_score": "adaptation (de eaten - seen)"}
 
         table = {}
         for k in metrics:

@@ -1568,7 +1568,18 @@ def plot_lab_metrics(exp_dir, suffix=""):
     ax.grid(alpha=0.3)
     ax.legend(loc="best")
  
-    axes[1, 2].axis("off")             # 6e case libre
+    # Score d'adaptation : Δe moyen de ce qui est mange moins Δe moyen de ce qui
+    # est vu. 0 = mange sans choisir, >0 = choisit mieux que l'offre. Absent des
+    # runs anterieurs a son ajout -> case laissee vide.
+    ax = axes[1, 2]
+    if any(f"adapt_score_p50" in s for s in S):
+        _plot_band(ax, x, S, "adapt_score")
+        ax.axhline(0, color="black", lw=1)
+        ax.set_title("Adaptation  Δe eaten − Δe seen")
+        ax.set_ylabel("energy / item")
+        ax.grid(alpha=0.3)
+    else:
+        ax.axis("off")
     for ax in axes.ravel():
         ax.set_xlabel("chunk")
     axes[0, 0].legend(loc="best")
@@ -1655,16 +1666,21 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
     P = [json.load(open(f)) for f in files]
     x = np.array([p["chunk"] for p in P])
  
-    metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-               "greediness"]
     titles  = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",
                "mean_speed": "Movement /step", "energy_end": "Final energy",
                "wall_death": "Fraction wall deaths",
-               "greediness": "Greediness  G = Cr/Tr"}
- 
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=True)
+               "greediness": "Greediness  G = Cr/Tr",
+               "adapt_score": "Adaptation  Δe eaten − Δe seen"}
+    # on ne trace que ce que les fichiers contiennent : un run anterieur a
+    # l'ajout d'une metrique reste lisible au lieu de lever un KeyError
+    metrics = [k for k in titles if k in P[0]["metrics"]]
+
+    n_cols = 3
+    n_rows = -(-len(metrics) // n_cols)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 4 * n_rows),
+                             sharex=True, squeeze=False)
     axes = axes.ravel()
- 
+
     for ax, k in zip(axes, metrics):
         Sk = [p["metrics"][k] for p in P]        # une entrée par chunk
         _plot_band(ax, x, Sk, prefixes[0], color="C0", label=labels[0])
@@ -1672,8 +1688,12 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
         ax.set_title(titles[k])
         ax.grid(alpha=0.3)
         ax.set_xlabel("chunk")
- 
-    axes[0].legend(loc="best")      # 6 métriques : la grille 2x3 est pleine
+        if k == "adapt_score":
+            ax.axhline(0, color="black", lw=1)   # 0 = mange sans choisir
+
+    for ax in axes[len(metrics):]:
+        ax.axis("off")
+    axes[0].legend(loc="best")
  
     fig.suptitle(titre, y=1.0)
     fig.tight_layout()
