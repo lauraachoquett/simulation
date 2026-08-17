@@ -211,14 +211,7 @@ class LabMixin:
             # memoire, elle ne vient pas d'un apprentissage. Ablation au moment
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
             outputs_adapt_abl = outputs_high_abl = None
-            # Si la sim tourne deja avec une ablation, le bras "memoire intacte"
-            # ne l'est pas : la comparaison serait mal etiquetee.
-            deja_ablate = (self.cfg.ablate_memory or self.cfg.ablate_recurrence
-                           or self.cfg.ablate_interoception
-                           or self.cfg.ablate_feedback)
-            if self.cfg.lab_memory_ablation and deja_ablate:
-                print("Lab: ablation deja active dans la sim, comparaison sautee.")
-            if self.cfg.lab_memory_ablation and not deja_ablate:
+            if self.cfg.lab_memory_ablation:
                 cfg_abl = self.cfg._replace(ablate_memory=True)
                 _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
                     agent_params, key_env, key_sim, model, cfg_abl)
@@ -918,10 +911,21 @@ class LabMixin:
                                f"chunk_{self.chunk_idx}_{tag}.json"), "w") as fh:
             json.dump(payload, fh, indent=2)
 
+        # Le bras "intact" ne l'est que si la sim elle-meme n'ablate rien. Quand
+        # elle tourne deja avec un canal coupe, on trace quand meme -- la
+        # comparaison reste appariee et informative -- mais l'etiquette doit le
+        # dire, sinon la figure ment. Les prefixes de cles, eux, ne bougent pas :
+        # ce sont eux qui font la continuite de la serie.
+        coupes = [n for n, on in (("recurrence", self.cfg.ablate_recurrence),
+                                  ("interoception", self.cfg.ablate_interoception),
+                                  ("feedback", self.cfg.ablate_feedback))
+                  if on or self.cfg.ablate_memory]
+        ref = "memory intact" if not coupes else f"as evolved ({'+'.join(coupes)} cut)"
+
         plot_alone_vs_clones(
             exp_dir=exp_dir, tag=tag,
             prefixes=("memory", "ablated"),
-            labels=("memory intact", "memory ablated"),
+            labels=(ref, "all channels ablated"),
             titre=f"Same genomes, with and without within-life memory — {env_titre}",
             fname=f"lab_memory_ablation_evolution{suffix}.png")
         return table

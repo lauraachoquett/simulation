@@ -1671,9 +1671,12 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
                "wall_death": "Fraction wall deaths",
                "greediness": "Greediness  G = Cr/Tr",
                "adapt_score": "Adaptation  Δe eaten − Δe seen"}
-    # on ne trace que ce que les fichiers contiennent : un run anterieur a
-    # l'ajout d'une metrique reste lisible au lieu de lever un KeyError
-    metrics = [k for k in titles if k in P[0]["metrics"]]
+    # Union sur TOUS les chunks, pas seulement le premier : une metrique ajoutee
+    # en cours de run n'existe que dans les fichiers recents, et se caler sur
+    # P[0] la ferait disparaitre a jamais. _get rend NaN sur les chunks qui ne
+    # l'ont pas, donc la courbe demarre simplement plus tard.
+    presentes = {k for p in P for k in p["metrics"]}
+    metrics = [k for k in titles if k in presentes]
 
     n_cols = 3
     n_rows = -(-len(metrics) // n_cols)
@@ -1682,7 +1685,8 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
     axes = axes.ravel()
 
     for ax, k in zip(axes, metrics):
-        Sk = [p["metrics"][k] for p in P]        # une entrée par chunk
+        # {} pour un chunk anterieur a cette metrique : _get y lira NaN
+        Sk = [p["metrics"].get(k, {}) for p in P]
         _plot_band(ax, x, Sk, prefixes[0], color="C0", label=labels[0])
         _plot_band(ax, x, Sk, prefixes[1], color="C1", label=labels[1])
         ax.set_title(titles[k])
