@@ -2,6 +2,17 @@
 import os
 os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false --xla_gpu_autotune_level=0"
 os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
+
+# A DEFINIR AVANT TOUT IMPORT DE JAX : lus une seule fois, a l'initialisation du
+# backend. Sans eux, JAX prealloue ~75% de la carte d'un bloc -- 23,8 Gio sur
+# un V100 32 Go -- et echoue des qu'un autre processus en detient une part, meme
+# petite. L'allocateur asynchrone prend au contraire ce dont il a besoin.
+#
+# Verification qu'ils sont actifs : la ligne "maybe the environment variable
+# 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation" doit
+# DISPARAITRE des logs.
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
