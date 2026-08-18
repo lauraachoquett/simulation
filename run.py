@@ -238,7 +238,7 @@ if __name__ =='__main__':
 
             ### Simulation computation :
             chunk_size = 1000,
-            num_chunks = 1600,
+            num_chunks = 1000,
             checkpoint_freq = 50,
             video_freq = 50,
             pca_save_freq=50,
@@ -270,8 +270,13 @@ if __name__ =='__main__':
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
-            cycle_period = 200,
+            cycle_period = 50,
             log_obs = False,
+
+            ablate_memory = False ,        # coupe les trois canaux ci-dessous
+            ablate_recurrence = False ,     # lstm_h / lstm_c
+            ablate_interoception = False ,  # energie
+            ablate_feedback = False   
         )
     
     
