@@ -271,6 +271,7 @@ if __name__ =='__main__':
             dumb_agent = False,
             letal_wall=False,
             cycle_period = 50,
+            crowd_start = 100_000,
             log_obs = False,
 
             ablate_memory = False ,        # coupe les trois canaux ci-dessous

@@ -30,8 +30,8 @@ def resources_growth(carry, cfg, crowd_brake=True, step=None):
     amener la grille a son etat de depart, et le frein l'empecherait d'atteindre
     des densites que la simulation doit pouvoir montrer des le premier pas.
 
-    `step` est le pas GLOBAL de simulation : le frein ne mord qu'a partir du
-    premier cycle, soit cfg.cycle_period * cfg.chunk_size steps. Il est tracee
+    `step` est le pas GLOBAL de simulation : le frein ne mord qu'a partir de
+    cfg.crowd_start. Il est tracee
     (contrairement a crowd_brake), donc la condition passe par jnp.where. Requis
     quand crowd_brake=True -- l'oublier desactiverait le frein en silence, d'ou
     l'erreur explicite."""
@@ -60,7 +60,7 @@ def resources_growth(carry, cfg, crowd_brake=True, step=None):
         count = grid_resources.sum(axis=(1, 2))                         # (n_types,)
         # `step` est tracee -> tout passe par jnp.where. `commence` est un
         # scalaire booleen, diffuse sur les n_types.
-        commence = step >= cfg.cycle_period * cfg.chunk_size
+        commence = step >= cfg.crowd_start
         trop = (count > cfg.crowd_limit) & commence
         prob_factor  = jnp.where(trop, cfg.crowd_prob_factor,  prob_factor)
         pop_res_prob = jnp.where(trop, cfg.crowd_pop_res_prob, pop_res_prob)
