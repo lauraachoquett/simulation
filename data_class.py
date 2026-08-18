@@ -118,18 +118,15 @@ class Config(NamedTuple):
 
     cycle_period : int = 200
 
-    # Pas global a partir duquel le frein de surpopulation mord. Independant de
-    # cycle_period : sinon changer le rythme des permutations deplacerait aussi
-    # le demarrage du frein, et deux runs differeraient par deux choses.
     crowd_start : int = 100_000
 
     lab_after_shuffle : tuple = (5, 10, 20)
 
-    crowd_limit : int = 3000
+    crowd_limit : int = 5000
     crowd_prob_factor : float = 0.0065
     crowd_pop_res_prob : float = 4e-5
     
-    lab_time_steps : int = 1000
+    lab_time_steps : int = 3000
     
 
 

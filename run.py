@@ -85,7 +85,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     else:
         model = MetaRnnPolicy_bcppr(
             input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
-            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
+            hidden_dim=8, output_dim=4, encoder_layers=[], hidden_layers=[32]
         )
         key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey_state = jax.random.split(key)
@@ -166,12 +166,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             
 
             ## TEST AGENTS IN LAB ENV ##
-            # pca_save_freq divise cycle_period, donc la grille reguliere ne tombe
-            # que sur 4 phases du cycle et laisse un trou entre 0 et 50 000 steps
-            # apres un shuffle -- justement la ou le genome est le plus inadapte
-            # et ou l'apprentissage en cours de vie devrait le plus compter.
-            # Le shuffle a lieu PLUS BAS dans la boucle, donc la phase 0 est
-            # l'etat juste AVANT permutation ; ces offsets sont bien apres.
             phase = (chunk_idx) % cfg.cycle_period
             if ((chunk_idx) % cfg.pca_save_freq == 0) or (phase in cfg.lab_after_shuffle):
                 subkey_lab,subkey_sim = random.split(subkey_lab)
@@ -247,16 +241,16 @@ if __name__ =='__main__':
             # Agents number : 
             n_agents_max=2000,
             n_agents_init=20,
-            agent_view = 5,
+            agent_view = 3,
             temperature=1/40,
             
             #Physiologie
-            energy_decay=0.07/8,
+            energy_decay=0.07/9,
             factor_energy_decay_not_moving = 0.3,
             energy_max = 8.0,
             
             time_to_die=100*4,
-            time_above_repr = 80*4,
+            time_above_repr = 90*4,
             min_energy_repr = 6.,
             starting_energy= 1.5,
             
@@ -270,8 +264,8 @@ if __name__ =='__main__':
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
-            cycle_period = 50,
-            crowd_start = 100_000,
+            cycle_period = 5,
+            crowd_start = 100000,
             log_obs = False,
 
             ablate_memory = False ,        # coupe les trois canaux ci-dessous

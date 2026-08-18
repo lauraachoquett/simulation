@@ -232,16 +232,11 @@ class LabMixin:
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
             outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
-                cfg_abl = cfg_m._replace(ablate_memory=True)   # grille non journalisee aussi
+                cfg_abl = cfg_m._replace(ablate_recurrence=True)   # grille non journalisee aussi
                 _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
                     agent_params, key_env, key_sim, model, cfg_abl)
-                # La baseline doit etre ablatee ELLE AUSSI : l'exces est
-                # permute - baseline, et soustraire une baseline a memoire intacte
-                # d'un permute ablate melangerait les deux conditions.
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
-                # La comparaison la plus simple : duree de vie et compagnie, par
-                # genome, avec et sans memoire. Sans conditionnement ni fenetrage.
                 self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
