@@ -97,6 +97,11 @@ class Config(NamedTuple):
 
     log_obs : bool = True
 
+    # La grille n'est lue que par les videos et par le plafond de disponibilite
+    # (pas 0). La journaliser sur tous les genomes du lab coute ~2,7 Go par env
+    # a lab_time_steps=3000, pour 3 genomes filmes.
+    log_grid : bool = True
+
     ablate_memory : bool = False          # coupe les trois canaux ci-dessous
     ablate_recurrence : bool = False      # lstm_h / lstm_c
     ablate_interoception : bool = False   # energie

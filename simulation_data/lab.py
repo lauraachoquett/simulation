@@ -35,6 +35,7 @@ from simulation.simulation_data.energy_response import (default_energy_bins,
                                         ENERGY_EAT_WINDOW)
 from simulation.data_class import LABELS
  
+N_FILM       = 3      # genomes rejoues avec la grille, pour les videos
 GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
 REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #   Une fois `obs=state.obs` applique dans StepLog :
@@ -151,9 +152,25 @@ class LabMixin:
             def agent_slice(state, b):
                 return jax.tree_util.tree_map(lambda x: x[b], state)
 
+            # `grid` n'est lu que par les videos et par available_by_type (pas 0).
+            # Le journaliser sur les n genomes coute ~2,7 Go par env a
+            # lab_time_steps=3000, pour 3 genomes filmes -- l'env adapt, qui
+            # empile ses rotations, a fait tomber le GPU en OOM sur 5,03 Gio.
+            # On le coupe donc sur le rollout de MESURE et on rejoue les N_FILM
+            # premiers genomes avec la grille. vmap est element par element :
+            # agent_params[:k] et key_sim[:k] redonnent trait pour trait les
+            # trajectoires des k premiers genomes du rollout de mesure.
+            cfg_m = self.cfg._replace(log_grid=False)
+            cfg_v = self.cfg._replace(log_grid=True)
+
+            def rollout_video(lanceur, cfg=None):
+                _, out = lanceur(agent_params[:N_FILM], key_env,
+                                 key_sim[:N_FILM], model, cfg or cfg_v)
+                return out
+
             # ============ 1) HIGH_RES (agent seul) ============
             final_state, outputs_high = vmap_over_agents_env_lab_high_res(
-                agent_params, key_env, key_sim, model, self.cfg)
+                agent_params, key_env, key_sim, model, cfg_m)
             agg, summary = self.data_lab_env(outputs_lab=outputs_high)
             self._save_lab_data(agg, summary, exp_dir)
 
@@ -161,16 +178,17 @@ class LabMixin:
             self._plot_energy(outputs_high, exp_dir, "high_res",
                             "lab_1 — high_res (agent alone)")
 
+            vid_high = rollout_video(vmap_over_agents_env_lab_high_res)
             for b in range(2):
                 vid = os.path.join(exp_dir, "videos", "high",
                                 f"high_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                submit_video(outputs_to_numpy(agent_slice(outputs_high, b)), vid, 20, 10,
+                submit_video(outputs_to_numpy(agent_slice(vid_high, b)), vid, 20, 10,
                             self.cfg.resources,
                             label=f"high_res_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 2) LOW_RES (exploration) ============
             final_state, outputs_low = vmap_over_agents_env_lab_low_res(
-                agent_params, key_env, key_sim, model, self.cfg)
+                agent_params, key_env, key_sim, model, cfg_m)
             agg_low, summary_low = self.data_lab_env_low_res(outputs_low)
             self._save_lab_data(agg_low, summary_low, exp_dir, suffix="lowres")
 
@@ -178,32 +196,34 @@ class LabMixin:
             self._plot_energy(outputs_low, exp_dir, "low_res",
                             "lab_2 — low_res (exploration)")
 
+            vid_low = rollout_video(vmap_over_agents_env_lab_low_res)
             for b in range(3):
                 vid = os.path.join(exp_dir, "videos", "low",
                                 f"low_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                submit_video(outputs_to_numpy(agent_slice(outputs_low, b)), vid, 20, 10,
+                submit_video(outputs_to_numpy(agent_slice(vid_low, b)), vid, 20, 10,
                             self.cfg.resources,
                             label=f"low_res_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 3) CLONES (effet des pairs) ============
             final_state, outputs_clones = vmap_over_agents_env_lab_high_res_with_clones(
-                agent_params, key_env, key_sim, model, self.cfg)
+                agent_params, key_env, key_sim, model, cfg_m)
             # comparaison APPARIÉE avec l'env high_res (mêmes génomes, même ordre) :
             self.compare_alone_vs_clones(outputs_high, outputs_clones, exp_dir)
             self._plot_energy(outputs_clones, exp_dir, "high_res_clones",
                             "lab_3 — high_res with clones")
 
             # self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
+            vid_clones = rollout_video(vmap_over_agents_env_lab_high_res_with_clones)
             for b in range(3):
                 vid = os.path.join(exp_dir, "videos", "high_res_clones",
                                 f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                submit_video(outputs_to_numpy(agent_slice(outputs_clones, b)), vid, 20, 10,
+                submit_video(outputs_to_numpy(agent_slice(vid_clones, b)), vid, 20, 10,
                             self.cfg.resources,
                             label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
             final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
-                agent_params, key_env, key_sim, model, self.cfg)
+                agent_params, key_env, key_sim, model, cfg_m)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
             # Le MEME rollout, memes genomes, memes cles, memoire coupee. C'est
@@ -212,7 +232,7 @@ class LabMixin:
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
             outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
-                cfg_abl = self.cfg._replace(ablate_memory=True)
+                cfg_abl = cfg_m._replace(ablate_memory=True)   # grille non journalisee aussi
                 _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
                     agent_params, key_env, key_sim, model, cfg_abl)
                 # La baseline doit etre ablatee ELLE AUSSI : l'exces est
@@ -227,13 +247,15 @@ class LabMixin:
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
+            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
+
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]
             # Plafond lu sur la grille de CHAQUE env : la permutation change le canal
             # de chaque ressource, donc les tirages de croissance a l'init different
             # legerement d'une rotation a l'autre -> un plafond par cote.
             n_types = len(self.cfg.resources)
-            av_base = self.available_by_type(outputs_high, n_types)
+            av_base = self.available_by_type(vid_high, n_types)
             baseline_available = {r.id: av_base[k] for k, r in enumerate(self.cfg.resources)}
 
             # Depuis quand l'agent vit-il avec la config qu'on s'apprete a casser ?
@@ -295,7 +317,8 @@ class LabMixin:
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot)
 
-                av_rot = self.available_by_type(out_rot, n_types)
+                av_rot = self.available_by_type(
+                    jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), n_types)
 
                 # Combien de chaque type l'agent a-t-il mange sous cette permutation,
                 # compare a lui-meme dans l'env non permute ?
@@ -377,7 +400,9 @@ class LabMixin:
                 for b in range(2):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
                                     f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                    submit_video(outputs_to_numpy(agent_slice(out_rot, b)), vid, 20, 10,
+                    submit_video(outputs_to_numpy(agent_slice(
+                                     jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), b)),
+                                 vid, 20, 10,
                                 resources_rot,
                                 label=f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}")
 

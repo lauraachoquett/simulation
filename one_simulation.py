@@ -247,7 +247,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             born_step=state.agents.born_step,
             actions=state.last_actions,
             rewards=state.rewards,
-            grid=state.grid,   
+            grid = state.grid if cfg.log_grid else jnp.zeros((0,), dtype=state.grid.dtype),
             step = step_idx,
             time_under_min_energy = state.agents.time_under_min_energy,
             obs = state.obs if cfg.log_obs else jnp.zeros((0,), dtype=state.obs.dtype),
