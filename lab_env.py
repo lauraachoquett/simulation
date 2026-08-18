@@ -143,9 +143,6 @@ def rotations_for(resources):
     return tuple(range(1, len(resources)))
 
 
-# Conserve pour compatibilite : valeur a 3 ressources. Preferer rotations_for(cfg.resources).
-ROTATIONS = rotations_for((None,) * 3)
-
 
 @partial(jax.jit, static_argnames=['cfg','model'])
 def launch_lab_env(agent_params,key_env,key_sim,cfg,model): 

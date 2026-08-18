@@ -179,7 +179,7 @@ class LabMixin:
                             "lab_1 — high_res (agent alone)")
 
             vid_high = rollout_video(vmap_over_agents_env_lab_high_res)
-            for b in range(2):
+            for b in range(min(2, N_FILM)):
                 vid = os.path.join(exp_dir, "videos", "high",
                                 f"high_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
                 submit_video(outputs_to_numpy(agent_slice(vid_high, b)), vid, 20, 10,
@@ -197,7 +197,7 @@ class LabMixin:
                             "lab_2 — low_res (exploration)")
 
             vid_low = rollout_video(vmap_over_agents_env_lab_low_res)
-            for b in range(3):
+            for b in range(N_FILM):
                 vid = os.path.join(exp_dir, "videos", "low",
                                 f"low_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
                 submit_video(outputs_to_numpy(agent_slice(vid_low, b)), vid, 20, 10,
@@ -214,7 +214,7 @@ class LabMixin:
 
             # self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
             vid_clones = rollout_video(vmap_over_agents_env_lab_high_res_with_clones)
-            for b in range(3):
+            for b in range(N_FILM):
                 vid = os.path.join(exp_dir, "videos", "high_res_clones",
                                 f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
                 submit_video(outputs_to_numpy(agent_slice(vid_clones, b)), vid, 20, 10,
@@ -392,7 +392,7 @@ class LabMixin:
                     #     suffix='_no_memory', titre=' (memory ablated)',
                     # )
 
-                for b in range(2):
+                for b in range(min(2, N_FILM)):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
                                     f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}.mp4")
                     submit_video(outputs_to_numpy(agent_slice(
