@@ -207,10 +207,17 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
             ## SHUFFLE RESOURCES ##
             if (chunk_idx) % cfg.cycle_period == 0:
-                new_resources = shuffle_resources(BASE_RESOURCES, subkey)
-
-                old_resources = cfg.resources                    # (2) état COURANT, pas BASE
-                new_resources = shuffle_resources(BASE_RESOURCES, subkey)
+                # Permuter la config COURANTE, avec une cle FRAICHE.
+                #
+                # Repartir de BASE_RESOURCES avec `subkey` -- la cle du chunk,
+                # identique d'un shuffle a l'autre -- rendait toujours la meme
+                # permutation de la meme base : le premier shuffle changeait
+                # quelque chose, les suivants renvoyaient l'etat deja en place.
+                # A 2 ressources, ou il n'existe qu'une permutation non triviale,
+                # l'environnement se figeait des le premier changement.
+                old_resources = cfg.resources
+                key, subkey_shuffle = random.split(key)
+                new_resources = shuffle_resources(old_resources, subkey_shuffle)
 
                 print("----------------- Change config at step : ---------------", state.step)
                 for k, (old, new) in enumerate(zip(old_resources, new_resources)):
