@@ -33,7 +33,7 @@ class StepLog(NamedTuple):
     step :     int
     obs :      jax.Array
     consumed_res: jax.Array   # (n_types,) -> unités retirées de la grille PENDANT ce step
-    saw_res:   jax.Array   # (N, n_types) -> ce type est-il dans le champ de vision ?
+    saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     
 
@@ -126,7 +126,13 @@ def run_simulation_chunk(state,model,keys, cfg):
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==3, 1,cfg.factor_energy_decay_not_moving) * survives_int, cfg.energy_max)
 
         ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
-        saw_res_step = (state.obs[..., :n_types] > 0).any(axis=(1, 2))       # (N, n_types)
+        # COMPTE, pas booleen. `any` sature : une vue de 11x11 = 121 cases voit
+        # au moins un exemplaire de chaque type 99.8% du temps a 5% de densite,
+        # donc le terme "ce qui s'offrait a l'agent" de adapt_score valait une
+        # constante et la normalisation par disponibilite ne faisait rien.
+        # Le padding hors grille vaut -1, exclu par le `> 0`.
+        # demography fait .astype(bool) : sa mesure P(manger | vu) est inchangee.
+        saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
 
 
         # ------- 3. Environment dynamic -------
