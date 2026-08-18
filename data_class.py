@@ -47,9 +47,9 @@ class ResourceConfig:
 
 
 BASE_RESOURCES = (
-    ResourceConfig(init_number_of_resources=30, prob_factor=0.0866, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
-    ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
-    ResourceConfig(init_number_of_resources=15,  prob_factor=0.0065,   pop_res_prob=4e-5, delta_energy=-1.0, id=2),
+    ResourceConfig(init_number_of_resources=30, prob_factor=0.03, pop_res_prob=5e-5, delta_energy=0.9,  id=0),
+    # ResourceConfig(init_number_of_resources=20, prob_factor=0.1,  pop_res_prob=5e-5, delta_energy=0.1,  id=1),
+    ResourceConfig(init_number_of_resources=15,  prob_factor=0.01,   pop_res_prob=4e-5, delta_energy=-0.8, id=2),
 )
 
 
@@ -101,10 +101,6 @@ class Config(NamedTuple):
     energy_to_die : float = 0.0
 
     log_obs : bool = True
-
-    # La grille n'est lue que par les videos et par le plafond de disponibilite
-    # (pas 0). La journaliser sur tous les genomes du lab coute ~2,7 Go par env
-    # a lab_time_steps=3000, pour 3 genomes filmes.
     log_grid : bool = True
 
     ablate_memory : bool = False          # coupe les trois canaux ci-dessous
@@ -126,7 +122,7 @@ class Config(NamedTuple):
     crowd_prob_factor : float = 0.0065
     crowd_pop_res_prob : float = 4e-5
     
-    lab_time_steps : int = 3000
+    lab_time_steps : int = 2000
     
 
 

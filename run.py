@@ -261,13 +261,13 @@ if __name__ =='__main__':
 
             ### AGENTS : 
             # Agents number : 
-            n_agents_max=2000,
+            n_agents_max=1500,
             n_agents_init=20,
-            agent_view = 3,
-            temperature=1/40,
+            agent_view = 5,
+            temperature=1/10,
             
             #Physiologie
-            energy_decay=0.07/9,
+            energy_decay=0.07/7,
             factor_energy_decay_not_moving = 0.3,
             energy_max = 8.0,
             
@@ -282,18 +282,20 @@ if __name__ =='__main__':
 
 
             # INIT RESOURCES MAP
-            pre_growth_step = 500,
+            pre_growth_step = 50,
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
             cycle_period = 5,
-            crowd_start = 100000,
+            crowd_start = 1000000,
             log_obs = False,
 
             ablate_memory = False ,        # coupe les trois canaux ci-dessous
             ablate_recurrence = False ,     # lstm_h / lstm_c
             ablate_interoception = False ,  # energie
-            ablate_feedback = False   
+            ablate_feedback = False,  
+            
+             lab_time_steps = 2000,
         )
     
     

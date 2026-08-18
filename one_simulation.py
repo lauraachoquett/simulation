@@ -69,7 +69,6 @@ def run_simulation_chunk(state,model,keys, cfg):
         new_time_over = jnp.where(reproduces, 0, new_time_over) # If going to reproduce reset reproduction time to zero
         survives_int = jnp.where(survives, 1, 0) #Bool alive array to Int alive array
         
-        # bools Python, cfg statique -> les branches disparaissent a la trace
         cut_rec = cfg.ablate_memory or cfg.ablate_recurrence
         cut_int = cfg.ablate_memory or cfg.ablate_interoception
         cut_fb  = cfg.ablate_memory or cfg.ablate_feedback
@@ -124,7 +123,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         local_resources = grid_resources[:, pos[:, 0], pos[:, 1]].T
         gain = local_resources @ res.delta_energy
         rewards = survives_int * gain
-        new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving, 1) * survives_int, cfg.energy_max)
+        new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==3, 1,cfg.factor_energy_decay_not_moving) * survives_int, cfg.energy_max)
 
         ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
         saw_res_step = (state.obs[..., :n_types] > 0).any(axis=(1, 2))       # (N, n_types)
