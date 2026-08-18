@@ -275,26 +275,22 @@ def classify_outcome(pop_full, res_full, cfg):
 
 import numpy as np
 
-def shuffle_resources(resources, key, max_essais=20):
-    """Permutation des canaux, l'identite EXCLUE.
+def shuffle_resources(resources, key):
+    """Permutation uniforme des canaux, identite COMPRISE.
 
-    Un tirage uniforme rend l'identite avec probabilite 1/n! : negligeable a 3
-    ressources (1/6), mais une fois sur deux a 2. Sans exclusion, la moitie des
-    "changements de config" ne changeraient rien tout en etant journalises, et
-    cycle_period ne designerait plus le rythme des changements REELS.
+    L'identite doit rester tirable. L'exclure rendrait le changement previsible :
+    a 2 ressources il n'existe qu'une permutation non triviale, donc l'exclusion
+    produirait une alternance deterministe au rythme de cycle_period -- un
+    environnement qu'un genome peut anticiper avec une simple horloge interne,
+    exactement ce qu'il ne faut pas pour tester l'apprentissage intra-vie.
 
-    On retire donc l'identite. A une seule ressource elle est la seule
-    permutation possible : on la rend telle quelle, il n'y a rien a permuter.
+    En la gardant, l'intervalle entre deux changements REELS est geometrique :
+    en moyenne n!/(n!-1) tirages, soit 2 x cycle_period a 2 ressources et
+    1.2 x a 3. C'est cet intervalle-la qu'il faut lire sur les figures, pas
+    cycle_period, qui n'est que la periode des TIRAGES.
     """
-    n = len(resources)
-    ids = [r.id for r in resources]
-    for _ in range(max_essais):
-        key, sous = jax.random.split(key)
-        perm = np.asarray(jax.random.permutation(sous, n))
-        tire = tuple(resources[int(i)] for i in perm)
-        if n < 2 or [r.id for r in tire] != ids:
-            return tire
-    return tire                      # tirages degeneres : on rend le dernier
+    perm = np.asarray(jax.random.permutation(key, len(resources)))   # concret -> indexe un tuple
+    return tuple(resources[int(i)] for i in perm)
 
 
 def log_resource_shuffle(exp_dir, chunk_idx, step, old_resources, new_resources):
