@@ -89,9 +89,13 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             subkeys.extend(new_keys)
 
         start_chunk = chunk_id
+        # Doit rester IDENTIQUE a la branche "nouveau run" ci-dessous : les poids
+        # repris sont un vecteur plat dont la mise en forme depend de hidden_dim
+        # et hidden_layers. Une divergence ne leve pas toujours d'erreur, elle
+        # peut reinterpreter les parametres de travers.
         model = MetaRnnPolicy_bcppr(
             input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
-            hidden_dim=4, output_dim=4, encoder_layers=[], hidden_layers=[8]
+            hidden_dim=8, output_dim=4, encoder_layers=[], hidden_layers=[32]
         )
     else:
         model = MetaRnnPolicy_bcppr(
