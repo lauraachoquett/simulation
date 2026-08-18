@@ -29,6 +29,11 @@ class SimState:
     obs: jnp.ndarray
     last_actions: jnp.ndarray
     rewards: jnp.ndarray
+    # (N, n_types) : ce que l'agent a mange au pas PRECEDENT, tout a zero s'il
+    # n'a rien mange. Porte par l'etat, comme last_actions, pour arriver au pas
+    # suivant EN PHASE avec `rewards` -- c'est cet alignement qui donne au LSTM
+    # le couple (canal, recompense) d'un bloc, sans assignation de credit.
+    last_eaten: jnp.ndarray
     
 
 

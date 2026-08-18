@@ -79,6 +79,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             state_in = state_in.replace(
                 last_actions=jnp.zeros_like(state.last_actions),
                 rewards=jnp.zeros_like(state.rewards),
+                last_eaten=jnp.zeros_like(state.last_eaten),
             )
         if cut_int:
             # constante, pas zero : zero est la valeur de MORT (energy_to_die)
@@ -236,7 +237,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             step=step_idx+1,
             obs=obs,
             last_actions=actions_id,
-            rewards=jnp.expand_dims(rewards, 1).astype(jnp.float32)
+            rewards=jnp.expand_dims(rewards, 1).astype(jnp.float32),
+            last_eaten=ate_res_step.astype(jnp.float32),
         )
         
         log = StepLog(
