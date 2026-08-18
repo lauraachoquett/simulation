@@ -132,7 +132,18 @@ from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.one_simulation import run_simulation_chunk
 
-ROTATIONS = (1,2)
+def rotations_for(resources):
+    """Decalages de canaux non triviaux, pour n ressources.
+
+    Le decalage 0 est l'identite, et n aussi : une liste en dur (1,2) donne donc
+    un doublon exact de la baseline des qu'on descend a 2 ressources -- une
+    condition "poison_to_poison" qui coute la moitie du calcul du lab pour rien.
+    """
+    return tuple(range(1, len(resources)))
+
+
+# Conserve pour compatibilite : valeur a 3 ressources. Preferer rotations_for(cfg.resources).
+ROTATIONS = rotations_for((None,) * 3)
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -247,7 +258,7 @@ def rotate_resources(resources, shift):
 
 def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
     states, outputs = [], []
-    for rot in ROTATIONS:
+    for rot in rotations_for(cfg.resources):
         s, o = launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=rot)
         states.append(s)
         outputs.append(o)

@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt,ROTATIONS
+from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
@@ -263,7 +263,7 @@ class LabMixin:
                         outputs_high_abl, self.cfg.resources, label=LABELS[r.id])
                     base_par_type_abl[r.id] = (bn_i, bk_i)
 
-            for j, rot in enumerate(ROTATIONS):          # j = position sur l'axe, rot = vraie rotation
+            for j, rot in enumerate(rotations_for(self.cfg.resources)):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
                 # On indexe TOUT par la condition experimentale, pas par l'indice de

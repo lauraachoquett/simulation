@@ -274,9 +274,26 @@ def classify_outcome(pop_full, res_full, cfg):
 
 import numpy as np
 
-def shuffle_resources(resources, key):
-    perm = np.asarray(jax.random.permutation(key, len(resources)))   # concret -> indexe un tuple
-    return tuple(resources[int(i)] for i in perm)
+def shuffle_resources(resources, key, max_essais=20):
+    """Permutation des canaux, l'identite EXCLUE.
+
+    Un tirage uniforme rend l'identite avec probabilite 1/n! : negligeable a 3
+    ressources (1/6), mais une fois sur deux a 2. Sans exclusion, la moitie des
+    "changements de config" ne changeraient rien tout en etant journalises, et
+    cycle_period ne designerait plus le rythme des changements REELS.
+
+    On retire donc l'identite. A une seule ressource elle est la seule
+    permutation possible : on la rend telle quelle, il n'y a rien a permuter.
+    """
+    n = len(resources)
+    ids = [r.id for r in resources]
+    for _ in range(max_essais):
+        key, sous = jax.random.split(key)
+        perm = np.asarray(jax.random.permutation(sous, n))
+        tire = tuple(resources[int(i)] for i in perm)
+        if n < 2 or [r.id for r in tire] != ids:
+            return tire
+    return tire                      # tirages degeneres : on rend le dernier
 
 
 def log_resource_shuffle(exp_dir, chunk_idx, step, old_resources, new_resources):
