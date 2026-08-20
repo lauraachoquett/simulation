@@ -29,10 +29,6 @@ class SimState:
     obs: jnp.ndarray
     last_actions: jnp.ndarray
     rewards: jnp.ndarray
-    # (N, n_types) : ce que l'agent a mange au pas PRECEDENT, tout a zero s'il
-    # n'a rien mange. Porte par l'etat, comme last_actions, pour arriver au pas
-    # suivant EN PHASE avec `rewards` -- c'est cet alignement qui donne au LSTM
-    # le couple (canal, recompense) d'un bloc, sans assignation de credit.
     last_eaten: jnp.ndarray
     
 
@@ -49,9 +45,8 @@ class ResourceConfig:
 BASE_RESOURCES = (
     ResourceConfig(init_number_of_resources=30, prob_factor=0.03, pop_res_prob=5e-5, delta_energy=0.9,  id=0),
     # ResourceConfig(init_number_of_resources=20, prob_factor=0.1,  pop_res_prob=5e-5, delta_energy=0.1,  id=1),
-    ResourceConfig(init_number_of_resources=15,  prob_factor=0.01,   pop_res_prob=4e-5, delta_energy=-0.8, id=2),
+    ResourceConfig(init_number_of_resources=15,   prob_factor=0.01, pop_res_prob=4e-5, delta_energy=-2.0, id=2),
 )
-
 
 
 
@@ -124,17 +119,6 @@ class Config(NamedTuple):
     
     lab_time_steps : int = 2000
 
-    ### RESEAU (EcoEvoJax/source/agent.py, MetaRNN_bcppr)
-    #
-    # Ces quatre valeurs mettent en forme le vecteur PLAT de poids que chaque
-    # agent porte dans AgentState.params. Deux runs qui ne les partagent pas ne
-    # sont pas comparables, et un checkpoint repris avec les mauvaises ne leve
-    # pas d'erreur : il reinterprete les parametres de travers (cf. 963e465,
-    # ou la branche resume etait restee a 4 / [8]). Elles vivent donc ici, dans
-    # ce qui est sauvegarde par save_config, et non en dur dans run.py.
-    #
-    # TUPLES et non listes : Config est passe en static_argnames a jax.jit, il
-    # doit rester hachable. load_config les reconvertit apres le passage JSON.
     hidden_dim : int = 8              # taille du carry LSTM (h et c), cf. reset_b
     output_dim : int = 4              # nb d'actions -- doit suivre la table de
                                       # agent_mov.action_depl_theta, qui en compte 4
@@ -142,19 +126,10 @@ class Config(NamedTuple):
     encoder_layers : tuple = ()       # ignore tant que encoder vaut False
     encoder : bool = False
 
-    # Cablage de la memoire, cf. EcoEvoJax MetaRNN_bcppr.__call__ :
-    #   "separee" -> la memoire ne voit que [last_action, reward, energy, last_eaten]
-    #   "jointe"  -> cablage d'avant 591269d, le LSTM recoit la vision encodee
-    memory_mode : str = "separee"
-
-    # Bouton unique : applique par resolve_model() sur les quatre champs
-    # ci-dessus. "custom" = pas de substitution, ce sont eux qui font foi.
-    model_version : str = "v2"        # "v1" | "v2" | "custom"
+    memory_mode : str = "jointe"
+    model_version : str = "v1"      
 
 
-# Structure ET taille du reseau ont change ensemble : 591269d a separe la memoire
-# de la perception, 963e465 est passe de 4 / [8] a 8 / [32]. Les melanger sans le
-# vouloir donne un reseau qui n'a jamais tourne, d'ou un seul bouton pour les deux.
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),
     "v2": dict(memory_mode="separee", hidden_dim=8, hidden_layers=(32,)),
@@ -162,15 +137,7 @@ MODEL_VERSIONS = {
 
 
 def resolve_model(cfg):
-    """Applique le preset de `cfg.model_version` sur les champs de forme.
 
-    A appeler UNE fois, avant save_config : c'est la config resolue qui part
-    dans config.json, donc une reprise n'a plus rien a re-deriver -- et un
-    checkpoint reste lisible meme si la table change plus tard.
-
-    "custom" desactive la substitution, pour un hybride assume (structure d'une
-    version, taille de l'autre).
-    """
     if cfg.model_version == "custom":
         return cfg
     if cfg.model_version not in MODEL_VERSIONS:

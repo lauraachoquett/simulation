@@ -247,15 +247,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 
             ## SHUFFLE RESOURCES ##
-            if (chunk_idx) % cfg.cycle_period == 0:
-                # Permuter la config COURANTE, avec une cle FRAICHE.
-                #
-                # Repartir de BASE_RESOURCES avec `subkey` -- la cle du chunk,
-                # identique d'un shuffle a l'autre -- rendait toujours la meme
-                # permutation de la meme base : le premier shuffle changeait
-                # quelque chose, les suivants renvoyaient l'etat deja en place.
-                # A 2 ressources, ou il n'existe qu'une permutation non triviale,
-                # l'environnement se figeait des le premier changement.
+            if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx >10 :
                 old_resources = cfg.resources
                 key, subkey_shuffle = random.split(key)
                 new_resources = shuffle_resources(old_resources, subkey_shuffle)
@@ -302,18 +294,18 @@ if __name__ =='__main__':
 
             ### AGENTS : 
             # Agents number : 
-            n_agents_max=1500,
+            n_agents_max=2000,
             n_agents_init=20,
             agent_view = 5,
-            temperature=1/10,
+            temperature=1/40,
             
             #Physiologie
-            energy_decay=0.07/7,
+            energy_decay=0.07/8,
             factor_energy_decay_not_moving = 0.3,
             energy_max = 8.0,
             
             time_to_die=100*4,
-            time_above_repr = 90*4,
+            time_above_repr = 80*4,
             min_energy_repr = 6.,
             starting_energy= 1.5,
             
@@ -323,20 +315,20 @@ if __name__ =='__main__':
 
 
             # INIT RESOURCES MAP
-            pre_growth_step = 50,
+            pre_growth_step = 500,
             random_pos_offspring = False,
             dumb_agent = False,
             letal_wall=False,
-            cycle_period = 5,
-            crowd_start = 1000000,
+            cycle_period = 200,
             log_obs = False,
 
             ablate_memory = False ,        # coupe les trois canaux ci-dessous
             ablate_recurrence = False ,     # lstm_h / lstm_c
             ablate_interoception = False ,  # energie
-            ablate_feedback = False,  
+            ablate_feedback = False ,
             
-             lab_time_steps = 2000,
+            lab_time_steps = 2000,
+              
         )
     
     
@@ -358,6 +350,11 @@ if __name__ =='__main__':
 
 
     seed = 105
+    key = random.PRNGKey(seed)
+    print(jax.devices())
+    
+    
+    
     key = random.PRNGKey(seed)
     print(jax.devices())
     
