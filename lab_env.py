@@ -114,7 +114,7 @@ def init_state_lab(key, cfg, model,agent_params):
         agents=agents,
         step=0,
         obs=obs,
-        last_actions=jnp.zeros((cfg.n_agents_max, 4)),
+        last_actions=jnp.zeros((cfg.n_agents_max, cfg.output_dim)),
         rewards=jnp.zeros((cfg.n_agents_max, 1)),
         last_eaten=jnp.zeros((cfg.n_agents_max, len(cfg.resources))),
     )

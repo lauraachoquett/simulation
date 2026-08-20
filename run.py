@@ -18,7 +18,7 @@ import jax
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources
 from simulation.utils.plots import plot_current_config
-from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS
+from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
@@ -67,10 +67,39 @@ def save_script(exp_dir):
 
     
         
+def build_model(cfg):
+    """Unique point de construction du reseau.
+
+    Les deux branches de launch_simulation_chunked (nouveau run / reprise)
+    l'instanciaient chacune avec ses propres constantes. Elles ont deja diverge
+    une fois (963e465 : resume etait reste a hidden_dim=4 / [8] quand le depart
+    de zero passait a 8 / [32]) et la divergence ne leve pas d'erreur -- les
+    poids repris sont un vecteur plat, une mise en forme differente les
+    reinterprete simplement de travers. Un seul appel rend le cas impossible.
+    """
+    return MetaRnnPolicy_bcppr(
+        input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1),
+                   2 + len(cfg.resources)),
+        hidden_dim=cfg.hidden_dim,
+        output_dim=cfg.output_dim,
+        encoder=cfg.encoder,
+        # listes : MetaRNN_bcppr itere dessus, mais Config doit rester hachable
+        # pour jax.jit(static_argnames=['cfg']) -> tuples cote Config.
+        encoder_layers=list(cfg.encoder_layers),
+        hidden_layers=list(cfg.hidden_layers),
+        memory_mode=cfg.memory_mode,
+    )
+
+
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir=''):
     
     start_time_sim = time.time()
-    
+
+    # UNE seule fois, et avant save_config : c'est la config RESOLUE qui part
+    # dans config.json. La branche resume la recharge deja resolue et ne doit
+    # donc pas repasser par la.
+    cfg = resolve_model(cfg)
+
     if save_dir == '':
         now = datetime.now()
         save_dir = os.path.join("exp", now.strftime("%Y-%m-%d"))
@@ -89,25 +118,37 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             subkeys.extend(new_keys)
 
         start_chunk = chunk_id
-        # Doit rester IDENTIQUE a la branche "nouveau run" ci-dessous : les poids
-        # repris sont un vecteur plat dont la mise en forme depend de hidden_dim
-        # et hidden_layers. Une divergence ne leve pas toujours d'erreur, elle
-        # peut reinterpreter les parametres de travers.
-        model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
-            hidden_dim=8, output_dim=4, encoder_layers=[], hidden_layers=[32]
-        )
+        # La forme du reseau vient du cfg RECHARGE, pas de celui passe en argument :
+        # les poids du checkpoint ne se remettent en forme que d'une seule facon.
+        model = build_model(cfg)
+        # Le seul controle qui attrape VRAIMENT une reprise mal formee. Les poids
+        # d'un agent sont un vecteur plat : une forme differente ne leve pas
+        # d'erreur, elle les reinterprete de travers et le run continue (963e465).
+        # Necessaire aussi parce que les config.json anterieurs a 591269d n'ont
+        # pas la cle memory_mode : ils retombent sur le defaut "separee" alors que
+        # leur checkpoint a ete produit en "jointe". load_config ne peut pas le
+        # deviner ; la comparaison des formes reelles, si.
+        n_ckpt = state.agents.params.shape[1]
+        if model.num_params != n_ckpt:
+            raise ValueError(
+                f"Forme du reseau incompatible avec le checkpoint : "
+                f"le modele construit a {model.num_params} parametres, "
+                f"le checkpoint en porte {n_ckpt}.\n"
+                f"  model_version={cfg.model_version} memory_mode={cfg.memory_mode} "
+                f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)}\n"
+                f"Config rechargee depuis {resume_exp}/config.json ; si elle est "
+                f"anterieure a 591269d, y ajouter la cle memory_mode a la main.")
     else:
-        model = MetaRnnPolicy_bcppr(
-            input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1), 2 +  len(cfg.resources)),
-            hidden_dim=8, output_dim=4, encoder_layers=[], hidden_layers=[32]
-        )
+        model = build_model(cfg)
         key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey_state = jax.random.split(key)
         state = init_state(subkey_state, cfg, model)
         start_chunk = 1
         
 
+    print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
+          f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
+          f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
@@ -301,6 +342,13 @@ if __name__ =='__main__':
     
     
     
+
+    # Version du reseau : "v1" = memoire jointe a la perception + 4 / [8], le
+    # reseau d'avant 591269d ; "v2" = deux voies separees + 8 / [32]. Le detail
+    # de chaque version est dans data_class.MODEL_VERSIONS, applique par
+    # resolve_model au lancement. "custom" = pas de substitution, ce sont
+    # memory_mode / hidden_dim / hidden_layers du Config ci-dessus qui font foi.
+    cfg = cfg._replace(model_version="v2")
 
     # Sanity check : 
     a = cfg.starting_energy - cfg.energy_decay * cfg.time_above_repr

@@ -99,14 +99,14 @@ def run_simulation_chunk(state,model,keys, cfg):
             )
         if cfg.dumb_agent:  
             actions_id = jax.nn.one_hot(
-                random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=4),
-                4,
+                random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=cfg.output_dim),
+                cfg.output_dim,
             )
         else:
             
             actions_id = jax.nn.one_hot(
                 random.categorical(key_action, actions_logit  / cfg.temperature, axis=-1),
-                4,
+                cfg.output_dim,
             )
 
         acts = jnp.argmax(actions_id, axis=1)

@@ -121,7 +121,7 @@ def init_state(key, cfg, model):
         agents=agents,
         step=0,
         obs=obs,
-        last_actions=jnp.zeros((cfg.n_agents_max, 4)),
+        last_actions=jnp.zeros((cfg.n_agents_max, cfg.output_dim)),
         rewards=jnp.zeros((cfg.n_agents_max, 1)),
         last_eaten=jnp.zeros((cfg.n_agents_max, len(cfg.resources))),
     )
@@ -234,6 +234,13 @@ def load_config(resume_exp):
     env = cfg_dict.pop("env", None)
     cfg_dict.pop("seeds", None)
     cfg_dict["resources"] = tuple(ResourceConfig(**r) for r in cfg_dict["resources"])  # <-- ajout
+    # JSON ne connait que les listes : sans cette reconversion, Config redevient
+    # non hachable et jax.jit(static_argnames=['cfg']) leve a la premiere trace.
+    # Les configs anterieures a l'ajout de ces champs n'ont pas les cles : les
+    # defauts de Config prennent le relais, et ils valent l'ancien code en dur.
+    for champ in ("hidden_layers", "encoder_layers"):
+        if champ in cfg_dict:
+            cfg_dict[champ] = tuple(cfg_dict[champ])
     return Config(**cfg_dict), seeds_full
 
 def print_params(params, prefix="", total=0):
