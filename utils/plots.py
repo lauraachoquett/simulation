@@ -1541,7 +1541,7 @@ def plot_lab_metrics(exp_dir, suffix=""):
     S = [json.load(open(f)) for f in files]
     x = np.array([s["chunk"] for s in S])
  
-    fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True)
+    fig, axes = plt.subplots(2, 4, figsize=(19, 7), sharex=True)
  
     specs = [
         (axes[0, 0], "duree_vie",    "Lifespan",              "steps"),
@@ -1580,8 +1580,23 @@ def plot_lab_metrics(exp_dir, suffix=""):
         ax.grid(alpha=0.3)
     else:
         ax.axis("off")
+
+    # Gain net par pas de faim : signe conserve, donc le poison coute. Mesure la
+    # QUANTITE recoltee la ou elle sert, quand adapt_score compare des
+    # compositions. Les deux sont traces cote a cote pour pouvoir diverger.
+    ax = axes[1, 3]
+    if any("adapt_gain_p50" in s for s in S):
+        _plot_band(ax, x, S, "adapt_gain")
+        ax.axhline(0, color="black", lw=1)
+        ax.set_title("Net gain / hungry step")
+        ax.set_ylabel("energy / step")
+        ax.grid(alpha=0.3)
+    else:
+        ax.axis("off")
+
     for ax in axes.ravel():
         ax.set_xlabel("chunk")
+    axes[0, 3].axis("off")          # case libre de la grille 2x4
     axes[0, 0].legend(loc="best")
  
     fig.tight_layout()
@@ -1670,7 +1685,8 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
                "mean_speed": "Movement /step", "energy_end": "Final energy",
                "wall_death": "Fraction wall deaths",
                "greediness": "Greediness  G = Cr/Tr",
-               "adapt_score": "Adaptation  Δe eaten − Δe seen"}
+               "adapt_score": "Adaptation  Δe eaten − Δe seen",
+               "adapt_gain": "Net gain / hungry step"}
     # Union sur TOUS les chunks, pas seulement le premier : une metrique ajoutee
     # en cours de run n'existe que dans les fichiers recents, et se caler sur
     # P[0] la ferait disparaitre a jamais. _get rend NaN sur les chunks qui ne
@@ -1692,7 +1708,7 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
         ax.set_title(titles[k])
         ax.grid(alpha=0.3)
         ax.set_xlabel("chunk")
-        if k == "adapt_score":
+        if k in ("adapt_score", "adapt_gain"):
             ax.axhline(0, color="black", lw=1)   # 0 = mange sans choisir
 
     for ax in axes[len(metrics):]:

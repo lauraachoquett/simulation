@@ -678,6 +678,32 @@ class LabMixin:
             # NaN si l'agent n'a rien vu ou rien mangé : indéfini, pas nul
             adapt_score = _moyenne_ponderee(n_mange) - _moyenne_ponderee(n_vu)
 
+            # 11) Gain net par pas de vie, gains filtres par la faim.
+            #
+            # adapt_score compare des COMPOSITIONS : il ignore les quantites, punit
+            # de refuser du good a satiete et rend NaN l'agent qui s'abstient de
+            # tout. On somme donc l'energie reellement acquise.
+            #
+            # Le masque de faim ne porte que sur les GAINS : le good est clippe
+            # par energy_max, donc sans valeur a satiete -- le refuser est
+            # rationnel et ne doit pas compter. Le poison n'est jamais clippe, il
+            # coute son delta quel que soit le niveau d'energie : le masquer
+            # reviendrait a ne pas voir la bouchee de poison d'un agent rassasie,
+            # qui est justement ce qu'on cherche.
+            seuil_faim = self.cfg.energy_max - max(float(delta_e.max()), 0.0)
+            faim = energy < seuil_faim                          # (T, N)
+            # energy[t] precede l'action du pas t, ate_res[t] en resulte : alignes.
+            gain_pos = (ate_t * np.maximum(delta_e, 0.0)).sum(axis=2)   # (T, N)
+            gain_neg = (ate_t * np.minimum(delta_e, 0.0)).sum(axis=2)   # (T, N)
+            gain_t = np.where(faim, gain_pos, 0.0) + gain_neg
+            num = window_sum(np.cumsum(gain_t, axis=0), birth_row - 1, death_row)
+            # Denominateur = la fenetre de VIE, pas les seuls pas de faim : sinon
+            # un agent jamais affame qui s'empoisonne donnerait NaN au lieu de
+            # compter son degat. Dans le lab les durees de vie sont quasi
+            # constantes, donc ca ne reintroduit pas la confusion avec l'age --
+            # sauf dans compare_memory, ou c'est precisement l'effet mesure.
+            adapt_gain = num / (age + 1)
+
             return {
                 "slot":       slot,        # (slot, born) pour recroiser avec la généalogie
                 "born":       b_dead,
@@ -695,6 +721,7 @@ class LabMixin:
                 "greed_Tr":   greed_Tr,    # fenêtres avec ressource visible  <== NOUVEAU
                 "greed_Cr":   greed_Cr,    # fenêtres avec consommation       <== NOUVEAU
                 "adapt_score": adapt_score,  # Δe mangé − Δe vu (NaN si rien)
+                "adapt_gain": adapt_gain,    # (gains si faim + pertes) / pas de vie
             }
  
     # =================================================================
@@ -703,7 +730,7 @@ class LabMixin:
     def data_lab_env(self, outputs_lab, resources=None):
         keys = ["age", "total_rew", "mean_rew", "total_move",
                 "mean_speed", "energy_end", "wall_death", "died",
-                "greediness", "adapt_score"]
+                "greediness", "adapt_score", "adapt_gain"]
         agg = {k: [] for k in keys}
  
         B = outputs_lab.alive.shape[0]          # nb d'environnements = nb d'agents testés
@@ -740,6 +767,7 @@ class LabMixin:
             **_dispersion(_clean(agg["greediness"]), "greediness", empty=float("nan")),
             # NaN pour un agent n'ayant rien vu ou rien mange
             **_dispersion(_clean(agg["adapt_score"]), "adapt_score", empty=float("nan")),
+            **_dispersion(_clean(agg["adapt_gain"]), "adapt_gain", empty=float("nan")),
         }
         return agg, summary
  
@@ -795,7 +823,7 @@ class LabMixin:
         génome (même ordre que agent_params / key_sim).
         """
         keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                "died", "greediness", "adapt_score"]
+                "died", "greediness", "adapt_score", "adapt_gain"]
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)
@@ -830,12 +858,13 @@ class LabMixin:
         c = self.data_lab_env_grouped(outputs_clones)
  
         metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                   "greediness", "adapt_score"]
+                   "greediness", "adapt_score", "adapt_gain"]
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
                    "wall_death": "fraction wall deaths",
                    "greediness": "greediness G = Cr/Tr",
-                   "adapt_score": "adaptation (de eaten - seen)"}
+                   "adapt_score": "adaptation (de eaten - seen)",
+                   "adapt_gain": "net gain /hungry step"}
  
         table = {}
         for k in metrics:
@@ -894,12 +923,13 @@ class LabMixin:
         a = self.data_lab_env_grouped(outputs_abl, resources)
 
         metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                   "greediness", "adapt_score"]
+                   "greediness", "adapt_score", "adapt_gain"]
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
                    "wall_death": "fraction wall deaths",
                    "greediness": "greediness G = Cr/Tr",
-                   "adapt_score": "adaptation (de eaten - seen)"}
+                   "adapt_score": "adaptation (de eaten - seen)",
+                   "adapt_gain": "net gain /hungry step"}
 
         table = {}
         for k in metrics:
