@@ -18,11 +18,12 @@ import jax
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources
 from simulation.utils.plots import plot_current_config
-from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, resolve_model
+from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
 
+import argparse
 import multiprocessing as mp
 import time
 from datetime import datetime
@@ -280,8 +281,75 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 
 
-if __name__ =='__main__':
-    
+# (flags, champ de Config, type). Les defauts viennent du Config ci-dessous,
+# donc une seule source de verite et --help affiche les vraies valeurs.
+CLI_PARAMS = [
+    (("-t", "--temp"),    "temperature",                    float),
+    (("-d", "--decay"),   "energy_decay",                   float),
+    (("-f", "--factor"),  "factor_energy_decay_not_moving", float),
+    (("-p", "--pmut"),    "param_mutate",                   float),
+    (("-c", "--cycle"),   "cycle_period",                   int),
+    (("-n", "--chunks"),  "num_chunks",                     int),
+    (("-a", "--agents"),  "n_agents_max",                   int),
+    (("-e", "--emax"),    "energy_max",                     float),
+    (("--mvar",),         "mutation_var",                   float),
+    (("--pregrow",),      "pre_growth_step",                int),
+    (("--lab",),          "lab_time_steps",                 int),
+    (("--crowd",),        "crowd_start",                    int),
+    (("--view",),         "agent_view",                     int),
+]
+
+
+# lettre -> champ d'ablation. ablate_memory coupe deja les trois autres.
+ABLATIONS = {
+    "m": "ablate_memory",
+    "r": "ablate_recurrence",
+    "i": "ablate_interoception",
+    "f": "ablate_feedback",
+}
+
+
+def parse_cli(cfg):
+    """Surcharge cfg depuis la ligne de commande. Renvoie (cfg, args)."""
+    p = argparse.ArgumentParser(
+        description="Simulation eco-evo. Sans argument, les valeurs du Config de run.py.")
+    for flags, champ, typ in CLI_PARAMS:
+        p.add_argument(*flags, dest=champ, type=typ, default=getattr(cfg, champ),
+                       metavar=typ.__name__.upper()[0], help=f"{champ} (defaut %(default)s)")
+    p.add_argument("-m", "--model", dest="model_version",
+                   choices=sorted(MODEL_VERSIONS) + ["custom"],
+                   default=cfg.model_version, help="version du reseau (defaut %(default)s)")
+    p.add_argument("-s", "--seed",    type=int, default=105,  help="graine (defaut %(default)s)")
+    p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
+    p.add_argument("-r", "--resume",  default=None, metavar="DIR", help="dossier d'experience a reprendre")
+    p.add_argument("--chunk-id",      type=int, default=1,    help="chunk de reprise (defaut %(default)s)")
+    p.add_argument("-x", "--ablate", default="", metavar="LETTRES",
+                   help="ablations, lettres cumulables : "
+                        + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items())
+                        + " (ex: -x ri)")
+    args = p.parse_args()
+
+    maj = {c: getattr(args, c) for _, c, _ in CLI_PARAMS}
+    maj["model_version"] = args.model_version
+
+    lettres = args.ablate.lower()
+    inconnues = sorted(set(lettres) - set(ABLATIONS))
+    if inconnues:
+        p.error(f"lettre(s) d'ablation inconnue(s) : {''.join(inconnues)} — attendu "
+                + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items()))
+    for lettre in lettres:
+        maj[ABLATIONS[lettre]] = True
+
+    neuf = cfg._replace(**maj)
+    diff = {c: getattr(neuf, c) for c in Config._fields
+            if getattr(neuf, c) != getattr(cfg, c)}
+    if diff:
+        print("[cli] surcharges :", ", ".join(f"{k}={v}" for k, v in diff.items()))
+    return neuf, args
+
+
+if __name__ == '__main__':
+
     cfg = Config(
             grid_length=200,
 
@@ -292,27 +360,25 @@ if __name__ =='__main__':
             video_freq = 50,
             pca_save_freq=50,
 
-            ### AGENTS : 
-            # Agents number : 
+            ### AGENTS :
             n_agents_max=2000,
             n_agents_init=20,
             agent_view = 5,
             temperature=1/40,
-            
+
             #Physiologie
             energy_decay=0.07/8,
             factor_energy_decay_not_moving = 0.3,
             energy_max = 8.0,
-            
+
             time_to_die=100*4,
             time_above_repr = 80*4,
             min_energy_repr = 6.,
             starting_energy= 1.5,
-            
+
             # Mutation parameters
             mutation_var = 0.02,
             param_mutate = 0.99,
-
 
             # INIT RESOURCES MAP
             pre_growth_step = 500,
@@ -326,39 +392,23 @@ if __name__ =='__main__':
             ablate_recurrence = False ,     # lstm_h / lstm_c
             ablate_interoception = False ,  # energie
             ablate_feedback = False ,
-            
+
             lab_time_steps = 2000,
-              
+
+            # "v1" = memoire jointe + 4/[8] (avant 591269d), "v2" = deux voies + 8/[32]
+            model_version = "v2",
         )
-    
-    
-    
-    
 
-    # Version du reseau : "v1" = memoire jointe a la perception + 4 / [8], le
-    # reseau d'avant 591269d ; "v2" = deux voies separees + 8 / [32]. Le detail
-    # de chaque version est dans data_class.MODEL_VERSIONS, applique par
-    # resolve_model au lancement. "custom" = pas de substitution, ce sont
-    # memory_mode / hidden_dim / hidden_layers du Config ci-dessus qui font foi.
-    cfg = cfg._replace(model_version="v2")
+    cfg, args = parse_cli(cfg)
 
-    # Sanity check : 
+    # Sanity check :
     a = cfg.starting_energy - cfg.energy_decay * cfg.time_above_repr
     b = cfg.min_energy_repr
     assert(  b > a)
-    
 
+    key = random.PRNGKey(args.seed)
+    print(jax.devices())
 
-    seed = 105
-    key = random.PRNGKey(seed)
-    print(jax.devices())
-    
-    
-    
-    key = random.PRNGKey(seed)
-    print(jax.devices())
-    
-    # resume_exp = "exp/2026-08-07/2026-08-07_17-45-30"
-    # cfg,_ = load_config(resume_exp)
-    
-    state_final, output, exp_dir,_,_ = launch_simulation_chunked(key,cfg,n_video_workers = 4)
+    state_final, output, exp_dir,_,_ = launch_simulation_chunked(
+        key, cfg, resume_exp=args.resume, n_video_workers=args.workers,
+        chunk_id=args.chunk_id)
