@@ -189,7 +189,7 @@ class LabMixin:
                 enfants_m[k].append(np.asarray(agg[k], dtype=float))
                 v = np.asarray(agg_p[k], dtype=float)
                 parent_m[k].append(float(np.nanmean(v)) if v.size else np.nan)
-            etiquettes.append(f"a{rang}\nslot {slot}")
+            etiquettes.append(str(rang))   # le slot reste dans parent_slot
 
         # les longueurs peuvent differer d'un parent a l'autre -> NaN de bourrage
         def _rect(listes):

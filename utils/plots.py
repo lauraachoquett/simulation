@@ -1738,11 +1738,11 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
 
 EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
                  "greediness", "adapt_score", "adapt_gain"]
-EVO_TITRES = {"age": "Duree de vie (pas)", "mean_rew": "Consommation /pas",
-              "mean_speed": "Mouvement /pas", "energy_end": "Energie finale",
+EVO_TITRES = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",
+              "mean_speed": "Movement /step", "energy_end": "Final energy",
               "greediness": "Greediness  G = Cr/Tr",
-              "adapt_score": "Adaptation  Δe mange - Δe vu",
-              "adapt_gain": "Gain net /pas de faim"}
+              "adapt_score": "Adaptation  Δe eaten − Δe seen",
+              "adapt_gain": "Net gain / hungry step"}
 
 
 def plot_evolvability(data_dir, chunk, fig_dir=None):
@@ -1785,15 +1785,16 @@ def plot_evolvability(data_dir, chunk, fig_dir=None):
             ax.legend(loc="best", fontsize=8)
         ax.set_title(EVO_TITRES.get(k, k))
         ax.set_xticks(pos)
-        ax.set_xticklabels(etiq, fontsize=8)
+        ax.set_xticklabels(etiq, fontsize=9)
+        ax.set_xlabel("parent")
         ax.grid(alpha=.3, axis="y")
         if k in ("adapt_score", "adapt_gain"):
             ax.axhline(0, color="black", lw=1)
 
     for ax in axes[len(presentes):]:
         ax.axis("off")
-    fig.suptitle(f"Evaluabilite — chunk {chunk} — "
-                 f"{enf.shape[1]} enfants mutes par parent", y=1.0)
+    fig.suptitle(f"Evolvability — chunk {chunk} — "
+                 f"{enf.shape[1]} mutated offspring per parent", y=1.0)
     fig.tight_layout()
     fig_dir = fig_dir or data_dir
     os.makedirs(fig_dir, exist_ok=True)
