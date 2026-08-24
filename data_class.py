@@ -129,6 +129,12 @@ class Config(NamedTuple):
     memory_mode : str = "jointe"
     model_version : str = "v1"      
 
+    # evaluabilite : tous les evolvability_freq pas, les N meilleurs genomes
+    # sont re-echantillonnes en M enfants mutes et evalues dans l'env high_res
+    evolvability_freq : int = 100_000
+    evolvability_agents : int = 10
+    evolvability_children : int = 100
+
 
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),

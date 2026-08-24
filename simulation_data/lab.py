@@ -17,12 +17,13 @@ self.chunk_idx. Appelle self.compute_survivors (GenealogyMixin).
 
 import os
 import json
+import time
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import random
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for
+from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
@@ -36,6 +37,7 @@ from simulation.simulation_data.energy_response import (default_energy_bins,
 from simulation.data_class import LABELS
  
 N_FILM       = 3      # genomes rejoues avec la grille, pour les videos
+EVO_BATCH    = 25     # enfants evalues par vmap : borne la memoire GPU
 GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
 REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #   Une fois `obs=state.obs` applique dans StepLog :
@@ -142,6 +144,51 @@ def steps_since_last_shuffle(shuffle_log, step_now):
     return int(step_now) - (max(past) if past else 0)
 
 class LabMixin:
+
+    def launch_evolvability(self, state, key_env, subkey_sim, model, exp_dir):
+        """Evaluabilite : les N meilleurs genomes, chacun re-echantillonne en
+        M enfants mutes, evalues dans l'env high_res.
+
+        "Meilleur" = le plus vieux. compute_survivors ne trie pas, et sous
+        critere de viabilite survivre longtemps EST le critere.
+        """
+        survivants = self.compute_survivors(state)
+        if not survivants:
+            print("[evolvability] aucun survivant, saute")
+            return
+        classes = sorted(survivants, key=lambda t: t[1])[:self.cfg.evolvability_agents]
+        n_enf   = self.cfg.evolvability_children
+        cfg_m   = self.cfg._replace(log_grid=False)
+        t0 = time.time()
+
+        for rang, (slot, born) in enumerate(classes, start=1):
+            sous_dir = os.path.join(exp_dir, "evolvability", f"agent_{rang}")
+            # plot_lab_metrics ecrit dans fig/ sans le creer : create_exp_file
+            # s'en charge pour l'exp principale, pas pour ces sous-dossiers
+            os.makedirs(os.path.join(sous_dir, "fig"), exist_ok=True)
+
+            subkey_sim, k_mut, k_sim = random.split(subkey_sim, 3)
+            enfants   = vmap_mutate(state.agents.params[slot],
+                                    random.split(k_mut, n_enf), self.cfg)
+            cles_sim  = random.split(k_sim, n_enf)
+
+            agg = None
+            for d in range(0, n_enf, EVO_BATCH):
+                tr = slice(d, d + EVO_BATCH)
+                _, out = vmap_over_agents_env_lab_high_res(
+                    enfants[tr], key_env, cles_sim[tr], model, cfg_m)
+                a = self._agg_lab(out)
+                agg = a if agg is None else {k: np.concatenate([agg[k], a[k]])
+                                             for k in agg}
+
+            summary = self._summary_lab(agg, n_enf)
+            summary["parent_slot"] = slot
+            summary["parent_born"] = born
+            self._save_lab_data(agg, summary, sous_dir)
+            plot_lab_metrics(exp_dir=sous_dir)
+
+        print(f"[evolvability] chunk {self.chunk_idx} : "
+              f"{len(classes)} genomes x {n_enf} enfants en {time.time()-t0:.0f} s")
 
     def launch_env(self, state, key_env, subkey_sim, model, exp_dir, n, submit_video):
             survivors = self.compute_survivors(state)
@@ -728,6 +775,10 @@ class LabMixin:
     #  MODIFIÉ — _stat supprimé, remplacé par **_dispersion
     # =================================================================
     def data_lab_env(self, outputs_lab, resources=None):
+        agg = self._agg_lab(outputs_lab, resources)
+        return agg, self._summary_lab(agg, outputs_lab.alive.shape[0])
+
+    def _agg_lab(self, outputs_lab, resources=None):
         keys = ["age", "total_rew", "mean_rew", "total_move",
                 "mean_speed", "energy_end", "wall_death", "died",
                 "greediness", "adapt_score", "adapt_gain"]
@@ -742,8 +793,9 @@ class LabMixin:
             for k in keys:
                 agg[k].append(m[k])
  
-        agg = {k: (np.concatenate(v) if v else np.array([])) for k, v in agg.items()}
- 
+        return {k: (np.concatenate(v) if v else np.array([])) for k, v in agg.items()}
+
+    def _summary_lab(self, agg, B):
         died    = agg["died"].astype(bool)
         n_morts = int(died.sum())
         n_surv  = int((~died).sum())
@@ -769,7 +821,7 @@ class LabMixin:
             **_dispersion(_clean(agg["adapt_score"]), "adapt_score", empty=float("nan")),
             **_dispersion(_clean(agg["adapt_gain"]), "adapt_gain", empty=float("nan")),
         }
-        return agg, summary
+        return summary
  
     # =================================================================
     #  MODIFIÉ — A) EXPLORATION (env low_res)

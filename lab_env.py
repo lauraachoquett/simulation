@@ -260,6 +260,18 @@ def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
     return states, outputs
 
 
+def mutate_params(params, key, cfg):
+    """Meme operateur que la reproduction dans one_simulation.step."""
+    k_masque, k_bruit = random.split(key)
+    masque = random.bernoulli(k_masque, p=cfg.param_mutate, shape=params.shape)
+    bruit  = cfg.mutation_var * random.normal(k_bruit, shape=params.shape)
+    return params + bruit * masque
+
+
+def vmap_mutate(params, keys, cfg):
+    return vmap(mutate_params, in_axes=(None, 0, None))(params, keys, cfg)
+
+
 def vmap_over_agents_env_lab_high_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 

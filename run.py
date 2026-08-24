@@ -233,6 +233,13 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                     return fut
                 sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model,exp_dir = exp_dir,n=50,submit_video=submit_video)
 
+            ## EVALUABILITE ##
+            if cfg.evolvability_freq > 0 and int(state.step) % cfg.evolvability_freq == 0:
+                subkey_lab, subkey_evo = random.split(subkey_lab)
+                sim_data.launch_evolvability(state=state, key_env=subkey_env_lab,
+                                             subkey_sim=subkey_evo, model=model,
+                                             exp_dir=exp_dir)
+
             chunks_survived+=1
             # --- Checkpoint (synchrone) ---
             if (chunk_idx) % cfg.checkpoint_freq == 0:
@@ -295,6 +302,9 @@ CLI_PARAMS = [
     (("--lab",),          "lab_time_steps",                 int),
     (("--crowd",),        "crowd_start",                    int),
     (("--view",),         "agent_view",                     int),
+    (("--evo",),          "evolvability_freq",              int),
+    (("--evo-agents",),   "evolvability_agents",            int),
+    (("--evo-children",), "evolvability_children",          int),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
