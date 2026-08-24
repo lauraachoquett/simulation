@@ -305,6 +305,8 @@ CLI_PARAMS = [
     (("--evo",),          "evolvability_freq",              int),
     (("--evo-agents",),   "evolvability_agents",            int),
     (("--evo-children",), "evolvability_children",          int),
+    (("--replay-n",),     "replay_top_n",                   int),
+    (("--replay-keys",),  "replay_keys",                    int),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config

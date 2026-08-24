@@ -135,6 +135,11 @@ class Config(NamedTuple):
     evolvability_agents : int = 10
     evolvability_children : int = 100
 
+    # rejeu : les N genomes au plus fort gain de memoire, chacun rejoue avec
+    # replay_keys graines, intact et ablate. 0 desactive.
+    replay_top_n : int = 5
+    replay_keys : int = 50
+
 
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),

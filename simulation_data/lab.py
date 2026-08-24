@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax import random
 
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
-from simulation.utils.plots import (plot_memory_gain_hist, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
+from simulation.utils.plots import (plot_memory_gain_hist, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
                             plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
@@ -213,6 +213,52 @@ class LabMixin:
         print(f"[evolvability] chunk {self.chunk_idx} : "
               f"{len(classes)} genomes x {n_enf} enfants en {time.time()-t0:.0f} s")
 
+    def replay_top_gain(self, agent_params, gains, key_env, subkey_sim, model, exp_dir):
+        """Rejoue les genomes au plus fort gain avec replay_keys graines.
+
+        Un gros ecart sur UN rollout peut venir d'une seule action qui bascule :
+        les deux bras partagent la meme key_sim, donc ils restent identiques
+        jusqu'a la premiere divergence, apres quoi ils se decorrelent. Rejouer
+        le meme genome sur beaucoup de graines separe les deux lectures --
+        distribution centree sur du positif = apprentissage, centree sur zero
+        avec des queues = point de bascule.
+        """
+        g = np.asarray(gains, dtype=float)
+        ordre = np.argsort(np.where(np.isfinite(g), g, -np.inf))[::-1]
+        ordre = [int(b) for b in ordre[:self.cfg.replay_top_n] if np.isfinite(g[int(b)])]
+        if not ordre:
+            return
+        n_cles = self.cfg.replay_keys
+        cfg_f  = self.cfg._replace(log_grid=False)
+        cfg_a  = cfg_f._replace(ablate_recurrence=True)
+        t0 = time.time()
+
+        gains_rejoues, observes = [], []
+        for b in ordre:
+            subkey_sim, k = random.split(subkey_sim)
+            cles   = random.split(k, n_cles)
+            params = jnp.broadcast_to(agent_params[b], (n_cles, agent_params.shape[1]))
+            gf, ga = [], []
+            for d in range(0, n_cles, EVO_BATCH):
+                tr = slice(d, d + EVO_BATCH)
+                _, of = vmap_over_agents_env_lab_high_res(params[tr], key_env, cles[tr], model, cfg_f)
+                _, oa = vmap_over_agents_env_lab_high_res(params[tr], key_env, cles[tr], model, cfg_a)
+                gf.append(self.data_lab_env_grouped(of)["age"])
+                ga.append(self.data_lab_env_grouped(oa)["age"])
+            gains_rejoues.append(np.concatenate(gf) - np.concatenate(ga))
+            observes.append(float(g[b]))
+
+        d_dir = os.path.join(exp_dir, "lab_data")
+        os.makedirs(d_dir, exist_ok=True)
+        np.savez_compressed(
+            os.path.join(d_dir, f"chunk_{self.chunk_idx}_replay.npz"),
+            gains=np.stack(gains_rejoues), observe=np.array(observes),
+            genome=np.array(ordre))
+        plot_replay_top_gain(d_dir, self.chunk_idx,
+                             fig_dir=os.path.join(exp_dir, "fig"))
+        print(f"[replay] chunk {self.chunk_idx} : {len(ordre)} genomes x {n_cles} "
+              f"graines en {time.time()-t0:.0f} s")
+
     def launch_env(self, state, key_env, subkey_sim, model, exp_dir, n, submit_video):
             survivors = self.compute_survivors(state)
             ids = np.array([agent_id for agent_id, _ in survivors[:n]])
@@ -307,7 +353,11 @@ class LabMixin:
                     agent_params, key_env, key_sim, model, cfg_abl)
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
-                self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
+                _, gain_brut = self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
+                if self.cfg.replay_top_n > 0:
+                    subkey_sim, k_rej = random.split(subkey_sim)
+                    self.replay_top_gain(agent_params, gain_brut, key_env, k_rej,
+                                         model, exp_dir)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
@@ -1018,6 +1068,8 @@ class LabMixin:
             table[k] = row
             # signe inverse du tableau : positif = la memoire AIDE
             par_genome[f"gain_{k}"] = f[k][mask] - a[k][mask]
+            if k == "age":
+                gain_brut = f[k] - a[k]        # non masque : indices = agent_params
             par_genome[f"memory_{k}"]  = f[k][mask]
             par_genome[f"ablated_{k}"] = a[k][mask]
 
@@ -1061,7 +1113,7 @@ class LabMixin:
             titre=f"Same genomes, with and without within-life memory — {env_titre}",
             fname=f"lab_memory_ablation_evolution{suffix}.png")
         plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix, env_titre=env_titre)
-        return table
+        return table, gain_brut
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
         curves = {

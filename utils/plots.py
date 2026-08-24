@@ -1736,6 +1736,51 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     print(f"Figure saved: {out}")
 
 
+def plot_replay_top_gain(data_dir, chunk, fig_dir=None):
+    """Les genomes au plus fort gain, rejoues sur beaucoup de graines.
+
+    Boite centree sur du positif = la memoire aide vraiment ce genome.
+    Boite centree sur zero = l'ecart initial venait d'une seule action qui a
+    bascule, pas d'un apprentissage.
+    """
+    f = os.path.join(data_dir, f"chunk_{chunk}_replay.npz")
+    if not os.path.exists(f):
+        print(f"No replay data at {f}")
+        return
+    d = np.load(f)
+    gains, obs, gen = d["gains"], d["observe"], d["genome"]
+
+    fig, ax = plt.subplots(figsize=(1.6 * len(obs) + 4, 5))
+    donnees = [g[np.isfinite(g)] for g in gains]
+    pos = np.arange(1, len(donnees) + 1)
+    garde = [i for i, g in enumerate(donnees) if g.size]
+    if garde:
+        ax.boxplot([donnees[i] for i in garde], positions=pos[garde], widths=.6,
+                   flierprops=dict(marker=".", markersize=4, alpha=.6))
+    ax.plot(pos, obs, "o", color="C3", ms=8, zorder=5,
+            label="gain observe au depart")
+    ax.axhline(0, color="black", lw=1.5)
+    for i, g in enumerate(donnees):
+        if g.size:
+            ax.annotate(f"{100*(g > 0).mean():.0f}% > 0",
+                        (pos[i], ax.get_ylim()[0]), ha="center", va="bottom",
+                        fontsize=8, color="0.3")
+    ax.set_xticks(pos)
+    ax.set_xticklabels([f"genome {int(b)}" for b in gen], fontsize=9)
+    ax.set_ylabel("lifespan : with memory − without")
+    ax.set_title(f"Top-gain genomes replayed over {gains.shape[1]} seeds "
+                 f"— chunk {chunk}")
+    ax.legend(loc="best")
+    ax.grid(alpha=.3, axis="y")
+    fig.tight_layout()
+    fig_dir = fig_dir or data_dir
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"replay_top_gain_chunk_{chunk}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
                  "greediness", "adapt_score", "adapt_gain"]
 EVO_TITRES = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",
