@@ -1736,6 +1736,73 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     print(f"Figure saved: {out}")
 
 
+EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
+                 "greediness", "adapt_score", "adapt_gain"]
+EVO_TITRES = {"age": "Duree de vie (pas)", "mean_rew": "Consommation /pas",
+              "mean_speed": "Mouvement /pas", "energy_end": "Energie finale",
+              "greediness": "Greediness  G = Cr/Tr",
+              "adapt_score": "Adaptation  Δe mange - Δe vu",
+              "adapt_gain": "Gain net /pas de faim"}
+
+
+def plot_evolvability(data_dir, chunk, fig_dir=None):
+    """Un panneau par mesure : en x les parents, en y la boite des enfants.
+
+    Le point rouge est le parent lui-meme, evalue dans le meme environnement.
+    Boite au-dessus du point = la mutation ameliore en moyenne.
+    """
+    f = os.path.join(data_dir, f"chunk_{chunk}.npz")
+    if not os.path.exists(f):
+        print(f"No evolvability data at {f}")
+        return
+    d = np.load(f, allow_pickle=True)
+    etiq = [str(x) for x in d["etiquettes"]]
+    presentes = [k for k in EVO_METRIQUES if f"enfants_{k}" in d.files]
+    if not presentes:
+        print("No metric in evolvability data.")
+        return
+
+    n_col = 3
+    n_lig = -(-len(presentes) // n_col)
+    fig, axes = plt.subplots(n_lig, n_col, figsize=(5.2 * n_col, 4 * n_lig),
+                             squeeze=False)
+    axes = axes.ravel()
+
+    for ax, k in zip(axes, presentes):
+        enf = np.asarray(d[f"enfants_{k}"], dtype=float)      # (P, M)
+        par = np.asarray(d[f"parent_{k}"],  dtype=float)      # (P,)
+        donnees = [e[np.isfinite(e)] for e in enf]
+        pos = np.arange(1, len(donnees) + 1)
+        garde = [i for i, e in enumerate(donnees) if e.size]
+        if garde:
+            ax.boxplot([donnees[i] for i in garde],
+                       positions=pos[garde], widths=.6, showfliers=True,
+                       flierprops=dict(marker=".", markersize=3, alpha=.5))
+        ok = np.isfinite(par)
+        if ok.any():
+            ax.plot(pos[ok], par[ok], "o", color="C3", ms=7, zorder=5,
+                    label="parent")
+            ax.legend(loc="best", fontsize=8)
+        ax.set_title(EVO_TITRES.get(k, k))
+        ax.set_xticks(pos)
+        ax.set_xticklabels(etiq, fontsize=8)
+        ax.grid(alpha=.3, axis="y")
+        if k in ("adapt_score", "adapt_gain"):
+            ax.axhline(0, color="black", lw=1)
+
+    for ax in axes[len(presentes):]:
+        ax.axis("off")
+    fig.suptitle(f"Evaluabilite — chunk {chunk} — "
+                 f"{enf.shape[1]} enfants mutes par parent", y=1.0)
+    fig.tight_layout()
+    fig_dir = fig_dir or data_dir
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"evolvability_chunk_{chunk}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_lab_exploration(exp_dir):
     """Évolution de l'EXPLORATION (env low_res) chunk après chunk.
     Deux panneaux :

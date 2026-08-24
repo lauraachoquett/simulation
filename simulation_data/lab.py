@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax import random
 
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
-from simulation.utils.plots import (plot_memory_gain_hist, plot_lab_metrics, plot_lab_exploration,
+from simulation.utils.plots import (plot_memory_gain_hist, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
                             plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
@@ -147,7 +147,7 @@ class LabMixin:
 
     def launch_evolvability(self, state, key_env, subkey_sim, model, exp_dir):
         """Evaluabilite : les N meilleurs genomes, chacun re-echantillonne en
-        M enfants mutes, evalues dans l'env high_res.
+        M enfants mutes, plus le parent lui-meme, evalues dans l'env high_res.
 
         "Meilleur" = le plus vieux. compute_survivors ne trie pas, et sous
         critere de viabilite survivre longtemps EST le critere.
@@ -161,32 +161,55 @@ class LabMixin:
         cfg_m   = self.cfg._replace(log_grid=False)
         t0 = time.time()
 
-        for rang, (slot, born) in enumerate(classes, start=1):
-            sous_dir = os.path.join(exp_dir, "evolvability", f"agent_{rang}")
-            # plot_lab_metrics ecrit dans fig/ sans le creer : create_exp_file
-            # s'en charge pour l'exp principale, pas pour ces sous-dossiers
-            os.makedirs(os.path.join(sous_dir, "fig"), exist_ok=True)
+        enfants_m = {k: [] for k in EVO_METRIQUES}
+        parent_m  = {k: [] for k in EVO_METRIQUES}
+        etiquettes = []
 
-            subkey_sim, k_mut, k_sim = random.split(subkey_sim, 3)
-            enfants   = vmap_mutate(state.agents.params[slot],
-                                    random.split(k_mut, n_enf), self.cfg)
-            cles_sim  = random.split(k_sim, n_enf)
+        for rang, (slot, born) in enumerate(classes, start=1):
+            subkey_sim, k_mut, k_sim, k_par = random.split(subkey_sim, 4)
+            parent  = state.agents.params[slot]
+            enfants = vmap_mutate(parent, random.split(k_mut, n_enf), self.cfg)
+            cles    = random.split(k_sim, n_enf)
+
+            # le parent, dans le meme env et avec le meme protocole
+            _, out_p = vmap_over_agents_env_lab_high_res(
+                parent[None], key_env, random.split(k_par, 1), model, cfg_m)
+            agg_p = self._agg_lab(out_p)
 
             agg = None
-            for d in range(0, n_enf, EVO_BATCH):
-                tr = slice(d, d + EVO_BATCH)
+            for deb in range(0, n_enf, EVO_BATCH):
+                tr = slice(deb, deb + EVO_BATCH)
                 _, out = vmap_over_agents_env_lab_high_res(
-                    enfants[tr], key_env, cles_sim[tr], model, cfg_m)
+                    enfants[tr], key_env, cles[tr], model, cfg_m)
                 a = self._agg_lab(out)
                 agg = a if agg is None else {k: np.concatenate([agg[k], a[k]])
                                              for k in agg}
 
-            summary = self._summary_lab(agg, n_enf)
-            summary["parent_slot"] = slot
-            summary["parent_born"] = born
-            self._save_lab_data(agg, summary, sous_dir)
-            plot_lab_metrics(exp_dir=sous_dir)
+            for k in EVO_METRIQUES:
+                enfants_m[k].append(np.asarray(agg[k], dtype=float))
+                v = np.asarray(agg_p[k], dtype=float)
+                parent_m[k].append(float(np.nanmean(v)) if v.size else np.nan)
+            etiquettes.append(f"a{rang}\nslot {slot}")
 
+        # les longueurs peuvent differer d'un parent a l'autre -> NaN de bourrage
+        def _rect(listes):
+            L = max((x.size for x in listes), default=0)
+            out = np.full((len(listes), L), np.nan)
+            for i, x in enumerate(listes):
+                out[i, :x.size] = x
+            return out
+
+        d_dir = os.path.join(exp_dir, "evolvability")
+        os.makedirs(d_dir, exist_ok=True)
+        np.savez_compressed(
+            os.path.join(d_dir, f"chunk_{self.chunk_idx}.npz"),
+            etiquettes=np.array(etiquettes),
+            parent_slot=np.array([s for s, _ in classes]),
+            parent_born=np.array([b for _, b in classes]),
+            **{f"enfants_{k}": _rect(enfants_m[k]) for k in EVO_METRIQUES},
+            **{f"parent_{k}":  np.array(parent_m[k]) for k in EVO_METRIQUES})
+
+        plot_evolvability(d_dir, self.chunk_idx)
         print(f"[evolvability] chunk {self.chunk_idx} : "
               f"{len(classes)} genomes x {n_enf} enfants en {time.time()-t0:.0f} s")
 
