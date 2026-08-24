@@ -297,6 +297,14 @@ CLI_PARAMS = [
     (("--view",),         "agent_view",                     int),
 ]
 
+# booleens : --dumb / --no-dumb, defaut pris sur le Config
+CLI_FLAGS = [
+    (("--dumb",),    "dumb_agent"),
+    (("--wall",),    "letal_wall"),
+    (("--logobs",),  "log_obs"),
+    (("--randpos",), "random_pos_offspring"),
+]
+
 
 ABLATIONS = {
     "m": "ablate_memory",
@@ -312,6 +320,9 @@ def parse_cli(cfg):
     for flags, champ, typ in CLI_PARAMS:
         p.add_argument(*flags, dest=champ, type=typ, default=getattr(cfg, champ),
                        metavar=typ.__name__.upper()[0], help=f"{champ} (defaut %(default)s)")
+    for flags, champ in CLI_FLAGS:
+        p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
+                       default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
     p.add_argument("-m", "--model", dest="model_version",
                    choices=sorted(MODEL_VERSIONS) + ["custom"],
                    default=cfg.model_version, help="version du reseau (defaut %(default)s)")
@@ -326,6 +337,7 @@ def parse_cli(cfg):
     args = p.parse_args()
 
     maj = {c: getattr(args, c) for _, c, _ in CLI_PARAMS}
+    maj.update({c: getattr(args, c) for _, c in CLI_FLAGS})
     maj["model_version"] = args.model_version
 
     lettres = args.ablate.lower()
