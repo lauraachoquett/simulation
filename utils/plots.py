@@ -1606,6 +1606,41 @@ def plot_lab_metrics(exp_dir, suffix=""):
     print(f"Figure saved: {out}")
  
  
+def _test_signes(v):
+    """k positifs sur m non nuls, et p bilateral exact (binomiale 1/2)."""
+    from math import comb
+    v = v[np.isfinite(v)]
+    nz = v[v != 0]
+    m = nz.size
+    if m == 0:
+        return 0, 0, float("nan")
+    k = int((nz > 0).sum())
+    d = abs(k - m / 2)
+    p = sum(comb(m, i) for i in range(m + 1) if abs(i - m / 2) >= d) / 2**m
+    return k, m, min(p, 1.0)
+
+
+def _nulle_somme(gain, n_perm=5000, seed=0):
+    """Test apparie par retournement de signes, sur la SOMME des ecarts.
+
+    Sous l'hypothese nulle, le signe de chaque ecart apparie est arbitraire.
+    Les amplitudes sont conservees, donc une dispersion qui grandit au fil du
+    run gonfle la nulle autant que l'observe.
+
+    La somme et non le max : le max ne repose que sur UN genome, et il suffit
+    qu'il garde son signe (une chance sur deux) pour que la nulle l'egale. Un
+    effet porte par plusieurs genomes n'y est jamais detectable.
+    """
+    g = gain[np.isfinite(gain)]
+    g = g[g != 0]
+    if g.size < 3:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    sommes = (g * rng.choice([-1.0, 1.0], size=(n_perm, g.size))).sum(axis=1)
+    obs = float(g.sum())
+    return obs, float((sommes >= obs).mean())
+
+
 def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
                           metric="age", bins=30):
     """Distribution, par genome, de (avec memoire - sans memoire).
@@ -1649,7 +1684,9 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
         ax.axvline(np.median(v), color="C3", lw=1.5, ls="--",
                    label=f"mediane {np.median(v):+.1f}")
         ax.legend(loc="best")
-    ax.set_title(f"chunk {chunks[-1]} — n={v.size}")
+    k, m, p = _test_signes(series[-1])
+    ax.set_title(f"chunk {chunks[-1]} — n={v.size}\n"
+                 f"signes : {k}/{m} positifs, p={p:.3f}")
     ax.set_xlabel(f"{metric} : avec memoire − sans")
     ax.set_ylabel("nb de genomes")
 
@@ -1670,13 +1707,22 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     p25 = np.array([np.nanpercentile(v, 25) if np.isfinite(v).any() else np.nan for v in series])
     p75 = np.array([np.nanpercentile(v, 75) if np.isfinite(v).any() else np.nan for v in series])
     mx  = np.array([np.nanmax(v) if np.isfinite(v).any() else np.nan for v in series])
+    pvals = []
+    for f in files:
+        d = np.load(f)
+        if cle in d.files:
+            pvals.append(_nulle_somme(np.asarray(d[cle], float))[1])
+        else:
+            pvals.append(float("nan"))
+
     ok = ~np.isnan(med)
     if ok.any():
         ax.fill_between(x[ok], p25[ok], p75[ok], alpha=.25, color="C0", label="p25-p75")
         ax.plot(x[ok], med[ok], marker="o", color="C0", label="mediane")
         ax.plot(x[ok], mx[ok], marker=".", ls=":", color="C3", label="max")
     ax.axhline(0, color="black", lw=1.5)
-    ax.set_title("evolution du gain")
+    dernier_p = pvals[-1] if pvals else float("nan")
+    ax.set_title(f"evolution du gain — p(somme) = {dernier_p:.3f} au dernier chunk")
     ax.set_xlabel("chunk")
     ax.legend(loc="best")
 
