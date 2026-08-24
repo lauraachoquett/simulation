@@ -183,16 +183,18 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
     cfg = cfg._replace(
         grid_length=30,
         n_agents_max=2,
-        reproduction_on=False,
-        resources_growth=True,
-        pre_growth_step=500,
+        reproduction_on=True,
+        resources_growth=False,
+        pre_growth_step=200,
         log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
     poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+
     cfg = cfg._replace(resources=tuple(
         r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
-)
+                  prob_factor=poison.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
@@ -204,8 +206,8 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     cfg = cfg._replace(
         grid_length=30,
         n_agents_max=5,
-        reproduction_on = False,
-        resources_growth=True,
+        reproduction_on = True,
+        resources_growth=False,
         pre_growth_step = 200,
         log_obs=True,          # idem
     )
@@ -213,7 +215,9 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]])
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+                  prob_factor=4*poison.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=4*poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)

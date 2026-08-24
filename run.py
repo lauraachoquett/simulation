@@ -240,7 +240,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 save_checkpoint(state, ckpt_path)
 
             # --- Vidéo (asynchrone) ---
-            if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk:
+            if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk or (phase in [1,2,3]) :
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
                 outputs_np = video_payload(outputs, stride=cfg.video_stride)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
@@ -281,8 +281,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 
 
-# (flags, champ de Config, type). Les defauts viennent du Config ci-dessous,
-# donc une seule source de verite et --help affiche les vraies valeurs.
 CLI_PARAMS = [
     (("-t", "--temp"),    "temperature",                    float),
     (("-d", "--decay"),   "energy_decay",                   float),
@@ -300,7 +298,6 @@ CLI_PARAMS = [
 ]
 
 
-# lettre -> champ d'ablation. ablate_memory coupe deja les trois autres.
 ABLATIONS = {
     "m": "ablate_memory",
     "r": "ablate_recurrence",
@@ -310,7 +307,6 @@ ABLATIONS = {
 
 
 def parse_cli(cfg):
-    """Surcharge cfg depuis la ligne de commande. Renvoie (cfg, args)."""
     p = argparse.ArgumentParser(
         description="Simulation eco-evo. Sans argument, les valeurs du Config de run.py.")
     for flags, champ, typ in CLI_PARAMS:
@@ -349,7 +345,6 @@ def parse_cli(cfg):
 
 
 if __name__ == '__main__':
-
     cfg = Config(
             grid_length=200,
 
@@ -394,11 +389,13 @@ if __name__ == '__main__':
             ablate_feedback = False ,
 
             lab_time_steps = 2000,
-
-            # "v1" = memoire jointe + 4/[8] (avant 591269d), "v2" = deux voies + 8/[32]
-            model_version = "v2",
+            
+            model_version = "v1", 
+              
         )
-
+    
+    
+    
     cfg, args = parse_cli(cfg)
 
     # Sanity check :

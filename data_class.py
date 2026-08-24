@@ -43,9 +43,9 @@ class ResourceConfig:
 
 
 BASE_RESOURCES = (
-    ResourceConfig(init_number_of_resources=30, prob_factor=0.03, pop_res_prob=5e-5, delta_energy=0.9,  id=0),
-    # ResourceConfig(init_number_of_resources=20, prob_factor=0.1,  pop_res_prob=5e-5, delta_energy=0.1,  id=1),
-    ResourceConfig(init_number_of_resources=15,   prob_factor=0.01, pop_res_prob=4e-5, delta_energy=-2.0, id=2),
+    ResourceConfig(init_number_of_resources=30, prob_factor= 0.0866, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
+    ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
+    ResourceConfig(init_number_of_resources=15,   prob_factor=0.0065, pop_res_prob=4e-5, delta_energy=-1.0, id=2),
 )
 
 
@@ -111,9 +111,9 @@ class Config(NamedTuple):
 
     crowd_start : int = 100_000
 
-    lab_after_shuffle : tuple = (5, 10, 20)
+    lab_after_shuffle : tuple = (1, 10)
 
-    crowd_limit : int = 5000
+    crowd_limit : int = 3000
     crowd_prob_factor : float = 0.0065
     crowd_pop_res_prob : float = 4e-5
     
@@ -123,7 +123,7 @@ class Config(NamedTuple):
     output_dim : int = 4              # nb d'actions -- doit suivre la table de
                                       # agent_mov.action_depl_theta, qui en compte 4
     hidden_layers : tuple = (32,)     # tete, en aval de [vision, feedback, memoire]
-    encoder_layers : tuple = ()       # ignore tant que encoder vaut False
+    encoder_layers : tuple = ()      
     encoder : bool = False
 
     memory_mode : str = "jointe"
