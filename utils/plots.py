@@ -1606,6 +1606,90 @@ def plot_lab_metrics(exp_dir, suffix=""):
     print(f"Figure saved: {out}")
  
  
+def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
+                          metric="age", bins=30):
+    """Distribution, par genome, de (avec memoire - sans memoire).
+
+    La mediane et l'IQR effacent les queues : un effet reel sur une poignee de
+    genomes y est invisible. L'histogramme le montre.
+    """
+    data_dir = os.path.join(exp_dir, "lab_data")
+    fig_dir  = os.path.join(exp_dir, "fig")
+    os.makedirs(fig_dir, exist_ok=True)
+
+    files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}_pergenome.npz")),
+                   key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
+    files = [f for f in files
+             if re.fullmatch(rf"chunk_\d+_{re.escape(tag)}_pergenome\.npz",
+                             os.path.basename(f))]
+    if not files:
+        print(f"No per-genome memory data to plot (tag={tag!r}).")
+        return
+
+    cle = f"gain_{metric}"
+    chunks, series = [], []
+    for f in files:
+        d = np.load(f)
+        if cle not in d.files:
+            continue
+        chunks.append(int(re.search(r"chunk_(\d+)", f).group(1)))
+        series.append(np.asarray(d[cle], dtype=float))
+    if not series:
+        print(f"No '{cle}' in per-genome files.")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4.5))
+
+    # 1) histogramme du dernier chunk
+    ax = axes[0]
+    v = series[-1][np.isfinite(series[-1])]
+    if v.size:
+        ax.hist(v, bins=bins, color="C0", alpha=.8)
+        ax.axvline(0, color="black", lw=1.5)
+        ax.axvline(np.median(v), color="C3", lw=1.5, ls="--",
+                   label=f"mediane {np.median(v):+.1f}")
+        ax.legend(loc="best")
+    ax.set_title(f"chunk {chunks[-1]} — n={v.size}")
+    ax.set_xlabel(f"{metric} : avec memoire − sans")
+    ax.set_ylabel("nb de genomes")
+
+    # 2) tous les chunks empiles : une queue rare ressort ici
+    ax = axes[1]
+    tout = np.concatenate([x[np.isfinite(x)] for x in series]) if series else np.array([])
+    if tout.size:
+        ax.hist(tout, bins=bins * 2, color="C4", alpha=.8)
+        ax.axvline(0, color="black", lw=1.5)
+        pos = float((tout > 0).mean())
+        ax.set_title(f"tous chunks — n={tout.size}, {100*pos:.0f}% > 0")
+    ax.set_xlabel(f"{metric} : avec memoire − sans")
+
+    # 3) evolution : mediane, IQR, et les extremes
+    ax = axes[2]
+    x   = np.array(chunks, dtype=float)
+    med = np.array([np.nanmedian(v) if np.isfinite(v).any() else np.nan for v in series])
+    p25 = np.array([np.nanpercentile(v, 25) if np.isfinite(v).any() else np.nan for v in series])
+    p75 = np.array([np.nanpercentile(v, 75) if np.isfinite(v).any() else np.nan for v in series])
+    mx  = np.array([np.nanmax(v) if np.isfinite(v).any() else np.nan for v in series])
+    ok = ~np.isnan(med)
+    if ok.any():
+        ax.fill_between(x[ok], p25[ok], p75[ok], alpha=.25, color="C0", label="p25-p75")
+        ax.plot(x[ok], med[ok], marker="o", color="C0", label="mediane")
+        ax.plot(x[ok], mx[ok], marker=".", ls=":", color="C3", label="max")
+    ax.axhline(0, color="black", lw=1.5)
+    ax.set_title("evolution du gain")
+    ax.set_xlabel("chunk")
+    ax.legend(loc="best")
+
+    for a in axes:
+        a.grid(alpha=.3)
+    fig.suptitle(f"Gain de la memoire, par genome — {metric} — {env_titre}", y=1.02)
+    fig.tight_layout()
+    out = os.path.join(fig_dir, f"lab_memory_gain_hist_{metric}{suffix}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_lab_exploration(exp_dir):
     """Évolution de l'EXPLORATION (env low_res) chunk après chunk.
     Deux panneaux :

@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax import random
 
 from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for
-from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
+from simulation.utils.plots import (plot_memory_gain_hist, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
                             plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
@@ -932,6 +932,7 @@ class LabMixin:
                    "adapt_gain": "net gain /hungry step"}
 
         table = {}
+        par_genome = {}
         for k in metrics:
             mask  = ~(np.isnan(f[k]) | np.isnan(a[k]))
             delta = a[k][mask] - f[k][mask]          # ablate - intact
@@ -940,6 +941,10 @@ class LabMixin:
             row.update(_dispersion(a[k][mask], "ablated",  empty=float("nan")))
             row.update(_dispersion(delta,      "delta",    empty=float("nan")))
             table[k] = row
+            # signe inverse du tableau : positif = la memoire AIDE
+            par_genome[f"gain_{k}"] = f[k][mask] - a[k][mask]
+            par_genome[f"memory_{k}"]  = f[k][mask]
+            par_genome[f"ablated_{k}"] = a[k][mask]
 
         print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE"
               f" | {env_titre} ---")
@@ -958,6 +963,11 @@ class LabMixin:
                                f"chunk_{self.chunk_idx}_{tag}.json"), "w") as fh:
             json.dump(payload, fh, indent=2)
 
+        # les deltas par genome, que la mediane et l'IQR effacent
+        np.savez_compressed(
+            os.path.join(data_dir, f"chunk_{self.chunk_idx}_{tag}_pergenome.npz"),
+            **par_genome)
+
         # Le bras "intact" ne l'est que si la sim elle-meme n'ablate rien. Quand
         # elle tourne deja avec un canal coupe, on trace quand meme -- la
         # comparaison reste appariee et informative -- mais l'etiquette doit le
@@ -975,6 +985,7 @@ class LabMixin:
             labels=(ref, "all channels ablated"),
             titre=f"Same genomes, with and without within-life memory — {env_titre}",
             fname=f"lab_memory_ablation_evolution{suffix}.png")
+        plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix, env_titre=env_titre)
         return table
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
