@@ -1773,6 +1773,128 @@ def plot_replay_top_gain(data_dir, chunk, suffix="", fig_dir=None):
     print(f"Figure saved: {out}")
 
 
+_SOMMETS = {"medium": (0.0, 0.0), "poison": (1.0, 0.0),
+            "good": (0.5, np.sqrt(3) / 2)}
+
+
+def _bary(p_good, p_medium, p_poison):
+    """Proportions -> coordonnees du triangle equilateral.
+
+    medium en (0,0), poison en (1,0), good en (0.5, sqrt(3)/2) : chaque
+    coordonnee est donc la moyenne des sommets ponderee par les proportions.
+    """
+    return p_poison + p_good / 2.0, (np.sqrt(3) / 2.0) * p_good
+
+
+def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
+                      suffix="", titre=""):
+    """Composition du regime de chaque agent, dans un simplex good/medium/poison.
+
+    `eaten` est indexe par CANAL ; `ids` donne l'identite de chaque canal. On
+    reordonne par identite, sinon les sommets seraient faux des qu'un shuffle a
+    eu lieu.
+    """
+    from simulation.data_class import LABELS, COLOR_BY_ID
+
+    eaten = np.asarray(eaten, dtype=float)
+    if eaten.shape[1] != 3:
+        print(f"Simplex : {eaten.shape[1]} ressources, il en faut 3.")
+        return
+
+    # canal -> identite, puis colonnes dans l'ordre good, medium, poison
+    par_id = {int(i): k for k, i in enumerate(ids)}
+    ordre = [par_id[LABELS.index(n)] for n in ("good", "medium", "poison")]
+    e = eaten[:, ordre]
+    dispo = np.asarray(disponible, dtype=float)[ordre]
+
+    total = e.sum(axis=1)
+    ok = total > 0                       # rien mange -> composition indefinie
+    p = e[ok] / total[ok, None]
+    n_exclus = int((~ok).sum())
+
+    fig, ax = plt.subplots(figsize=(7.5, 7))
+
+    # cadre
+    coins = np.array([_SOMMETS["medium"], _SOMMETS["poison"], _SOMMETS["good"],
+                      _SOMMETS["medium"]])
+    ax.plot(coins[:, 0], coins[:, 1], color="0.25", lw=1.4, zorder=2)
+
+    # grille interne : trois familles de paralleles aux cotes
+    for f in np.arange(0.2, 1.0, 0.2):
+        for a, b in (((f, 1 - f, 0), (f, 0, 1 - f)),      # good constant
+                     ((1 - f, f, 0), (0, f, 1 - f)),      # medium constant
+                     ((1 - f, 0, f), (0, 1 - f, f))):     # poison constant
+            x, y = zip(_bary(*a), _bary(*b))
+            ax.plot(x, y, color="0.85", lw=0.7, zorder=1)
+
+    # une composante par cote, sur le bord ou naissent ses iso-lignes, coloree
+    # comme son sommet : sinon deux series graduent la meme composante.
+    def _teinte(nom):
+        c = COLOR_BY_ID[LABELS.index(nom)]
+        return c[:7] if len(c) == 9 else c        # 8 chiffres hex = alpha, ignore
+
+    for f in np.arange(0.2, 1.0, 0.2):
+        xg, yg = _bary(f, 0, 1 - f)                        # good, cote droit
+        ax.text(xg + .028, yg + .008, f"{100*f:.0f}", ha="left", va="center",
+                fontsize=8, color=_teinte("good"))
+        xp, yp = _bary(0, 1 - f, f)                        # poison, cote bas
+        ax.text(xp, yp - .028, f"{100*f:.0f}", ha="center", va="top",
+                fontsize=8, color=_teinte("poison"))
+        xm, ym = _bary(1 - f, f, 0)                        # medium, cote gauche
+        ax.text(xm - .028, ym + .008, f"{100*f:.0f}", ha="right", va="center",
+                fontsize=8, color=_teinte("medium"))
+
+    # sommets
+    for nom, (dx, dy, ha, va) in (("good", (0, .040, "center", "bottom")),
+                                  ("medium", (-.045, -.030, "right", "top")),
+                                  ("poison", (.045, -.030, "left", "top"))):
+        x0, y0 = _SOMMETS[nom]
+        ax.text(x0 + dx, y0 + dy, nom, ha=ha, va=va, fontsize=13, weight="bold",
+                color=_teinte(nom))
+
+    # agents
+    if p.size:
+        x, y = _bary(p[:, 0], p[:, 1], p[:, 2])
+        c = np.asarray(age, dtype=float)[ok]
+        fini = np.isfinite(c)
+        sc = ax.scatter(x[fini], y[fini], c=c[fini], cmap="viridis", s=55,
+                        edgecolor="white", linewidth=.6, zorder=4)
+        cb = fig.colorbar(sc, ax=ax, shrink=.62, pad=.02)
+        cb.set_label("lifespan (steps)", fontsize=10)
+        if (~fini).any():
+            ax.scatter(x[~fini], y[~fini], c="0.7", s=55, edgecolor="white",
+                       linewidth=.6, zorder=3)
+
+    # composition OFFERTE : la preference se lit comme l'ecart a ce point
+    if dispo.sum() > 0:
+        d = dispo / dispo.sum()
+        xd, yd = _bary(*d)
+        ax.scatter([xd], [yd], marker="o", s=190, facecolor="none",
+                   edgecolor="black", linewidth=2.0, zorder=5,
+                   label="available on the grid")
+        ax.legend(loc="upper left", frameon=False, fontsize=9,
+                  bbox_to_anchor=(-.02, 1.0))
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+    marge = .09
+    ax.set_xlim(-marge, 1 + marge)
+    ax.set_ylim(-marge, np.sqrt(3) / 2 + marge)
+    sous = f"{int(ok.sum())} agents"
+    if n_exclus:
+        sous += f"  ({n_exclus} exclus : rien mange)"
+    ax.set_title(f"Diet composition — chunk {chunk}"
+                 + (f"  |  {titre}" if titre else "") + f"\n{sous}",
+                 fontsize=12)
+
+    fig_dir = os.path.join(exp_dir, "fig")
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"food_simplex_chunk_{chunk}{suffix}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
                  "greediness", "adapt_score", "adapt_gain"]
 EVO_TITRES = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",

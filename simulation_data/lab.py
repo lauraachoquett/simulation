@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax import random, vmap
 
 from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
-from simulation.utils.plots import (plot_memory_gain_hist, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
+from simulation.utils.plots import (plot_memory_gain_hist, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
                             plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
@@ -412,6 +412,16 @@ class LabMixin:
             n_types = len(self.cfg.resources)
             av_base = self.available_by_type(vid_high, n_types)
             baseline_available = {r.id: av_base[k] for k, r in enumerate(self.cfg.resources)}
+
+            # composition du regime, un point par agent. Le simplex n'a de sens
+            # qu'a trois ressources ; BASE_RESOURCES est deja passe a deux.
+            if n_types == 3:
+                plot_food_simplex(
+                    eaten_baseline, baseline_ids,
+                    self.data_lab_env_grouped(outputs_high)["age"],
+                    av_base, exp_dir, self.chunk_idx, titre="lab_1 — high_res")
+            else:
+                print(f"Simplex : {n_types} ressources, il en faut 3.")
 
             # Depuis quand l'agent vit-il avec la config qu'on s'apprete a casser ?
             # C'est ce qui dit s'il a eu le temps de l'apprendre.
