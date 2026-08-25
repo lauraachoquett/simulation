@@ -88,14 +88,17 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
         life_data = np.concatenate(self.life_history, axis=1)
+        # les 1500 premiers pas sont ecartes : apres une reprise il peut ne
+        # rester aucun point avant plusieurs chunks, il n'y a alors rien a tracer
         mov_full = np.concatenate(self.mov_history)[1500:]
-        mov_edges = block_edges(len(mov_full), self.start_step + 1500,
-                                cut_steps=[e["step"] for e in shuffle_log])
-        plot_mean_movement(
-            block_apply(mov_full, mov_edges, "mean"),
-            exp_dir, self.start_step,
-            steps=block_steps(mov_edges, self.start_step + 1500),
-        )
+        if mov_full.size:
+            mov_edges = block_edges(len(mov_full), self.start_step + 1500,
+                                    cut_steps=[e["step"] for e in shuffle_log])
+            plot_mean_movement(
+                block_apply(mov_full, mov_edges, "mean"),
+                exp_dir, self.start_step,
+                steps=block_steps(mov_edges, self.start_step + 1500),
+            )
         n_types = len(self.cfg.resources)
         grid_res = state.grid[:n_types, :, :]       
         plot_current_config(

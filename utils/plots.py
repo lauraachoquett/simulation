@@ -50,6 +50,8 @@ def block_apply(arr, edges, how="mean"):
     plat = a.ndim == 1
     if plat:
         a = a[:, None]
+    if len(edges) < 2:                      # serie vide -> aucun bloc
+        return np.array([]) if plat else np.empty((0, a.shape[1]))
     f = np.mean if how == "mean" else np.sum
     out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
     return out[:, 0] if plat else out
