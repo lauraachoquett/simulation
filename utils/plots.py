@@ -1543,7 +1543,7 @@ def plot_lab_metrics(exp_dir, suffix=""):
     S = [json.load(open(f)) for f in files]
     x = np.array([s["chunk"] for s in S])
  
-    fig, axes = plt.subplots(2, 4, figsize=(19, 7), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True)
  
     specs = [
         (axes[0, 0], "duree_vie",    "Lifespan",              "steps"),
@@ -1573,20 +1573,11 @@ def plot_lab_metrics(exp_dir, suffix=""):
     # Score d'adaptation : Δe moyen de ce qui est mange moins Δe moyen de ce qui
     # est vu. 0 = mange sans choisir, >0 = choisit mieux que l'offre. Absent des
     # runs anterieurs a son ajout -> case laissee vide.
-    ax = axes[1, 2]
-    if any(f"adapt_score_p50" in s for s in S):
-        _plot_band(ax, x, S, "adapt_score")
-        ax.axhline(0, color="black", lw=1)
-        ax.set_title("Adaptation  Δe eaten − Δe seen")
-        ax.set_ylabel("energy / item")
-        ax.grid(alpha=0.3)
-    else:
-        ax.axis("off")
 
     # Gain net par pas de faim : signe conserve, donc le poison coute. Mesure la
     # QUANTITE recoltee la ou elle sert, quand adapt_score compare des
     # compositions. Les deux sont traces cote a cote pour pouvoir diverger.
-    ax = axes[1, 3]
+    ax = axes[1, 2]
     if any("adapt_gain_p50" in s for s in S):
         _plot_band(ax, x, S, "adapt_gain")
         ax.axhline(0, color="black", lw=1)
@@ -1598,7 +1589,6 @@ def plot_lab_metrics(exp_dir, suffix=""):
 
     for ax in axes.ravel():
         ax.set_xlabel("chunk")
-    axes[0, 3].axis("off")          # case libre de la grille 2x4
     axes[0, 0].legend(loc="best")
  
     fig.tight_layout()
@@ -1788,7 +1778,6 @@ EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
 EVO_TITRES = {"age": "Lifespan (steps)", "mean_rew": "Consumption /step",
               "mean_speed": "Movement /step", "energy_end": "Final energy",
               "greediness": "Greediness  G = Cr/Tr",
-              "adapt_score": "Adaptation  Δe eaten − Δe seen",
               "adapt_gain": "Net gain / hungry step"}
 
 
@@ -1804,7 +1793,8 @@ def plot_evolvability(data_dir, chunk, fig_dir=None):
         return
     d = np.load(f, allow_pickle=True)
     etiq = [str(x) for x in d["etiquettes"]]
-    presentes = [k for k in EVO_METRIQUES if f"enfants_{k}" in d.files]
+    presentes = [k for k in EVO_METRIQUES
+                 if k in EVO_TITRES and f"enfants_{k}" in d.files]
     if not presentes:
         print("No metric in evolvability data.")
         return
@@ -1835,7 +1825,7 @@ def plot_evolvability(data_dir, chunk, fig_dir=None):
         ax.set_xticklabels(etiq, fontsize=9)
         ax.set_xlabel("parent")
         ax.grid(alpha=.3, axis="y")
-        if k in ("adapt_score", "adapt_gain"):
+        if k == "adapt_gain":
             ax.axhline(0, color="black", lw=1)
 
     for ax in axes[len(presentes):]:
@@ -1930,7 +1920,6 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
                "mean_speed": "Movement /step", "energy_end": "Final energy",
                "wall_death": "Fraction wall deaths",
                "greediness": "Greediness  G = Cr/Tr",
-               "adapt_score": "Adaptation  Δe eaten − Δe seen",
                "adapt_gain": "Net gain / hungry step"}
     # Union sur TOUS les chunks, pas seulement le premier : une metrique ajoutee
     # en cours de run n'existe que dans les fichiers recents, et se caler sur
@@ -1953,7 +1942,7 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
         ax.set_title(titles[k])
         ax.grid(alpha=0.3)
         ax.set_xlabel("chunk")
-        if k in ("adapt_score", "adapt_gain"):
+        if k == "adapt_gain":
             ax.axhline(0, color="black", lw=1)   # 0 = mange sans choisir
 
     for ax in axes[len(metrics):]:
