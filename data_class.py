@@ -140,6 +140,10 @@ class Config(NamedTuple):
     replay_top_n : int = 5
     replay_keys : int = 50
 
+    # "v1" : shuffle d'avant 9abdc3d/b0f455d -- permute BASE_RESOURCES avec la
+    # cle du chunk, identite exclue. Pour rejouer un run anterieur au 18 aout.
+    shuffle_version : str = "v2"
+
 
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),

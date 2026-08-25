@@ -310,6 +310,23 @@ def shuffle_resources(resources, key):
     return tuple(resources[int(i)] for i in perm)
 
 
+def shuffle_resources_v1(resources, key, max_essais=20):
+    """Version d'avant b0f455d : identite EXCLUE, et split de la cle DANS la
+    boucle. Conservee a l'identique pour rejouer les runs anterieurs -- les deux
+    details comptent, la nouvelle version ne tire pas la meme permutation a
+    partir de la meme cle.
+    """
+    n = len(resources)
+    ids = [r.id for r in resources]
+    for _ in range(max_essais):
+        key, sous = jax.random.split(key)
+        perm = np.asarray(jax.random.permutation(sous, n))
+        tire = tuple(resources[int(i)] for i in perm)
+        if n < 2 or [r.id for r in tire] != ids:
+            return tire
+    return tire
+
+
 def log_resource_shuffle(exp_dir, chunk_idx, step, old_resources, new_resources):
     record = {
         "chunk_idx": int(chunk_idx),

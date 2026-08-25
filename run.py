@@ -16,7 +16,7 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources
+from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
@@ -263,8 +263,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             ## SHUFFLE RESOURCES ##
             if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx >10 :
                 old_resources = cfg.resources
-                key, subkey_shuffle = random.split(key)
-                new_resources = shuffle_resources(old_resources, subkey_shuffle)
+                if cfg.shuffle_version == "v1":
+                    # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
+                    new_resources = shuffle_resources_v1(BASE_RESOURCES, subkey)
+                else:
+                    key, subkey_shuffle = random.split(key)
+                    new_resources = shuffle_resources(old_resources, subkey_shuffle)
 
                 print("----------------- Change config at step : ---------------", state.step)
                 for k, (old, new) in enumerate(zip(old_resources, new_resources)):
@@ -355,6 +359,9 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
+    p.add_argument("--shuffle", dest="shuffle_version", choices=["v1", "v2"],
+                   default=cfg.shuffle_version,
+                   help="version du shuffle (defaut %(default)s) ; v1 = avant le 18 aout")
     p.add_argument("-m", "--model", dest="model_version",
                    choices=sorted(MODEL_VERSIONS) + ["custom"],
                    default=cfg.model_version, help="version du reseau (defaut %(default)s)")
@@ -373,6 +380,7 @@ def parse_cli(cfg):
     maj = {c: getattr(args, c) for _, c, _ in CLI_PARAMS}
     maj.update({c: getattr(args, c) for _, c in CLI_FLAGS})
     maj["model_version"] = args.model_version
+    maj["shuffle_version"] = args.shuffle_version
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))
