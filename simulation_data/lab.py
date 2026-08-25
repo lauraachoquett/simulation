@@ -173,6 +173,18 @@ class LabMixin:
         enfants_m = {k: [] for k in EVO_METRIQUES}
         parent_m  = {k: [] for k in EVO_METRIQUES}
         etiquettes = []
+        n_types = len(self.cfg.resources)
+        ids_base = [r.id for r in self.cfg.resources]
+
+        # disponible sur la grille : un seul rollout journalise, la grille de
+        # depart ne depend que de key_env et de cfg, donc elle est la meme partout
+        dispo = None
+        if n_types == 3:
+            _, out_g = vmap_over_agents_env_lab_high_res(
+                state.agents.params[classes[0][0]][None], key_env,
+                random.split(subkey_sim, 1), model,
+                self.cfg._replace(log_grid=True))
+            dispo = self.available_by_type(out_g, n_types)
 
         for rang, (slot, born) in enumerate(classes, start=1):
             subkey_sim, k_mut, k_sim, k_par = random.split(subkey_sim, 4)
@@ -185,7 +197,7 @@ class LabMixin:
                 parent[None], key_env, random.split(k_par, 1), model, cfg_m)
             agg_p = self._agg_lab(out_p)
 
-            agg = None
+            agg, mange = None, []
             for deb in range(0, n_enf, EVO_BATCH):
                 tr = slice(deb, deb + EVO_BATCH)
                 _, out = vmap_over_agents_env_lab_high_res(
@@ -193,6 +205,18 @@ class LabMixin:
                 a = self._agg_lab(out)
                 agg = a if agg is None else {k: np.concatenate([agg[k], a[k]])
                                              for k in agg}
+                mange.append(self.eaten_by_type(out))
+
+            # un agent vivant par env, donc agg[k] suit l'ordre des env et
+            # s'aligne ligne a ligne avec eaten_by_type
+            if n_types == 3:
+                plot_food_simplex(
+                    np.concatenate(mange), ids_base, agg["age"], dispo,
+                    exp_dir, self.chunk_idx,
+                    suffix=f"_parent_{rang}",
+                    titre=f"offspring of parent {rang} (slot {slot})",
+                    fig_dir=os.path.join(exp_dir, "fig", "evolvability"),
+                    parent=self.eaten_by_type(out_p)[0])
 
             for k in EVO_METRIQUES:
                 enfants_m[k].append(np.asarray(agg[k], dtype=float))

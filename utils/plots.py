@@ -1844,7 +1844,7 @@ def _bary(p_good, p_medium, p_poison):
 
 
 def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
-                      suffix="", titre=""):
+                      suffix="", titre="", fig_dir=None, parent=None):
     """Composition du regime de chaque agent, dans un simplex good/medium/poison.
 
     `eaten` est indexe par CANAL ; `ids` donne l'identite de chaque canal. On
@@ -1862,7 +1862,8 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     par_id = {int(i): k for k, i in enumerate(ids)}
     ordre = [par_id[LABELS.index(n)] for n in ("good", "medium", "poison")]
     e = eaten[:, ordre]
-    dispo = np.asarray(disponible, dtype=float)[ordre]
+    dispo_ok = disponible is not None and np.asarray(disponible).size == 3
+    dispo = np.asarray(disponible, dtype=float)[ordre] if dispo_ok else None
 
     total = e.sum(axis=1)
     ok = total > 0                       # rien mange -> composition indefinie
@@ -1922,13 +1923,22 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
             ax.scatter(x[~fini], y[~fini], c="0.7", s=55, edgecolor="white",
                        linewidth=.6, zorder=3)
 
+    # le parent, quand on trace le nuage de ses enfants
+    if parent is not None:
+        pp = np.asarray(parent, dtype=float)[ordre]
+        if pp.sum() > 0:
+            xp, yp = _bary(*(pp / pp.sum()))
+            ax.scatter([xp], [yp], marker="*", s=340, color="#C1121F",
+                       edgecolor="white", linewidth=.8, zorder=6, label="parent")
+
     # composition OFFERTE : la preference se lit comme l'ecart a ce point
-    if dispo.sum() > 0:
+    if dispo_ok and dispo.sum() > 0:
         d = dispo / dispo.sum()
         xd, yd = _bary(*d)
         ax.scatter([xd], [yd], marker="o", s=190, facecolor="none",
                    edgecolor="black", linewidth=2.0, zorder=5,
                    label="available on the grid")
+    if ax.get_legend_handles_labels()[0]:
         ax.legend(loc="upper left", frameon=False, fontsize=9,
                   bbox_to_anchor=(-.02, 1.0))
 
@@ -1944,7 +1954,7 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                  + (f"  |  {titre}" if titre else "") + f"\n{sous}",
                  fontsize=12)
 
-    fig_dir = os.path.join(exp_dir, "fig")
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig")
     os.makedirs(fig_dir, exist_ok=True)
     out = os.path.join(fig_dir, f"food_simplex_chunk_{chunk}{suffix}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
