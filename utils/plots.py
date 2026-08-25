@@ -1775,6 +1775,61 @@ def plot_replay_top_gain(data_dir, chunk, suffix="", fig_dir=None):
     print(f"Figure saved: {out}")
 
 
+CORR_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
+                  "greediness", "adapt_gain"]
+CORR_TITRES = {"age": "lifespan", "mean_rew": "intake /step",
+               "mean_speed": "motion /step", "energy_end": "final energy",
+               "greediness": "greediness", "adapt_gain": "net gain /step"}
+
+
+def plot_metric_correlation(par_genome, exp_dir, chunk, suffix="", titre=""):
+    """Correlations de Spearman entre les metriques du lab, sur les agents.
+
+    Spearman et non Pearson : `age` sature au plafond du rollout et `adapt_gain`
+    a des queues lourdes, donc une correlation de rang est plus honnete qu'une
+    correlation lineaire.
+    """
+    cles = [k for k in CORR_METRIQUES if k in par_genome]
+    M = np.column_stack([np.asarray(par_genome[k], dtype=float) for k in cles])
+    ok = np.isfinite(M).all(axis=1)
+    M = M[ok]
+    n = M.shape[0]
+    if n < 5:
+        print(f"Correlations : seulement {n} agents complets, saute.")
+        return
+
+    # rangs -> Pearson sur les rangs = Spearman
+    R = np.apply_along_axis(lambda c: np.argsort(np.argsort(c)), 0, M).astype(float)
+    C = np.corrcoef(R, rowvar=False)
+
+    d = len(cles)
+    fig, ax = plt.subplots(figsize=(1.05 * d + 3.0, 1.05 * d + 2.2))
+    im = ax.imshow(C, cmap="RdBu_r", vmin=-1, vmax=1)
+    for i in range(d):
+        for j in range(d):
+            ax.text(j, i, f"{C[i, j]:.2f}", ha="center", va="center", fontsize=9,
+                    color="white" if abs(C[i, j]) > 0.55 else "0.15")
+    noms = [CORR_TITRES.get(k, k) for k in cles]
+    ax.set_xticks(range(d)); ax.set_xticklabels(noms, rotation=40, ha="right", fontsize=9)
+    ax.set_yticks(range(d)); ax.set_yticklabels(noms, fontsize=9)
+    ax.set_xticks(np.arange(-.5, d, 1), minor=True)
+    ax.set_yticks(np.arange(-.5, d, 1), minor=True)
+    ax.grid(which="minor", color="white", lw=1.5)
+    ax.tick_params(which="minor", length=0)
+    cb = fig.colorbar(im, ax=ax, shrink=.78, pad=.03)
+    cb.set_label("Spearman ρ", fontsize=10)
+    ax.set_title(f"Metric correlations — chunk {chunk}"
+                 + (f"  |  {titre}" if titre else "") + f"\n{n} agents",
+                 fontsize=11)
+    fig.tight_layout()
+    fig_dir = os.path.join(exp_dir, "fig")
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"metric_correlation_chunk_{chunk}{suffix}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 _SOMMETS = {"medium": (0.0, 0.0), "poison": (1.0, 0.0),
             "good": (0.5, np.sqrt(3) / 2)}
 

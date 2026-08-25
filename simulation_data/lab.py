@@ -24,7 +24,7 @@ import jax.numpy as jnp
 from jax import random, vmap
 
 from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
-from simulation.utils.plots import (plot_memory_gain_hist, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
+from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_correlation, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
 # plot_prob_eat_ratio : desactive, voir les appels commentes plus bas
@@ -414,13 +414,16 @@ class LabMixin:
 
             # composition du regime, un point par agent. Le simplex n'a de sens
             # qu'a trois ressources ; BASE_RESOURCES est deja passe a deux.
+            par_genome = self.data_lab_env_grouped(outputs_high)
             if n_types == 3:
                 plot_food_simplex(
-                    eaten_baseline, baseline_ids,
-                    self.data_lab_env_grouped(outputs_high)["age"],
+                    eaten_baseline, baseline_ids, par_genome["age"],
                     av_base, exp_dir, self.chunk_idx, titre="lab_1 — high_res")
             else:
                 print(f"Simplex : {n_types} ressources, il en faut 3.")
+
+            plot_metric_correlation(par_genome, exp_dir, self.chunk_idx,
+                                    titre="lab_1 — high_res")
 
             # Depuis quand l'agent vit-il avec la config qu'on s'apprete a casser ?
             # C'est ce qui dit s'il a eu le temps de l'apprendre.
