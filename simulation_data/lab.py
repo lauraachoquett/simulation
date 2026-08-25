@@ -26,8 +26,7 @@ from jax import random, vmap
 from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
-                            plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
-                            plot_prob_eat_over_life_by_type, plot_prob_eat_excess)
+                            plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
 # plot_prob_eat_ratio : desactive, voir les appels commentes plus bas
 from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
 from simulation.simulation_data.energy_response import (default_energy_bins,
@@ -429,8 +428,6 @@ class LabMixin:
                                                       int(state.step))
 
             # Reference : la meme propension dans l'env NON permute, memes genomes.
-            _, life_bn, life_bk = self.prob_eat_over_life(outputs_high, self.cfg.resources)
-            life_baseline = (life_bn, life_bk)
 
             # Idem pour CHAQUE identite. Calcule une seule fois : la baseline ne
             # depend pas de la rotation, la recalculer par rotation serait deux
@@ -440,15 +437,6 @@ class LabMixin:
                 _, bn_i, bk_i = self.prob_eat_over_life(
                     outputs_high, self.cfg.resources, label=LABELS[r.id])
                 base_par_type[r.id] = (bn_i, bk_i)
-
-            # La meme chose sous ablation, pour que l'exces ablate se calcule
-            # entierement dans la condition ablatee.
-            base_par_type_abl = {}
-            if outputs_high_abl is not None:
-                for r in self.cfg.resources:
-                    _, bn_i, bk_i = self.prob_eat_over_life(
-                        outputs_high_abl, self.cfg.resources, label=LABELS[r.id])
-                    base_par_type_abl[r.id] = (bn_i, bk_i)
 
             for j, rot in enumerate(rotations_for(self.cfg.resources)):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
@@ -509,16 +497,6 @@ class LabMixin:
                     baseline_available = baseline_available,
                 )
 
-                # L'agent apprend-il a eviter le poison au fil de sa vie ?
-                # Chaque agent est compare a LUI-MEME (cf. prob_eat_over_life).
-                life, life_n, life_k = self.prob_eat_over_life(out_rot, resources_rot)
-                if life.size:
-                    plot_prob_eat_over_life(
-                        life, life_n, life_k, _wilson, exp_dir,
-                        chunk=self.chunk_idx, tag=name,
-                        mapping=caption, baseline=life_baseline,
-                    )
-
                 # Les TROIS identites sur les memes tranches. Repond a la fois a
                 # "la ressource qui prend la place du poison est-elle plus
                 # consommee ?" et a "la baisse du poison est-elle de la
@@ -534,10 +512,6 @@ class LabMixin:
                 )
                 # Le meme contenu, mais l'ecart au non-permute trace directement :
                 # la baisse d'appetit liee a l'age s'annule dans la soustraction.
-                plot_prob_eat_excess(
-                    par_type, base_par_type, exp_dir,
-                    chunk=self.chunk_idx, tag=name, mapping=caption,
-                )
                 # DESACTIVE -- figure jugee peu informative en pratique. Le
                 # rapport reste immune a un effet d'echelle multiplicatif la ou
                 # l'exces ne l'est pas ; plot_prob_eat_ratio est conserve dans
@@ -546,30 +520,6 @@ class LabMixin:
                 #     par_type, base_par_type, exp_dir,
                 #     chunk=self.chunk_idx, tag=name, mapping=caption,
                 # )
-
-                # LE CONTROLE : le meme exces, entierement recalcule dans la
-                # condition ablatee (permute ET baseline sans memoire). A lire
-                # cote a cote avec la figure ci-dessus : sans memoire la politique
-                # est une fonction de `obs` seule, donc l'exces ne devrait pas
-                # bouger le long de la vie. S'il bouge quand meme, c'est
-                # l'environnement qui derive, pas l'agent qui apprend.
-                if outputs_adapt_abl is not None and base_par_type_abl:
-                    par_type_abl = {}
-                    for r in resources_rot:
-                        _, n_i, k_i = self.prob_eat_over_life(
-                            out_abl, resources_rot, label=LABELS[r.id])
-                        par_type_abl[r.id] = (n_i, k_i)
-                    plot_prob_eat_excess(
-                        par_type_abl, base_par_type_abl, exp_dir,
-                        chunk=self.chunk_idx, tag=name, mapping=caption,
-                        suffix='_no_memory', titre=' (memory ablated)',
-                    )
-                    # DESACTIVE avec la version a memoire intacte, cf. plus haut.
-                    # plot_prob_eat_ratio(
-                    #     par_type_abl, base_par_type_abl, exp_dir,
-                    #     chunk=self.chunk_idx, tag=name, mapping=caption,
-                    #     suffix='_no_memory', titre=' (memory ablated)',
-                    # )
 
                 for b in range(min(2, N_FILM)):
                     vid = os.path.join(exp_dir, "videos", "adapt", name,
