@@ -113,10 +113,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     if resume_exp is not None and os.path.exists(resume_exp):
         print(f"Reprise depuis {resume_exp} au chunk {chunk_id}")
         state = load_checkpoint(resume_exp, chunk_id)
-        cfg, subkeys = load_config(resume_exp)
+        # cfg et graines viennent de parse_cli, qui a deja lu ce dossier : les
+        # recharger ici ecraserait les flags passes en ligne de commande.
+        subkeys = list(subkeys_init) if subkeys_init is not None else []
         if len(subkeys) < num_chunks_exp:
-            new_keys = random.split(key, num_chunks_exp - len(subkeys))
-            subkeys.extend(new_keys)
+            key, k_sup = random.split(key)
+            subkeys.extend(random.split(k_sup, num_chunks_exp - len(subkeys)))
 
         start_chunk = chunk_id
         # La forme du reseau vient du cfg RECHARGE, pas de celui passe en argument :
@@ -310,6 +312,7 @@ CLI_PARAMS = [
     (("--mvar",),         "mutation_var",                   float),
     (("--pregrow",),      "pre_growth_step",                int),
     (("--lab",),          "lab_time_steps",                 int),
+    (("--video-freq",),   "video_freq",                     int),
     (("--crowd-start",),  "crowd_start",                    int),
     (("--crowd-limit",),  "crowd_limit",                    int),
     (("--view",),         "agent_view",                     int),
@@ -343,12 +346,15 @@ def parse_cli(cfg):
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--from", dest="config_exp", default=None, metavar="DIR",
                      help="reprendre la config ET les graines d'un run, mais repartir de zero")
+    pre.add_argument("-r", "--resume", default=None, metavar="DIR",
+                     help="dossier d'experience a reprendre (avec --chunk-id)")
     connus, _ = pre.parse_known_args()
     subkeys = None
-    if connus.config_exp:
-        cfg, subkeys = load_config(connus.config_exp)
+    source = connus.config_exp or connus.resume
+    if source:
+        cfg, subkeys = load_config(source)
         cfg = resolve_model(cfg)
-        print(f"[cli] config et graines reprises de {connus.config_exp}")
+        print(f"[cli] config et graines reprises de {source}")
 
     p = argparse.ArgumentParser(
         parents=[pre],
@@ -369,7 +375,6 @@ def parse_cli(cfg):
                    help="graine (defaut 105). Avec --from, la passer ignore les "
                         "graines chargees et en regenere de neuves")
     p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
-    p.add_argument("-r", "--resume",  default=None, metavar="DIR", help="dossier d'experience a reprendre")
     p.add_argument("--chunk-id",      type=int, default=1,    help="chunk de reprise (defaut %(default)s)")
     p.add_argument("-x", "--ablate", default="", metavar="LETTRES",
                    help="ablations, lettres cumulables : "

@@ -253,13 +253,10 @@ class LabMixin:
         d_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(d_dir, exist_ok=True)
         gains_rejoues = np.stack(gains_rejoues)
-        # les POIDS, pas seulement l'indice : un indice de slot ne veut plus rien
-        # dire des que la simulation avance, le genome serait irrecuperable.
         np.savez_compressed(
             os.path.join(d_dir, f"chunk_{self.chunk_idx}_replay.npz"),
             gains=gains_rejoues, observe=np.array(observes),
-            genome=np.array(ordre),
-            params=np.asarray(agent_params[np.array(ordre)]))
+            genome=np.array(ordre))
 
         # video du genome le plus tranche, a une graine representative
         if submit_video is not None:
