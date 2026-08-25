@@ -1059,8 +1059,11 @@ class LabMixin:
         f = self.data_lab_env_grouped(outputs_full, resources)
         a = self.data_lab_env_grouped(outputs_abl, resources)
 
-        metrics = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
+        # sans mur letal, wall_death vaut 0 partout : panneau vide et trompeur
+        metrics = ["age", "mean_rew", "mean_speed", "energy_end",
                    "greediness", "adapt_score", "adapt_gain"]
+        if self.cfg.letal_wall:
+            metrics.insert(4, "wall_death")
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
                    "mean_speed": "movement /step", "energy_end": "final energy",
                    "wall_death": "fraction wall deaths",

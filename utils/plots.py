@@ -1562,7 +1562,9 @@ def plot_lab_metrics(exp_dir, suffix=""):
     ax = axes[1, 1]
     mur  = np.array([s["frac_mort_mur"]  for s in S])
     faim = np.array([s["frac_mort_faim"] for s in S])
-    ax.plot(x, mur,  marker="o", color="C3", label="wall deaths")
+    # deduit des donnees et non de cfg : marche aussi sur les runs deja faits
+    if np.any(mur > 0):
+        ax.plot(x, mur, marker="o", color="C3", label="wall deaths")
     ax.plot(x, faim, marker="s", color="C1", label="starvation deaths")
     ax.set_title("Cause of death (fraction of tested agents)")
     ax.set_ylabel("fraction")
