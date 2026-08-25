@@ -258,24 +258,31 @@ class LabMixin:
             gains=gains_rejoues, observe=np.array(observes),
             genome=np.array(ordre))
 
-        # video du genome le plus tranche, a une graine representative
+        # on ne filme que les genomes dont l'effet est net : en dessous du seuil
+        # les deux bras ne different que par du bruit, il n'y a rien a voir.
+        frac = np.array([(x > 0).mean() for x in gains_rejoues])
+        seuil = self.cfg.replay_video_min_frac
         if submit_video is not None:
-            frac = [(x > 0).mean() for x in gains_rejoues]
-            j = int(np.argmax(np.abs(np.array(frac) - 0.5)))
-            gj = gains_rejoues[j]
-            i_cle = int(np.argmin(np.abs(gj - np.median(gj))))
-            cfg_v = cfg_f._replace(log_grid=True)
-            un = jnp.broadcast_to(agent_params[ordre[j]], (1, agent_params.shape[1]))
-            cle = cles_par_genome[j][i_cle:i_cle + 1]
-            for nom, c in (("memory", cfg_v), ("ablated", cfg_v._replace(ablate_recurrence=True))):
-                _, out = vmap_over_agents_env_lab_high_res(un, key_env, cle, model, c)
-                chemin = os.path.join(exp_dir, "videos", "replay",
-                                      f"genome_{ordre[j]}_chunk_{self.chunk_idx}_{nom}.mp4")
-                submit_video(outputs_to_numpy(jax.tree_util.tree_map(lambda x: x[0], out)),
-                             chemin, 20, 10, self.cfg.resources,
-                             label=f"replay_{ordre[j]}_{nom}")
-            print(f"[replay] video du genome {ordre[j]} "
-                  f"({100*frac[j]:.0f}% > 0, graine {i_cle})")
+            for j in np.where(frac > seuil)[0]:
+                gj = gains_rejoues[j]
+                # graine mediane : un comportement representatif, pas l'extreme
+                i_cle = int(np.argmin(np.abs(gj - np.median(gj))))
+                cfg_v = cfg_f._replace(log_grid=True)
+                un = jnp.broadcast_to(agent_params[ordre[j]], (1, agent_params.shape[1]))
+                cle = cles_par_genome[j][i_cle:i_cle + 1]
+                for nom, c in (("memory", cfg_v),
+                               ("ablated", cfg_v._replace(ablate_recurrence=True))):
+                    _, out = vmap_over_agents_env_lab_high_res(un, key_env, cle, model, c)
+                    chemin = os.path.join(exp_dir, "videos", "replay",
+                                          f"genome_{ordre[j]}_chunk_{self.chunk_idx}_{nom}.mp4")
+                    submit_video(outputs_to_numpy(jax.tree_util.tree_map(lambda x: x[0], out)),
+                                 chemin, 20, 10, self.cfg.resources,
+                                 label=f"replay_{ordre[j]}_{nom}")
+                print(f"[replay] video du genome {ordre[j]} : "
+                      f"{100*frac[j]:.0f}% > 0, graine {i_cle}")
+            if not (frac > seuil).any():
+                print(f"[replay] aucun genome au-dessus de {100*seuil:.0f}% > 0, "
+                      f"pas de video (max {100*frac.max():.0f}%)")
         plot_replay_top_gain(d_dir, self.chunk_idx,
                              fig_dir=os.path.join(exp_dir, "fig"))
         print(f"[replay] chunk {self.chunk_idx} : {len(ordre)} genomes x {n_cles} "

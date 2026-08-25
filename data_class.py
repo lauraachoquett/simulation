@@ -144,6 +144,10 @@ class Config(NamedTuple):
     # cle du chunk, identite exclue. Pour rejouer un run anterieur au 18 aout.
     shuffle_version : str = "v2"
 
+    # fraction de graines positives au-dela de laquelle un genome rejoue est
+    # filme, intact et ablate. 1.0 desactive les videos de rejeu.
+    replay_video_min_frac : float = 0.8
+
 
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),

@@ -321,6 +321,7 @@ CLI_PARAMS = [
     (("--evo-children",), "evolvability_children",          int),
     (("--replay-n",),     "replay_top_n",                   int),
     (("--replay-keys",),  "replay_keys",                    int),
+    (("--replay-video-frac",), "replay_video_min_frac",     float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
