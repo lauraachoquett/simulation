@@ -213,7 +213,8 @@ class LabMixin:
         print(f"[evolvability] chunk {self.chunk_idx} : "
               f"{len(classes)} genomes x {n_enf} enfants en {time.time()-t0:.0f} s")
 
-    def replay_top_gain(self, agent_params, gains, key_env, subkey_sim, model, exp_dir):
+    def replay_top_gain(self, agent_params, gains, key_env, subkey_sim, model,
+                        exp_dir, submit_video=None):
         """Rejoue les genomes au plus fort gain avec replay_keys graines.
 
         Un gros ecart sur UN rollout peut venir d'une seule action qui bascule :
@@ -233,7 +234,7 @@ class LabMixin:
         cfg_a  = cfg_f._replace(ablate_recurrence=True)
         t0 = time.time()
 
-        gains_rejoues, observes = [], []
+        gains_rejoues, observes, cles_par_genome = [], [], []
         for b in ordre:
             subkey_sim, k = random.split(subkey_sim)
             cles   = random.split(k, n_cles)
@@ -247,13 +248,37 @@ class LabMixin:
                 ga.append(self.data_lab_env_grouped(oa)["age"])
             gains_rejoues.append(np.concatenate(gf) - np.concatenate(ga))
             observes.append(float(g[b]))
+            cles_par_genome.append(cles)
 
         d_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(d_dir, exist_ok=True)
+        gains_rejoues = np.stack(gains_rejoues)
+        # les POIDS, pas seulement l'indice : un indice de slot ne veut plus rien
+        # dire des que la simulation avance, le genome serait irrecuperable.
         np.savez_compressed(
             os.path.join(d_dir, f"chunk_{self.chunk_idx}_replay.npz"),
-            gains=np.stack(gains_rejoues), observe=np.array(observes),
-            genome=np.array(ordre))
+            gains=gains_rejoues, observe=np.array(observes),
+            genome=np.array(ordre),
+            params=np.asarray(agent_params[np.array(ordre)]))
+
+        # video du genome le plus tranche, a une graine representative
+        if submit_video is not None:
+            frac = [(x > 0).mean() for x in gains_rejoues]
+            j = int(np.argmax(np.abs(np.array(frac) - 0.5)))
+            gj = gains_rejoues[j]
+            i_cle = int(np.argmin(np.abs(gj - np.median(gj))))
+            cfg_v = cfg_f._replace(log_grid=True)
+            un = jnp.broadcast_to(agent_params[ordre[j]], (1, agent_params.shape[1]))
+            cle = cles_par_genome[j][i_cle:i_cle + 1]
+            for nom, c in (("memory", cfg_v), ("ablated", cfg_v._replace(ablate_recurrence=True))):
+                _, out = vmap_over_agents_env_lab_high_res(un, key_env, cle, model, c)
+                chemin = os.path.join(exp_dir, "videos", "replay",
+                                      f"genome_{ordre[j]}_chunk_{self.chunk_idx}_{nom}.mp4")
+                submit_video(outputs_to_numpy(jax.tree_util.tree_map(lambda x: x[0], out)),
+                             chemin, 20, 10, self.cfg.resources,
+                             label=f"replay_{ordre[j]}_{nom}")
+            print(f"[replay] video du genome {ordre[j]} "
+                  f"({100*frac[j]:.0f}% > 0, graine {i_cle})")
         plot_replay_top_gain(d_dir, self.chunk_idx,
                              fig_dir=os.path.join(exp_dir, "fig"))
         print(f"[replay] chunk {self.chunk_idx} : {len(ordre)} genomes x {n_cles} "
@@ -357,7 +382,7 @@ class LabMixin:
                 if self.cfg.replay_top_n > 0:
                     subkey_sim, k_rej = random.split(subkey_sim)
                     self.replay_top_gain(agent_params, gain_brut, key_env, k_rej,
-                                         model, exp_dir)
+                                         model, exp_dir, submit_video=submit_video)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
