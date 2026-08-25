@@ -92,7 +92,7 @@ def build_model(cfg):
     )
 
 
-def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir=''):
+def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', config_exp=None):
     
     start_time_sim = time.time()
 
@@ -140,8 +140,18 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 f"Config rechargee depuis {resume_exp}/config.json ; si elle est "
                 f"anterieure a 591269d, y ajouter la cle memory_mode a la main.")
     else:
+        if config_exp is not None and os.path.exists(config_exp):
+            # config ET graines d'un ancien run, mais depart de zero
+            print(f"Config et graines reprises de {config_exp}")
+            cfg, subkeys = load_config(config_exp)
+            cfg = resolve_model(cfg)
+            num_chunks_exp = cfg.num_chunks + chunk_id
+            if len(subkeys) < num_chunks_exp:
+                key, k_sup = random.split(key)
+                subkeys.extend(random.split(k_sup, num_chunks_exp - len(subkeys)))
+        else:
+            key, *subkeys = random.split(key, num_chunks_exp + 1)
         model = build_model(cfg)
-        key, *subkeys = random.split(key, num_chunks_exp + 1)
         key, subkey_state = jax.random.split(key)
         state = init_state(subkey_state, cfg, model)
         start_chunk = 1
@@ -341,6 +351,8 @@ def parse_cli(cfg):
     p.add_argument("-s", "--seed",    type=int, default=105,  help="graine (defaut %(default)s)")
     p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
     p.add_argument("-r", "--resume",  default=None, metavar="DIR", help="dossier d'experience a reprendre")
+    p.add_argument("--from", dest="config_exp", default=None, metavar="DIR",
+                   help="reprendre la config ET les graines d'un run, mais repartir de zero")
     p.add_argument("--chunk-id",      type=int, default=1,    help="chunk de reprise (defaut %(default)s)")
     p.add_argument("-x", "--ablate", default="", metavar="LETTRES",
                    help="ablations, lettres cumulables : "
@@ -432,4 +444,4 @@ if __name__ == '__main__':
 
     state_final, output, exp_dir,_,_ = launch_simulation_chunked(
         key, cfg, resume_exp=args.resume, n_video_workers=args.workers,
-        chunk_id=args.chunk_id)
+        chunk_id=args.chunk_id, config_exp=args.config_exp)

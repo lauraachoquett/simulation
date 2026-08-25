@@ -11,7 +11,7 @@ from typing import NamedTuple
 from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
-from simulation.data_class import Config
+from simulation.data_class import Config, MODEL_VERSIONS
 
 import numpy as np
 from simulation.utils.utils_video import save_chunk_video
@@ -238,9 +238,19 @@ def load_config(resume_exp):
     # non hachable et jax.jit(static_argnames=['cfg']) leve a la premiere trace.
     # Les configs anterieures a l'ajout de ces champs n'ont pas les cles : les
     # defauts de Config prennent le relais, et ils valent l'ancien code en dur.
-    for champ in ("hidden_layers", "encoder_layers"):
-        if champ in cfg_dict:
+    # JSON ne connait que les listes. Tout champ dont le defaut est un tuple doit
+    # etre reconverti, sinon Config n'est plus hachable et jax.jit leve. On le
+    # deduit des defauts plutot que d'en tenir une liste, qui se perimerait.
+    for champ, defaut in Config._field_defaults.items():
+        if isinstance(defaut, tuple) and isinstance(cfg_dict.get(champ), list):
             cfg_dict[champ] = tuple(cfg_dict[champ])
+    # Un config.json sans memory_mode precede l'ajout de ces champs, donc aussi
+    # 591269d : il ne peut venir que du reseau v1. On l'epingle plutot que de
+    # laisser le defaut courant de Config decider a sa place.
+    if "memory_mode" not in cfg_dict:
+        cfg_dict.update(MODEL_VERSIONS["v1"], model_version="v1")
+        print("[load_config] config anterieure aux champs reseau -> v1 "
+              "(jointe, hidden_dim=4, hidden_layers=(8,)). Surcharger avec -m.")
     return Config(**cfg_dict), seeds_full
 
 def print_params(params, prefix="", total=0):
