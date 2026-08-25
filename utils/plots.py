@@ -1782,12 +1782,13 @@ CORR_TITRES = {"age": "lifespan", "mean_rew": "intake /step",
                "greediness": "greediness", "adapt_gain": "net gain /step"}
 
 
-def plot_metric_correlation(par_genome, exp_dir, chunk, suffix="", titre=""):
-    """Correlations de Spearman entre les metriques du lab, sur les agents.
+def plot_metric_pairs(par_genome, exp_dir, chunk, suffix="", titre=""):
+    """Chaque metrique du lab en fonction de chaque autre, sur les agents.
 
+    Triangle bas : les nuages. Diagonale : la distribution marginale. Triangle
+    haut : le rho de Spearman, qui resume ce que le nuage symetrique montrerait.
     Spearman et non Pearson : `age` sature au plafond du rollout et `adapt_gain`
-    a des queues lourdes, donc une correlation de rang est plus honnete qu'une
-    correlation lineaire.
+    a des queues lourdes.
     """
     cles = [k for k in CORR_METRIQUES if k in par_genome]
     M = np.column_stack([np.asarray(par_genome[k], dtype=float) for k in cles])
@@ -1795,37 +1796,53 @@ def plot_metric_correlation(par_genome, exp_dir, chunk, suffix="", titre=""):
     M = M[ok]
     n = M.shape[0]
     if n < 5:
-        print(f"Correlations : seulement {n} agents complets, saute.")
+        print(f"Pair plot : seulement {n} agents complets, saute.")
         return
 
-    # rangs -> Pearson sur les rangs = Spearman
     R = np.apply_along_axis(lambda c: np.argsort(np.argsort(c)), 0, M).astype(float)
     C = np.corrcoef(R, rowvar=False)
-
     d = len(cles)
-    fig, ax = plt.subplots(figsize=(1.05 * d + 3.0, 1.05 * d + 2.2))
-    im = ax.imshow(C, cmap="RdBu_r", vmin=-1, vmax=1)
+    noms = [CORR_TITRES.get(k, k) for k in cles]
+
+    fig, axes = plt.subplots(d, d, figsize=(2.25 * d, 2.25 * d),
+                             squeeze=False)
+    cmap = plt.get_cmap("RdBu_r")
     for i in range(d):
         for j in range(d):
-            ax.text(j, i, f"{C[i, j]:.2f}", ha="center", va="center", fontsize=9,
-                    color="white" if abs(C[i, j]) > 0.55 else "0.15")
-    noms = [CORR_TITRES.get(k, k) for k in cles]
-    ax.set_xticks(range(d)); ax.set_xticklabels(noms, rotation=40, ha="right", fontsize=9)
-    ax.set_yticks(range(d)); ax.set_yticklabels(noms, fontsize=9)
-    ax.set_xticks(np.arange(-.5, d, 1), minor=True)
-    ax.set_yticks(np.arange(-.5, d, 1), minor=True)
-    ax.grid(which="minor", color="white", lw=1.5)
-    ax.tick_params(which="minor", length=0)
-    cb = fig.colorbar(im, ax=ax, shrink=.78, pad=.03)
-    cb.set_label("Spearman ρ", fontsize=10)
-    ax.set_title(f"Metric correlations — chunk {chunk}"
-                 + (f"  |  {titre}" if titre else "") + f"\n{n} agents",
-                 fontsize=11)
+            ax = axes[i][j]
+            if i == j:
+                ax.hist(M[:, i], bins=18, color="0.6", edgecolor="white",
+                        linewidth=.5)
+                ax.set_yticks([])
+            elif i > j:
+                ax.scatter(M[:, j], M[:, i], s=16, alpha=.7, color="C0",
+                           edgecolor="none")
+            else:
+                r = C[i, j]
+                ax.set_facecolor(cmap((r + 1) / 2))
+                ax.text(.5, .5, f"{r:+.2f}", ha="center", va="center",
+                        fontsize=13, transform=ax.transAxes,
+                        color="white" if abs(r) > .55 else "0.15")
+                ax.set_xticks([]); ax.set_yticks([])
+            ax.tick_params(labelsize=7)
+            if i != d - 1 or i == j:
+                ax.set_xticklabels([])
+            if j != 0 or i == j:
+                ax.set_yticklabels([])
+            if i == d - 1:
+                ax.set_xlabel(noms[j], fontsize=9)
+            if j == 0:
+                ax.set_ylabel(noms[i], fontsize=9)
+            ax.grid(alpha=.2)
+
+    fig.suptitle(f"Lab metrics, pairwise — chunk {chunk}"
+                 + (f"  |  {titre}" if titre else "") + f"    ({n} agents)",
+                 fontsize=13, y=.995)
     fig.tight_layout()
-    fig_dir = os.path.join(exp_dir, "fig")
+    fig_dir = os.path.join(exp_dir, "fig", "correlations")
     os.makedirs(fig_dir, exist_ok=True)
-    out = os.path.join(fig_dir, f"metric_correlation_chunk_{chunk}{suffix}.png")
-    fig.savefig(out, dpi=150, bbox_inches="tight")
+    out = os.path.join(fig_dir, f"metric_pairs_chunk_{chunk}{suffix}.png")
+    fig.savefig(out, dpi=140, bbox_inches="tight")
     plt.close(fig)
     print(f"Figure saved: {out}")
 
@@ -1954,7 +1971,7 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                  + (f"  |  {titre}" if titre else "") + f"\n{sous}",
                  fontsize=12)
 
-    fig_dir = fig_dir or os.path.join(exp_dir, "fig")
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig", "simplex")
     os.makedirs(fig_dir, exist_ok=True)
     out = os.path.join(fig_dir, f"food_simplex_chunk_{chunk}{suffix}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
