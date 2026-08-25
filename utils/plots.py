@@ -1728,14 +1728,14 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     print(f"Figure saved: {out}")
 
 
-def plot_replay_top_gain(data_dir, chunk, fig_dir=None):
+def plot_replay_top_gain(data_dir, chunk, suffix="", fig_dir=None):
     """Les genomes au plus fort gain, rejoues sur beaucoup de graines.
 
     Boite centree sur du positif = la memoire aide vraiment ce genome.
     Boite centree sur zero = l'ecart initial venait d'une seule action qui a
     bascule, pas d'un apprentissage.
     """
-    f = os.path.join(data_dir, f"chunk_{chunk}_replay.npz")
+    f = os.path.join(data_dir, f"chunk_{chunk}_replay{suffix}.npz")
     if not os.path.exists(f):
         print(f"No replay data at {f}")
         return
@@ -1761,13 +1761,13 @@ def plot_replay_top_gain(data_dir, chunk, fig_dir=None):
     ax.set_xticklabels([f"genome {int(b)}" for b in gen], fontsize=9)
     ax.set_ylabel("lifespan : with memory − without")
     ax.set_title(f"Top-gain genomes replayed over {gains.shape[1]} seeds "
-                 f"— chunk {chunk}")
+                 f"— chunk {chunk}{suffix}")
     ax.legend(loc="best")
     ax.grid(alpha=.3, axis="y")
     fig.tight_layout()
     fig_dir = fig_dir or data_dir
     os.makedirs(fig_dir, exist_ok=True)
-    out = os.path.join(fig_dir, f"replay_top_gain_chunk_{chunk}.png")
+    out = os.path.join(fig_dir, f"replay_top_gain_chunk_{chunk}{suffix}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Figure saved: {out}")

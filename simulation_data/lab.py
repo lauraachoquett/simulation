@@ -21,9 +21,9 @@ import time
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import random
+from jax import random, vmap
 
-from simulation.lab_env import vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life,
@@ -37,6 +37,16 @@ from simulation.simulation_data.energy_response import (default_energy_bins,
 from simulation.data_class import LABELS
  
 N_FILM       = 3      # genomes rejoues avec la grille, pour les videos
+def _vmap_rot(params, key_env, cles, cfg, model, rot):
+    """vmap sur (params, key_sim) ; le reste est ferme dans la closure.
+
+    `rot` NE DOIT PAS etre un argument de vmap : il indexe un tuple Python dans
+    rotate_resources, donc il doit rester statique. Meme patron que
+    launch_adaptation_env, ou rot est une variable de boucle.
+    """
+    return vmap(lambda p, k: launch_env_high_res(p, key_env, k, cfg, model, rot))(
+        params, cles)
+
 EVO_BATCH    = 25     # enfants evalues par vmap : borne la memoire GPU
 GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
 REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
@@ -214,7 +224,7 @@ class LabMixin:
               f"{len(classes)} genomes x {n_enf} enfants en {time.time()-t0:.0f} s")
 
     def replay_top_gain(self, agent_params, gains, key_env, subkey_sim, model,
-                        exp_dir, submit_video=None):
+                        exp_dir, submit_video=None, rot=0, name="", resources=None):
         """Rejoue les genomes au plus fort gain avec replay_keys graines.
 
         Un gros ecart sur UN rollout peut venir d'une seule action qui bascule :
@@ -223,6 +233,10 @@ class LabMixin:
         le meme genome sur beaucoup de graines separe les deux lectures --
         distribution centree sur du positif = apprentissage, centree sur zero
         avec des queues = point de bascule.
+
+        `rot` selectionne l'environnement PERMUTE : selection et rejeu doivent
+        s'y faire tous les deux, sinon on teste la memoire la ou le genome n'en
+        a pas besoin.
         """
         g = np.asarray(gains, dtype=float)
         ordre = np.argsort(np.where(np.isfinite(g), g, -np.inf))[::-1]
@@ -242,19 +256,20 @@ class LabMixin:
             gf, ga = [], []
             for d in range(0, n_cles, EVO_BATCH):
                 tr = slice(d, d + EVO_BATCH)
-                _, of = vmap_over_agents_env_lab_high_res(params[tr], key_env, cles[tr], model, cfg_f)
-                _, oa = vmap_over_agents_env_lab_high_res(params[tr], key_env, cles[tr], model, cfg_a)
-                gf.append(self.data_lab_env_grouped(of)["age"])
-                ga.append(self.data_lab_env_grouped(oa)["age"])
+                _, of = _vmap_rot(params[tr], key_env, cles[tr], cfg_f, model, rot)
+                _, oa = _vmap_rot(params[tr], key_env, cles[tr], cfg_a, model, rot)
+                gf.append(self.data_lab_env_grouped(of, resources)["age"])
+                ga.append(self.data_lab_env_grouped(oa, resources)["age"])
             gains_rejoues.append(np.concatenate(gf) - np.concatenate(ga))
             observes.append(float(g[b]))
             cles_par_genome.append(cles)
 
         d_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(d_dir, exist_ok=True)
+        sfx = f"_{name}" if name else ""
         gains_rejoues = np.stack(gains_rejoues)
         np.savez_compressed(
-            os.path.join(d_dir, f"chunk_{self.chunk_idx}_replay.npz"),
+            os.path.join(d_dir, f"chunk_{self.chunk_idx}_replay{sfx}.npz"),
             gains=gains_rejoues, observe=np.array(observes),
             genome=np.array(ordre))
 
@@ -272,21 +287,21 @@ class LabMixin:
                 cle = cles_par_genome[j][i_cle:i_cle + 1]
                 for nom, c in (("memory", cfg_v),
                                ("ablated", cfg_v._replace(ablate_recurrence=True))):
-                    _, out = vmap_over_agents_env_lab_high_res(un, key_env, cle, model, c)
+                    _, out = _vmap_rot(un, key_env, cle, c, model, rot)
                     chemin = os.path.join(exp_dir, "videos", "replay",
-                                          f"genome_{ordre[j]}_chunk_{self.chunk_idx}_{nom}.mp4")
+                                          f"genome_{ordre[j]}_chunk_{self.chunk_idx}{sfx}_{nom}.mp4")
                     submit_video(outputs_to_numpy(jax.tree_util.tree_map(lambda x: x[0], out)),
                                  chemin, 20, 10, self.cfg.resources,
-                                 label=f"replay_{ordre[j]}_{nom}")
+                                 label=f"replay_{ordre[j]}{sfx}_{nom}")
                 print(f"[replay] video du genome {ordre[j]} : "
                       f"{100*frac[j]:.0f}% > 0, graine {i_cle}")
             if not (frac > seuil).any():
                 print(f"[replay] aucun genome au-dessus de {100*seuil:.0f}% > 0, "
                       f"pas de video (max {100*frac.max():.0f}%)")
-        plot_replay_top_gain(d_dir, self.chunk_idx,
+        plot_replay_top_gain(d_dir, self.chunk_idx, suffix=sfx,
                              fig_dir=os.path.join(exp_dir, "fig"))
-        print(f"[replay] chunk {self.chunk_idx} : {len(ordre)} genomes x {n_cles} "
-              f"graines en {time.time()-t0:.0f} s")
+        print(f"[replay] chunk {self.chunk_idx}{sfx} : {len(ordre)} genomes x "
+              f"{n_cles} graines en {time.time()-t0:.0f} s")
 
     def launch_env(self, state, key_env, subkey_sim, model, exp_dir, n, submit_video):
             survivors = self.compute_survivors(state)
@@ -382,11 +397,7 @@ class LabMixin:
                     agent_params, key_env, key_sim, model, cfg_abl)
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
-                _, gain_brut = self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
-                if self.cfg.replay_top_n > 0:
-                    subkey_sim, k_rej = random.split(subkey_sim)
-                    self.replay_top_gain(agent_params, gain_brut, key_env, k_rej,
-                                         model, exp_dir, submit_video=submit_video)
+                self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
@@ -456,10 +467,19 @@ class LabMixin:
                 if outputs_adapt_abl is not None:
                     out_abl = jax.tree_util.tree_map(lambda x: x[:, j],
                                                      outputs_adapt_abl)
-                    self.compare_memory(out_rot, out_abl, exp_dir,
+                    _, gain_rot = self.compare_memory(out_rot, out_abl, exp_dir,
                                         suffix=f"_adapt_{name}",
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot)
+                    # selection ET rejeu dans l'env PERMUTE : c'est la que la
+                    # memoire est censee servir, pas dans celui pour lequel le
+                    # genome a deja ete selectionne.
+                    if self.cfg.replay_top_n > 0:
+                        subkey_sim, k_rej = random.split(subkey_sim)
+                        self.replay_top_gain(agent_params, gain_rot, key_env, k_rej,
+                                             model, exp_dir, submit_video=submit_video,
+                                             rot=rot, name=f"adapt_{name}",
+                                             resources=resources_rot)
 
                 av_rot = self.available_by_type(
                     jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), n_types)
