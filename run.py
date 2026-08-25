@@ -358,7 +358,9 @@ def parse_cli(cfg):
     p.add_argument("-m", "--model", dest="model_version",
                    choices=sorted(MODEL_VERSIONS) + ["custom"],
                    default=cfg.model_version, help="version du reseau (defaut %(default)s)")
-    p.add_argument("-s", "--seed",    type=int, default=105,  help="graine (defaut %(default)s)")
+    p.add_argument("-s", "--seed",    type=int, default=None,
+                   help="graine (defaut 105). Avec --from, la passer ignore les "
+                        "graines chargees et en regenere de neuves")
     p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
     p.add_argument("-r", "--resume",  default=None, metavar="DIR", help="dossier d'experience a reprendre")
     p.add_argument("--chunk-id",      type=int, default=1,    help="chunk de reprise (defaut %(default)s)")
@@ -379,6 +381,15 @@ def parse_cli(cfg):
                 + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items()))
     for lettre in lettres:
         maj[ABLATIONS[lettre]] = True
+
+    # Une graine posee a la main l'emporte sur les graines chargees par --from,
+    # sinon elle ne changerait que l'etat initial et pas les cles de chunk.
+    if args.seed is None:
+        args.seed = 105
+    elif subkeys is not None:
+        subkeys = None
+        print(f"[cli] --seed {args.seed} : graines de --from ignorees, "
+              f"nouveau tirage")
 
     neuf = cfg._replace(**maj)
     diff = {c: getattr(neuf, c) for c in Config._fields
