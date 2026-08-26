@@ -146,6 +146,10 @@ class Config(NamedTuple):
     # cle du chunk, identite exclue. Pour rejouer un run anterieur au 18 aout.
     shuffle_version : str = "v2"
 
+    # suivi des poids : distance a l'ancetre, derive neutre, et la sauvegarde
+    # des genomes vivants a chaque chunk (params/, plusieurs Mo par chunk).
+    track_weights : bool = False
+
     # fraction de graines positives au-dela de laquelle un genome rejoue est
     # filme, intact et ablate. 1.0 desactive les videos de rejeu.
     replay_video_min_frac : float = 0.8

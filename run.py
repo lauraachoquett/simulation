@@ -331,6 +331,7 @@ CLI_FLAGS = [
     (("--logobs",),  "log_obs"),
     (("--randpos",), "random_pos_offspring"),
     (("--mem-ablation",), "lab_memory_ablation"),
+    (("--weights",), "track_weights"),
 ]
 
 

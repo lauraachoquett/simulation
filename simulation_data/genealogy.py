@@ -33,9 +33,10 @@ class GenealogyMixin:
             outputs, self.node_parent, self.node_children,
             self.prev_born, self.prev_parent)   # arbre complet, pas cher
         
-        if self.coalesced:
-            self.update_weight_metrics(state)          # -> WeightsMixin
-        save_alive_snapshot(state, self.chunk_idx, os.path.join(exp_dir,'params'))
+        if self.cfg.track_weights:
+            if self.coalesced:
+                self.update_weight_metrics(state)      # -> WeightsMixin
+            save_alive_snapshot(state, self.chunk_idx, os.path.join(exp_dir, 'params'))
 
     def update_mrca_and_plot(self, outputs, exp_dir):
         outputs_mcra = coalescence_point(outputs, self.node_parent)
