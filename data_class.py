@@ -114,8 +114,10 @@ class Config(NamedTuple):
     lab_after_shuffle : tuple = (1, 10)
 
     crowd_limit : int = 3000
-    crowd_prob_factor : float = 0.0065
-    crowd_pop_res_prob : float = 4e-5
+    # None -> les taux du poison, lus sur cfg.resources. Un nombre les force,
+    # ce qui garde lisibles les config.json anterieurs.
+    crowd_prob_factor : float = None
+    crowd_pop_res_prob : float = None
     
     lab_time_steps : int = 2000
 
