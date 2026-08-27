@@ -9,7 +9,6 @@ Recombine les quatre mixins thématiques en un seul objet partageant un unique
 
 import numpy as np
 import json
-from simulation.data_class import BASE_RESOURCES
 import os 
 
 from simulation.utils.plots import (
@@ -38,6 +37,12 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         self.start_step = start_step
         self.chunk_idx = start_chunk
 
+        # L'ordre des canaux AU DEPART de ce run, fige une fois pour toutes :
+        # self.cfg est reassigne a chaque shuffle, et BASE_RESOURCES est une
+        # constante de module qui peut ne pas correspondre au run en cours.
+        # C'est cet ordre qui donne leur identite aux courbes.
+        self.initial_order_ids = [r.id for r in cfg.resources]
+
         self._init_demography()   # chaque mixin pose SON propre état
         self._init_genealogy()
         self._init_weights()
@@ -46,7 +51,7 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
     def plot(self, state, exp_dir):
         
         shuffle_log       = load_shuffle_log(exp_dir)
-        initial_order_ids = [r.id for r in BASE_RESOURCES]# l'ordre au step 0
+        initial_order_ids = self.initial_order_ids
 
         # Toutes les series d'historique sont reduites par blocs AVANT tracage.
         # Sans ca, chaque figure coute lineairement en longueur de run pour un
