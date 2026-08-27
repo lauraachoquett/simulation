@@ -1861,7 +1861,8 @@ def _bary(p_good, p_medium, p_poison):
 
 
 def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
-                      suffix="", titre="", fig_dir=None, parent=None):
+                      suffix="", titre="", fig_dir=None, parent=None,
+                      age_max=None):
     """Composition du regime de chaque agent, dans un simplex good/medium/poison.
 
     `eaten` est indexe par CANAL ; `ids` donne l'identite de chaque canal. On
@@ -1932,8 +1933,12 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
         x, y = _bary(p[:, 0], p[:, 1], p[:, 2])
         c = np.asarray(age, dtype=float)[ok]
         fini = np.isfinite(c)
+        # echelle fixe quand age_max est donne : sinon chaque figure a sa
+        # propre normalisation et deux chunks ne sont plus comparables a l'oeil
         sc = ax.scatter(x[fini], y[fini], c=c[fini], cmap="viridis", s=55,
-                        edgecolor="white", linewidth=.6, zorder=4)
+                        edgecolor="white", linewidth=.6, zorder=4,
+                        vmin=0 if age_max else None,
+                        vmax=age_max if age_max else None)
         cb = fig.colorbar(sc, ax=ax, shrink=.62, pad=.02)
         cb.set_label("lifespan (steps)", fontsize=10)
         if (~fini).any():

@@ -216,7 +216,8 @@ class LabMixin:
                     suffix=f"_parent_{rang}",
                     titre=f"offspring of parent {rang} (slot {slot})",
                     fig_dir=os.path.join(exp_dir, "fig", "evolvability"),
-                    parent=self.eaten_by_type(out_p)[0])
+                    parent=self.eaten_by_type(out_p)[0],
+                    age_max=self.cfg.lab_time_steps)
 
             for k in EVO_METRIQUES:
                 enfants_m[k].append(np.asarray(agg[k], dtype=float))
@@ -442,7 +443,8 @@ class LabMixin:
             if n_types == 3:
                 plot_food_simplex(
                     eaten_baseline, baseline_ids, par_genome["age"],
-                    av_base, exp_dir, self.chunk_idx, titre="lab_1 — high_res")
+                    av_base, exp_dir, self.chunk_idx, titre="lab_1 — high_res",
+                    age_max=self.cfg.lab_time_steps)
             else:
                 print(f"Simplex : {n_types} ressources, il en faut 3.")
 
