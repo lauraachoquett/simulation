@@ -29,7 +29,7 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import BASE_RESOURCES, LABELS
+from simulation.data_class import BASE_RESOURCES, LABELS, MODEL_VERSIONS
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...), le
 # cluster (>= 0.7) si. On ne touche a rien quand la signature l'accepte.
@@ -52,11 +52,13 @@ class Sonde(nn.Module):
     """Le reseau de la simulation, plus une lecture lineaire du carry."""
     memory_mode: str
     carry_size: int = 8
+    hidden_layers: tuple = (32,)
     n_types: int = 3
 
     def setup(self):
         self.coeur = MetaRNN_bcppr(output_size=4, out_fn="categorical",
-                                   hidden_layers=[32], encoder_in=False,
+                                   hidden_layers=list(self.hidden_layers),
+                                   encoder_in=False,
                                    encoder_layers=[], carry_size=self.carry_size,
                                    memory_mode=self.memory_mode)
         self.lecture = nn.Dense(self.n_types)
@@ -112,7 +114,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("-m", "--model", choices=["v1", "v2"], default="v2",
                    help="v1 = memoire jointe a la perception, v2 = separee")
-    p.add_argument("--carry", type=int, default=8)
+    p.add_argument("--carry", type=int, default=None,
+                   help="taille du carry (defaut : celle de MODEL_VERSIONS)")
+    p.add_argument("--hidden", type=int, nargs="*", default=None,
+                   help="tete (defaut : celle de MODEL_VERSIONS)")
     p.add_argument("--steps", type=int, default=40, help="pas par episode")
     p.add_argument("--batch", type=int, default=128)
     p.add_argument("--iters", type=int, default=1500)
@@ -122,13 +127,20 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
-    mode = "jointe" if a.model == "v1" else "separee"
+    # la forme vient de MODEL_VERSIONS : la sonde doit tester TON reseau,
+    # pas une variante codee en dur ici
+    spec = MODEL_VERSIONS[a.model]
+    mode = spec["memory_mode"]
+    if a.carry is None:
+        a.carry = spec["hidden_dim"]
+    tete = tuple(a.hidden) if a.hidden is not None else tuple(spec["hidden_layers"])
     de_par_id = jnp.array([next(r.delta_energy for r in BASE_RESOURCES if r.id == i)
                            for i in range(3)])
-    print(f"modele {a.model} ({mode})   delta_energy par identite : "
+    print(f"modele {a.model} ({mode})  carry={a.carry}  tete={list(tete)}\n"
+          f"delta_energy par identite : "
           + "  ".join(f"{LABELS[i]} {float(de_par_id[i]):+g}" for i in range(3)))
 
-    sonde = Sonde(memory_mode=mode, carry_size=a.carry)
+    sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete)
     cle = jax.random.PRNGKey(a.seed)
     cle, c0 = jax.random.split(cle)
     lot0 = episodes(c0, 2, a.steps, de_par_id)
