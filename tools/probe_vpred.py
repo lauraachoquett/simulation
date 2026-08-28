@@ -14,10 +14,16 @@ Lecture :
 
   - vrai >> nul  -> la politique SAIT lire v_pred. Ce qui manque, c'est
                     l'apprentissage : fenetre, forget bias, ou heritage.
-  - vrai ~= nul  -> la politique IGNORE v_pred. Aucun reglage de la boucle
-                    interne n'y changera rien, c'est l'architecture qu'il faut
-                    reprendre (carte de valeur plutot que concatenation).
-  - appris situe le run actuel entre ces deux bornes.
+  - vrai ~= nul  -> la politique de CETTE POPULATION ignore v_pred.
+
+Attention a la seconde lecture : elle ne dit pas que l'architecture en est
+incapable. Si v_pred n'a jamais porte d'information utile pendant le run,
+l'evolution n'avait aucune raison de lui donner du poids -- et un poids nul rend
+le signal invisible, donc inutile. Les deux boucles ne s'amorcent pas.
+
+Pour trancher entre "pas encore evolue" et "inevoluable", il faut faire evoluer
+une population avec v_pred force aux vraies valeurs EN PERMANENCE, et voir si la
+politique finit par s'en servir.
 
 Ne modifie rien : lit un checkpoint, ne touche ni au run ni aux fichiers.
 """
@@ -121,8 +127,14 @@ def main():
     print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents, "
           f"l'apprise en vaut {d_appris:+.1f}.")
     if abs(d_vrai) < 0.02 * np.median(nul):
-        print("-> la politique ignore v_pred. Regler la boucle interne ne servira "
-              "a rien ; c'est l'architecture qu'il faut reprendre.")
+        print("-> cette population ignore v_pred : lui donner l'information "
+              "parfaite ne change rien.\n"
+              "   Cela ne prouve PAS que l'architecture en soit incapable. Si "
+              "v_pred n'a jamais\n"
+              "   ete informatif, l'evolution n'avait aucune raison de lui "
+              "donner du poids.\n"
+              "   Etape suivante : faire evoluer une population avec v_pred "
+              "force aux vraies valeurs.")
     else:
         print("-> la politique sait lire v_pred. Ce qui manque est "
               "l'apprentissage, pas le cablage.")
