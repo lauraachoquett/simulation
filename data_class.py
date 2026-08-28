@@ -87,6 +87,9 @@ class Config(NamedTuple):
     
     # Random agents action
     dumb_agent : bool = False
+
+    # politique codee en dur, sans reseau (cf. simulation/oracle.py)
+    oracle_agent : bool = False
     
     resources: tuple  = BASE_RESOURCES
     # Lab env paramaeters

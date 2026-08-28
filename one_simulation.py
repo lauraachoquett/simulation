@@ -16,6 +16,7 @@ from EcoEvoJax.source.agent import metaRNNPolicyState_bcppr
 from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
+from simulation.oracle import oracle_actions
 
 from typing import NamedTuple
 import jax
@@ -97,7 +98,10 @@ def run_simulation_chunk(state,model,keys, cfg):
                 lstm_c=jnp.zeros_like(new_policy_states.lstm_c),
                 keys=new_policy_states.keys,
             )
-        if cfg.dumb_agent:  
+        if cfg.oracle_agent:
+            actions_id = jax.nn.one_hot(
+                oracle_actions(state.obs, cfg.resources), cfg.output_dim)
+        elif cfg.dumb_agent:  
             actions_id = jax.nn.one_hot(
                 random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=cfg.output_dim),
                 cfg.output_dim,
