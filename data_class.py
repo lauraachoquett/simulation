@@ -45,7 +45,7 @@ class ResourceConfig:
 BASE_RESOURCES = (
     ResourceConfig(init_number_of_resources=30, prob_factor= 0.0866, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
     ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
-    ResourceConfig(init_number_of_resources=15,   prob_factor=0.0065, pop_res_prob=4e-5, delta_energy=-1.0, id=2),
+    ResourceConfig(init_number_of_resources=15,   prob_factor=0.0065, pop_res_prob=4e-5, delta_energy=-1.5, id=2),
 )
 
 
@@ -129,7 +129,7 @@ class Config(NamedTuple):
     encoder : bool = False
 
     memory_mode : str = "jointe"
-    model_version : str = "v1"      
+    model_version : str = "v2"      
 
     # evaluabilite : tous les evolvability_freq pas, les N meilleurs genomes
     # sont re-echantillonnes en M enfants mutes et evalues dans l'env high_res
