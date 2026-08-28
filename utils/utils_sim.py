@@ -162,6 +162,7 @@ def init_state(key, cfg, model):
         last_actions=jnp.zeros((cfg.n_agents_max, cfg.output_dim)),
         rewards=jnp.zeros((cfg.n_agents_max, 1)),
         last_eaten=jnp.zeros((cfg.n_agents_max, len(cfg.resources))),
+        invasion_faite=jnp.zeros(()),
     )
     
     return state

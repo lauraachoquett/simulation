@@ -32,6 +32,9 @@ class SimState:
     last_actions: jnp.ndarray
     rewards: jnp.ndarray
     last_eaten: jnp.ndarray
+    # 1 des que invasion_frac a ete atteint : l'injection ne se rallume jamais,
+    # sinon un declin des envahisseurs serait masque par un re-remplissage
+    invasion_faite: jnp.ndarray
     
 
 

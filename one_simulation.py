@@ -206,8 +206,13 @@ def run_simulation_chunk(state,model,keys, cfg):
             n_vivants = (agents.is_oracle * survives_int).sum()
             cible = cfg.invasion_frac * cfg.n_agents_max
             rang = jnp.cumsum(spawn_mask) - 1
+            # `invasion_faite` verrouille : une fois la cible atteinte,
+            # l'injection ne se rallume plus jamais. Sans ce verrou, des
+            # envahisseurs en declin seraient re-remplis a 10% et la courbe
+            # afficherait un plateau au lieu de la chute.
             convertit = (spawn_mask & (step_idx >= cfg.invasion_start)
-                         & (cfg.invasion_start > 0) & (n_vivants + rang < cible))
+                         & (cfg.invasion_start > 0) & (n_vivants + rang < cible)
+                         & (state.invasion_faite == 0))
             final_is_oracle = agents.is_oracle.at[free_indices].set(
                 jnp.where(convertit, 1.0, herite))
             # le nouveau-ne ne sait rien : c'est ce qui force a reapprendre a
@@ -263,6 +268,11 @@ def run_simulation_chunk(state,model,keys, cfg):
             croyance = final_croyance,
         )
         
+        n_oracles = (final_is_oracle * final_alive_without_0).sum()
+        invasion_faite = jnp.where(
+            n_oracles >= cfg.invasion_frac * cfg.n_agents_max, 1.0,
+            state.invasion_faite)
+
         new_grid = jnp.concatenate([grid_resources, grid_agents[None], grid_walls[None]], axis=0)
         obs = get_obs_vector(new_grid, (final_pos, new_agents.orientation), cfg.agent_view)
 
@@ -275,6 +285,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             last_actions=actions_id,
             rewards=jnp.expand_dims(rewards, 1).astype(jnp.float32),
             last_eaten=ate_res_step.astype(jnp.float32),
+            invasion_faite=invasion_faite,
         )
         
         log = StepLog(
