@@ -316,6 +316,7 @@ CLI_PARAMS = [
     (("--crowd-start",),  "crowd_start",                    int),
     (("--crowd-limit",),  "crowd_limit",                    int),
     (("--view",),         "agent_view",                     int),
+    (("--forget-bias",),  "lstm_forget_bias",               float),
     (("--evo",),          "evolvability_freq",              int),
     (("--evo-agents",),   "evolvability_agents",            int),
     (("--evo-children",), "evolvability_children",          int),

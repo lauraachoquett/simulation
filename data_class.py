@@ -150,6 +150,12 @@ class Config(NamedTuple):
     # des genomes vivants a chaque chunk (params/, plusieurs Mo par chunk).
     track_weights : bool = False
 
+    # Biais ajoute a la forget gate du LSTM a l'initialisation des genomes.
+    # A 0 le biais vaut ~0.01 comme le reste du vecteur, donc sigmoid ~= 0.5 et
+    # le carry est divise par deux a chaque pas : la population de depart est
+    # amnesique. A 1 la retention passe a ~0.73. 0 retablit l'ancien comportement.
+    lstm_forget_bias : float = 1.0
+
     # fraction de graines positives au-dela de laquelle un genome rejoue est
     # filme, intact et ablate. 1.0 desactive les videos de rejeu.
     replay_video_min_frac : float = 0.8

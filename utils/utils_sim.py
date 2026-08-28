@@ -23,6 +23,21 @@ import pickle
 
     
 
+def masque_forget_bias(model):
+    """(num_params,) : 1 sur les entrees du biais de la forget gate, 0 ailleurs.
+
+    L'ordre suit tree_flatten, comme get_params_format_fn qui met en forme le
+    vecteur plat -- on le lit donc du meme arbre plutot que de coder des indices
+    en dur, qui bougeraient avec hidden_dim ou l'architecture.
+    """
+    morceaux = []
+    for chemin, feuille in jax.tree_util.tree_flatten_with_path(model.params)[0]:
+        cles = [str(k.key) for k in chemin if hasattr(k, "key")]
+        cible = len(cles) >= 2 and cles[-2] == "hf" and cles[-1] == "bias"
+        morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
+    return jnp.concatenate(morceaux)
+
+
 def init_state(key, cfg, model):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
@@ -64,6 +79,10 @@ def init_state(key, cfg, model):
     
     # Paramètres réseau et état RNN
     params = random.normal(sk_params, (cfg.n_agents_max, model.num_params)) / 100
+    # sans ca la forget gate demarre a sigmoid(~0) = 0.5 : le carry est divise
+    # par deux a chaque pas et la population de depart n'a aucune memoire.
+    if cfg.lstm_forget_bias:
+        params = params + cfg.lstm_forget_bias * masque_forget_bias(model)
     policy_states = model.reset_b(jnp.zeros(cfg.n_agents_max))
     
     # Création de l'objet AgentState
