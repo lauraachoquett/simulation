@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from simulation.data_class import AgentState,SimState,LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
+from simulation.utils.utils_sim import init_inner
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -76,7 +77,8 @@ def init_state_lab(key, cfg, model,agent_params):
         is_oracle=jnp.zeros((cfg.n_agents_max,)),
         croyance=jnp.full((cfg.n_agents_max, len(cfg.resources)),
                           cfg.croyance_init),
-        policy_states=policy_states
+        policy_states=policy_states,
+        inner=init_inner(cfg, params),
     )
 
     # 4. Grille d'occupation et observations

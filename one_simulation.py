@@ -17,6 +17,7 @@ from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.oracle import oracle_actions
+from simulation.utils.utils_sim import masque_valeur
 
 from typing import NamedTuple
 import jax
@@ -37,7 +38,48 @@ class StepLog(NamedTuple):
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
+    perte_pred: jax.Array  # (N,) -> erreur de prediction de la boucle interne,
+                           #         vide si inner_loop=False
     
+
+def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
+    """Un pas de SGD sur la voie LSTM -> tete de valeur, par agent.
+
+    BPTT tronque sur la fenetre : le carry de depart est celui du DEBUT de
+    fenetre, garde dans InnerState. Sans cette troncature le gradient ne
+    remonterait que d'un pas, et le reseau ne pourrait pas apprendre a RETENIR
+    une bouchee passee -- ce qui est precisement ce qu'on lui demande.
+
+    Le conv et la tete de politique ne sont pas dans le graphe : en mode separee
+    la voie de valeur en est independante, donc la passe arriere ne porte que sur
+    ~600 parametres.
+    """
+    def perte(theta, h0, c0, t_in, t_eat, t_r):
+        p = model.format_one_fn(theta)
+
+        def avance(carry, x):
+            h, c = carry
+            mem_in, eat, r = x
+            h, c, v = model.valeur_apply(p, h, c, mem_in)
+            # v est la prediction faite AVANT que (eat, r) n'entre dans le LSTM :
+            # ils n'y arriveront qu'au pas suivant. C'est donc une prediction,
+            # pas une recopie de l'entree.
+            return (h, c), ((v - r) ** 2 * eat).sum()
+
+        _, err = lax.scan(avance, (h0, c0), (t_in, t_eat, t_r))
+        # Moyenne par BOUCHEE : les pas sans repas ne portent pas de cible.
+        # Fenetre sans aucune bouchee -> NaN, et non zero : un zero se lirait
+        # comme "predit parfaitement" sur la courbe. Le gradient, lui, vaut bien
+        # zero des deux facons (la branche NaN est une constante).
+        n = t_eat.sum()
+        return jnp.where(n > 0, err.sum() / jnp.maximum(n, 1.0), jnp.nan)
+
+    val, grad = jax.vmap(jax.value_and_grad(perte))(
+        inner.params_vie, inner.carry_h, inner.carry_c,
+        inner.tampon_in, inner.tampon_eaten, inner.tampon_r)
+    maj = inner.params_vie - cfg.inner_lr * grad * masque[None] * vivants[:, None]
+    return maj, val
+
 
 @partial(jax.jit, static_argnames=['cfg','model'])
 def run_simulation_chunk(state,model,keys, cfg):
@@ -89,8 +131,13 @@ def run_simulation_chunk(state,model,keys, cfg):
                     energy=jnp.full_like(state.agents.energy, cfg.starting_energy)),
             )
 
+        # Avec la boucle interne, la passe avant lit params_vie (poids appris
+        # pendant la vie) ; agents.params reste le genome, intact, et c'est lui
+        # seul qui est transmis a la reproduction.
+        params_avant = (state.agents.params if agents.inner is None
+                        else agents.inner.params_vie)
         actions_logit, new_policy_states = model.get_actions(
-            state_in, state.agents.params, state.agents.policy_states
+            state_in, params_avant, state.agents.policy_states
         )
         if cut_rec:
             # apres l'appel : rien ne passe au pas suivant
@@ -144,6 +191,42 @@ def run_simulation_chunk(state,model,keys, cfg):
         # exactement la reevaluation intra-vie qu'on veut mesurer.
         croyance_maj = jnp.where(ate_res_step, rewards[:, None], agents.croyance)
         saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
+
+        # ------- 2 bis. Boucle interne : predire la valeur de sa bouchee -------
+        inner_maj = agents.inner
+        if inner_maj is not None:
+            # Reconstitue l'entree du LSTM A L'IDENTIQUE de get_actions : la
+            # rejouer autrement ferait apprendre le gradient sur un autre reseau
+            # que celui qui a agi.
+            mem_in = jnp.concatenate([
+                state_in.last_actions,
+                state_in.rewards,
+                jnp.expand_dims(state_in.agents.energy, 1).astype(jnp.float32),
+                state_in.last_eaten.astype(jnp.float32)], axis=1)      # (N, d_mem)
+
+            case = step_idx % cfg.inner_window
+            inner_maj = inner_maj.replace(
+                tampon_in=inner_maj.tampon_in.at[:, case].set(mem_in),
+                tampon_eaten=inner_maj.tampon_eaten.at[:, case].set(
+                    ate_res_step.astype(jnp.float32)),
+                tampon_r=inner_maj.tampon_r.at[:, case].set(rewards),
+            )
+
+            # La fenetre est pleine : un pas de gradient, puis le carry courant
+            # devient le point de depart de la fenetre suivante. step_idx est un
+            # scalaire partage par tous les agents, donc lax.cond branche vraiment
+            # au lieu de calculer les deux cotes.
+            masque = masque_valeur(model)
+
+            def maj(inn):
+                vie, perte = pas_gradient_intra_vie(
+                    model, cfg, inn, survives_int.astype(jnp.float32), masque)
+                return inn.replace(params_vie=vie, perte=perte,
+                                   carry_h=new_policy_states.lstm_h,
+                                   carry_c=new_policy_states.lstm_c)
+
+            inner_maj = lax.cond(case == cfg.inner_window - 1,
+                                 maj, lambda inn: inn, inner_maj)
 
 
         # ------- 3. Environment dynamic -------
@@ -230,6 +313,30 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_params = agents.params.at[free_indices].set(
                         agents.params[parent_indices] +mutation*parameters_to_mutate)
             
+            # L'enfant repart de son genome mute : les poids appris par le
+            # parent meurent avec lui. C'est ce qui rend le mecanisme
+            # baldwinien et non lamarckien. Ses tampons sont vides -- il doit
+            # tout reapprendre, c'est la mesure intra-vie.
+            if agents.inner is not None:
+                z = jnp.zeros_like
+                final_inner = inner_maj.replace(
+                    params_vie=inner_maj.params_vie.at[free_indices].set(
+                        final_params[free_indices]),
+                    tampon_in=inner_maj.tampon_in.at[free_indices].set(
+                        z(inner_maj.tampon_in[0])),
+                    tampon_eaten=inner_maj.tampon_eaten.at[free_indices].set(
+                        z(inner_maj.tampon_eaten[0])),
+                    tampon_r=inner_maj.tampon_r.at[free_indices].set(
+                        z(inner_maj.tampon_r[0])),
+                    carry_h=inner_maj.carry_h.at[free_indices].set(
+                        z(inner_maj.carry_h[0])),
+                    carry_c=inner_maj.carry_c.at[free_indices].set(
+                        z(inner_maj.carry_c[0])),
+                    perte=inner_maj.perte.at[free_indices].set(0.0),
+                )
+            else:
+                final_inner = None
+
             final_policy_states =metaRNNPolicyState_bcppr(
                     lstm_h=new_policy_states.lstm_h.at[free_indices].set(jnp.zeros(new_policy_states.lstm_h.shape[1])),
                     lstm_c=new_policy_states.lstm_c.at[free_indices].set(jnp.zeros(new_policy_states.lstm_c.shape[1])),
@@ -248,6 +355,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_params = agents.params
             final_is_oracle = agents.is_oracle
             final_croyance = croyance_maj
+            final_inner = inner_maj
             
             
         # Update spatial grid with agents positions
@@ -266,6 +374,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             params = final_params,
             is_oracle = final_is_oracle,
             croyance = final_croyance,
+            inner = final_inner,
         )
         
         n_oracles = (final_is_oracle * final_alive_without_0).sum()
@@ -304,6 +413,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             saw_res = saw_res_step,
             ate_res = ate_res_step,
             is_oracle = state.agents.is_oracle,
+            perte_pred = (jnp.zeros((0,)) if state.agents.inner is None
+                          else state.agents.inner.perte),
         )
         
         return new_state, log

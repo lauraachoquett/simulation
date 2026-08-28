@@ -50,6 +50,7 @@ class DemographyMixin:
         self.eaten_seen_history = []
         self.mov_history = []
         self.life_history = []
+        self.perte_history = []
 
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx
@@ -60,6 +61,19 @@ class DemographyMixin:
         res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3)))
         consumed_chunk = np.array(outputs.consumed_res)           # (T, n_types)
         seen_chunk, eaten_seen_chunk = compute_seen_eaten_chunk(outputs)
+        # Erreur de prediction, moyennee sur les agents vivants qui ont mange
+        # dans la fenetre. Les autres portent un NaN (cf. one_simulation) et sont
+        # ecartes : les compter comme zero ferait croire a une prediction parfaite.
+        if self.cfg.inner_loop:
+            perte = np.asarray(outputs.perte_pred)             # (T, N)
+            vivants = np.asarray(outputs.alive) > 0
+            valides = np.where(vivants & np.isfinite(perte), perte, np.nan)
+            n_valides = np.isfinite(valides).sum(axis=1)
+            perte_chunk = np.divide(np.nansum(valides, axis=1), n_valides,
+                                    out=np.full(len(pop_chunk), np.nan),
+                                    where=n_valides > 0)
+        else:
+            perte_chunk = np.zeros(len(pop_chunk))
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
@@ -69,6 +83,7 @@ class DemographyMixin:
         self.consumed_history.append(consumed_chunk)
         self.seen_history.append(seen_chunk)
         self.eaten_seen_history.append(eaten_seen_chunk)
+        self.perte_history.append(perte_chunk)
         self.mov_history.append(mov_chunk)
         self.life_history.append(life_chunk)
 
@@ -80,6 +95,7 @@ class DemographyMixin:
             consumed      = consumed_chunk,
             n_seen        = seen_chunk,
             n_eaten_seen  = eaten_seen_chunk,
+            perte_pred    = perte_chunk,
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )

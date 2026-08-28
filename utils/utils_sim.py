@@ -8,7 +8,7 @@ import dataclasses
 from typing import NamedTuple
 
 
-from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
+from simulation.data_class import AgentState, InnerState, SimState, ResourceConfig, LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config, MODEL_VERSIONS
@@ -36,6 +36,39 @@ def masque_forget_bias(model):
         cible = len(cles) >= 2 and cles[-2] == "hf" and cles[-1] == "bias"
         morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
     return jnp.concatenate(morceaux)
+
+
+def masque_valeur(model):
+    """(num_params,) : 1 sur le LSTM et la tete de valeur, 0 ailleurs.
+
+    Ce sont les seuls poids que le gradient intra-vie modifie -- le conv et la
+    tete de politique restent la part evoluee. Meme lecture par chemin que
+    masque_forget_bias, donc rien a tenir a jour si l'architecture bouge.
+    """
+    morceaux = []
+    for chemin, feuille in jax.tree_util.tree_flatten_with_path(model.params)[0]:
+        cles = [str(k.key) for k in chemin if hasattr(k, "key")]
+        cible = len(cles) >= 2 and cles[1] in ("_lstm", "_valeur")
+        morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
+    return jnp.concatenate(morceaux)
+
+
+def init_inner(cfg, params):
+    """InnerState au depart : la copie de travail part du genome, tampons vides."""
+    if not cfg.inner_loop:
+        return None
+    n, k = cfg.n_agents_max, cfg.inner_window
+    n_types = len(cfg.resources)
+    d_mem = cfg.output_dim + 2 + n_types      # action, reward, energie, last_eaten
+    return InnerState(
+        params_vie=params,
+        tampon_in=jnp.zeros((n, k, d_mem)),
+        tampon_eaten=jnp.zeros((n, k, n_types)),
+        tampon_r=jnp.zeros((n, k)),
+        carry_h=jnp.zeros((n, cfg.hidden_dim)),
+        carry_c=jnp.zeros((n, cfg.hidden_dim)),
+        perte=jnp.zeros((n,)),
+    )
 
 
 def stds_fan_in(model):
@@ -115,7 +148,8 @@ def init_state(key, cfg, model):
         is_oracle=jnp.zeros((cfg.n_agents_max,)),
         croyance=jnp.full((cfg.n_agents_max, len(cfg.resources)),
                           cfg.croyance_init),
-        policy_states=policy_states
+        policy_states=policy_states,
+        inner=init_inner(cfg, params),
     )
 
 

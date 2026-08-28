@@ -22,6 +22,25 @@ class AgentState:
     is_oracle: jnp.ndarray             # (n_agents,) 1 = politique codee en dur
     croyance: jnp.ndarray              # (n_agents, n_types) delta_energy estime
     policy_states: Any                  # État caché du RNN (Pytree)
+    inner: Any = None                  # InnerState, ou None si inner_loop=False
+
+@struct.dataclass
+class InnerState:
+    """Boucle interne (option C) : ce que le gradient intra-vie manipule.
+
+    `params_vie` est la copie de travail. `params` reste le GENOME : c'est lui
+    que l'enfant herite, jamais les poids appris -- sinon l'heritage serait
+    lamarckien et l'effet Baldwin ne serait plus mesurable.
+    """
+    params_vie: jnp.ndarray            # (n_agents, num_params)
+    tampon_in: jnp.ndarray             # (n_agents, K, d_mem) entrees LSTM
+    tampon_eaten: jnp.ndarray          # (n_agents, K, n_types) canal goute
+    tampon_r: jnp.ndarray              # (n_agents, K) recompense recue
+    carry_h: jnp.ndarray               # (n_agents, hidden) carry au debut
+    carry_c: jnp.ndarray               # de la fenetre, pour un BPTT tronque
+    perte: jnp.ndarray                 # (n_agents,) erreur au dernier gradient,
+                                       # gardee entre deux maj pour etre tracee
+
 
 @struct.dataclass
 class SimState:
@@ -188,6 +207,22 @@ class Config(NamedTuple):
     # fraction de graines positives au-dela de laquelle un genome rejoue est
     # filme, intact et ablate. 1.0 desactive les videos de rejeu.
     replay_video_min_frac : float = 0.8
+
+    # ---- Boucle interne (option C) : evolution dehors, gradient dedans ----
+    # Une tete lineaire sur le carry predit le delta_energy de chaque canal ;
+    # sa sortie entre dans la tete de politique. La cible est la recompense que
+    # l'agent recoit lui-meme -- aucune information sur l'environnement.
+    # Le gradient ne touche que le LSTM et cette tete (~600 params sur 1468) ;
+    # la politique et le conv restent evolues. Les poids appris meurent avec
+    # l'agent : l'enfant repart du genome. Demande model_version="v2".
+    inner_loop : bool = False
+    # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
+    # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
+    # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,
+    # la perte etant quadratique sur un reseau de 8 unites.
+    inner_lr : float = 0.5
+    inner_window : int = 20           # longueur du BPTT tronque, et periode
+                                      # entre deux pas de gradient
 
 
 MODEL_VERSIONS = {

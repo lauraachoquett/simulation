@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt  # used by plot_full_genealogy_robust for colorm
 import matplotlib.colors as mcolors
 import numpy as np
 import os
+import warnings
 import jax
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -40,7 +41,10 @@ def block_edges(n, start_step=0, n_target=2000, cut_steps=()):
 
 
 def block_apply(arr, edges, how="mean"):
-    """Agrege arr (n,) ou (n, c) par blocs. how = 'mean' (niveaux) ou 'sum' (comptes).
+    """Agrege arr (n,) ou (n, c) par blocs.
+
+    how = 'mean' (niveaux), 'sum' (comptes), ou 'nanmean' pour les series a
+    trous -- un seul NaN suffirait a effacer tout un bloc avec np.mean.
 
     Les COMPTES doivent etre sommes, jamais moyennes : pour un ratio k/n, moyenner
     les ratios donnerait le meme poids a un bloc ou 3 agents voient et a un ou 300
@@ -52,8 +56,10 @@ def block_apply(arr, edges, how="mean"):
         a = a[:, None]
     if len(edges) < 2:                      # serie vide -> aucun bloc
         return np.array([]) if plat else np.empty((0, a.shape[1]))
-    f = np.mean if how == "mean" else np.sum
-    out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
+    f = {"mean": np.mean, "sum": np.sum, "nanmean": np.nanmean}[how]
+    with warnings.catch_warnings():         # bloc entierement NaN -> NaN, sans bruit
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
     return out[:, 0] if plat else out
 
 
@@ -1819,6 +1825,35 @@ def plot_invasion(pop, oracles, exp_dir, start_step=0, steps=None,
     fig.tight_layout()
     path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
     out = os.path.join(path, "plot_invasion.png")
+    fig.savefig(out, dpi=140); plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
+def plot_inner_loss(perte, exp_dir, start_step=0, steps=None):
+    """Erreur de prediction de la boucle interne, au fil du run.
+
+    Elle ne dit PAS a elle seule qu'il y a effet Baldwin : la boucle interne
+    tourne des le premier pas. Ce qui compte est sa BAISSE au fil des
+    generations -- l'evolution fournirait alors une initialisation depuis
+    laquelle predire coute moins cher.
+    """
+    y = np.asarray(perte, dtype=float)
+    x = (np.asarray(steps) if steps is not None
+         else np.arange(start_step, start_step + len(y)))
+    # les blocs ou personne n'a mange sont des NaN : matplotlib les saute
+    fini = np.isfinite(y)
+
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    ax.plot(x[fini], y[fini], color="#1D3557", lw=1.4)
+    ax.set_yscale("log")
+    ax.set_xlabel("Steps")
+    ax.set_ylabel("erreur quadratique par bouchee")
+    ax.set_title("Boucle interne — erreur de prediction de la valeur des canaux")
+    ax.grid(alpha=.3, which="both")
+
+    fig.tight_layout()
+    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, "plot_inner_loss.png")
     fig.savefig(out, dpi=140); plt.close(fig)
     print(f"Figure saved: {out}")
 

@@ -22,6 +22,7 @@ from simulation.utils.plots import (
     plot_lifetime_vs_step,
     plot_life_expectancy,
     plot_invasion,
+    plot_inner_loss,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
@@ -94,6 +95,10 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_phase_portrait_png(
             pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
+        if self.cfg.inner_loop:
+            plot_inner_loss(
+                block_apply(np.concatenate(self.perte_history, axis=0), edges, "nanmean"),
+                exp_dir, self.start_step, steps=steps_r)
         if self.cfg.invasion_start > 0:
             plot_invasion(pop_r, block_apply(oracle_full, edges, 'mean'), exp_dir,
                           self.start_step, steps=steps_r,

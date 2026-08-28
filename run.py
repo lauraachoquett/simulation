@@ -20,7 +20,7 @@ from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur
 from simulation.simulation_data.core import simulation_data
 
 import argparse
@@ -89,6 +89,9 @@ def build_model(cfg):
         encoder_layers=list(cfg.encoder_layers),
         hidden_layers=list(cfg.hidden_layers),
         memory_mode=cfg.memory_mode,
+        # la tete de valeur n'existe que si la boucle interne tourne : sans ce
+        # garde-fou tous les runs precedents changeraient de nombre de parametres
+        predict_value=len(cfg.resources) if cfg.inner_loop else 0,
     )
 
 
@@ -158,6 +161,11 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if cfg.inner_loop:
+        n_inner = int(masque_valeur(model).sum())
+        print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
+              f"-> {n_inner} parametres appris pendant la vie, "
+              f"{model.num_params - n_inner} laisses a l'evolution")
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
@@ -325,6 +333,8 @@ CLI_PARAMS = [
     (("--replay-n",),     "replay_top_n",                   int),
     (("--replay-keys",),  "replay_keys",                    int),
     (("--replay-video-frac",), "replay_video_min_frac",     float),
+    (("--inner-lr",),     "inner_lr",                       float),
+    (("--inner-window",), "inner_window",                   int),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
@@ -335,6 +345,7 @@ CLI_FLAGS = [
     (("--randpos",), "random_pos_offspring"),
     (("--mem-ablation",), "lab_memory_ablation"),
     (("--weights",), "track_weights"),
+    (("--inner",),   "inner_loop"),
 ]
 
 
@@ -404,6 +415,15 @@ def parse_cli(cfg):
                 + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items()))
     for lettre in lettres:
         maj[ABLATIONS[lettre]] = True
+
+    # apres les ablations : -x m les pose ici, les tester plus haut les raterait
+    if maj.get("inner_loop"):
+        if maj["model_version"] != "v2":
+            p.error("--inner demande -m v2 : en v1 le LSTM ne recoit pas "
+                    "last_eaten, il n'y a rien a predire.")
+        if maj.get("ablate_memory") or maj.get("ablate_recurrence"):
+            p.error("--inner et l'ablation de la recurrence s'annulent : le "
+                    "carry est remis a zero a chaque pas, rien ne s'accumule.")
 
     # Une graine posee a la main l'emporte sur les graines chargees par --from,
     # sinon elle ne changerait que l'etat initial et pas les cles de chunk.
