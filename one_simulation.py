@@ -193,8 +193,13 @@ def run_simulation_chunk(state,model,keys, cfg):
         saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
 
         # ------- 2 bis. Boucle interne : predire la valeur de sa bouchee -------
+        # cut_rec remet le carry a zero apres chaque pas : rien ne s'accumule,
+        # donc il n'y a plus rien a predire. On gele la boucle interne au lieu
+        # d'entrainer dans le vide -- sinon le bras ablate du lab differerait de
+        # l'intact par ses POIDS autant que par sa memoire, et la comparaison
+        # appariee ne mesurerait plus ce qu'elle annonce.
         inner_maj = agents.inner
-        if inner_maj is not None:
+        if inner_maj is not None and not cut_rec:
             # Reconstitue l'entree du LSTM A L'IDENTIQUE de get_actions : la
             # rejouer autrement ferait apprendre le gradient sur un autre reseau
             # que celui qui a agi.

@@ -1642,7 +1642,8 @@ def _nulle_somme(gain, n_perm=5000, seed=0):
 
 
 def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
-                          metric="age", bins=30):
+                          metric="age", bins=30, axe_x="avec memoire − sans",
+                          titre="Gain de la memoire, par genome"):
     """Distribution, par genome, de (avec memoire - sans memoire).
 
     La mediane et l'IQR effacent les queues : un effet reel sur une poignee de
@@ -1687,7 +1688,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     k, m, p = _test_signes(series[-1])
     ax.set_title(f"chunk {chunks[-1]} — n={v.size}\n"
                  f"signes : {k}/{m} positifs, p={p:.3f}")
-    ax.set_xlabel(f"{metric} : avec memoire − sans")
+    ax.set_xlabel(f"{metric} : {axe_x}")
     ax.set_ylabel("nb de genomes")
 
     # 2) tous les chunks empiles : une queue rare ressort ici
@@ -1698,7 +1699,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
         ax.axvline(0, color="black", lw=1.5)
         pos = float((tout > 0).mean())
         ax.set_title(f"tous chunks — n={tout.size}, {100*pos:.0f}% > 0")
-    ax.set_xlabel(f"{metric} : avec memoire − sans")
+    ax.set_xlabel(f"{metric} : {axe_x}")
 
     # 3) evolution : mediane, IQR, et les extremes
     ax = axes[2]
@@ -1728,7 +1729,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
 
     for a in axes:
         a.grid(alpha=.3)
-    fig.suptitle(f"Gain de la memoire, par genome — {metric} — {env_titre}", y=1.02)
+    fig.suptitle(f"{titre} — {metric} — {env_titre}", y=1.02)
     fig.tight_layout()
     out = os.path.join(fig_dir, f"lab_memory_gain_hist_{metric}{suffix}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")

@@ -423,6 +423,27 @@ class LabMixin:
                     agent_params, key_env, key_sim, model, cfg_abl)
                 self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
+            # Bras propre a la boucle interne : MEME reseau, MEME genome, memes
+            # cles -- seul le gradient est coupe, donc v_pred reste a sa valeur
+            # evoluee. C'est ce que le gradient rapporte, et rien d'autre :
+            # l'ablation de la memoire ci-dessus ne repond pas a cette
+            # question-la, elle coupe aussi le carry.
+            outputs_adapt_gele = outputs_high_gele = None
+            if self.cfg.inner_loop:
+                cfg_gele = cfg_m._replace(inner_loop=False)
+                _, outputs_adapt_gele = vmap_over_agents_env_lab_adapt(
+                    agent_params, key_env, key_sim, model, cfg_gele)
+                _, outputs_high_gele = vmap_over_agents_env_lab_high_res(
+                    agent_params, key_env, key_sim, model, cfg_gele)
+                self.compare_memory(outputs_high, outputs_high_gele, exp_dir,
+                                    bras=("inner", "gele"),
+                                    entete="GRADIENT INTRA-VIE vs POIDS GELES",
+                                    label_intact="gradient on",
+                                    label_bras2="weights frozen for life",
+                                    titre_fig="Same genomes, with and without the inner loop",
+                                    fname_fig="lab_inner_loop_evolution",
+                                    titre_gain="Gain de la boucle interne, par genome")
+
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
@@ -498,6 +519,23 @@ class LabMixin:
                                         suffix=f"_adapt_{name}",
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot)
+                # C'est ICI que la boucle interne doit payer : sous permutation,
+                # la valeur des canaux a change et seul un apprentissage pendant
+                # la vie peut la retrouver.
+                if outputs_adapt_gele is not None:
+                    out_gele = jax.tree_util.tree_map(lambda x: x[:, j],
+                                                      outputs_adapt_gele)
+                    self.compare_memory(out_rot, out_gele, exp_dir,
+                                        suffix=f"_adapt_{name}",
+                                        env_titre=f"adapt {name}",
+                                        resources=resources_rot,
+                                        bras=("inner", "gele"),
+                                    entete="GRADIENT INTRA-VIE vs POIDS GELES",
+                                    label_intact="gradient on",
+                                    label_bras2="weights frozen for life",
+                                    titre_fig="Same genomes, with and without the inner loop",
+                                    fname_fig="lab_inner_loop_evolution",
+                                    titre_gain="Gain de la boucle interne, par genome")
                     # selection ET rejeu dans l'env PERMUTE : c'est la que la
                     # memoire est censee servir, pas dans celui pour lequel le
                     # genome a deja ete selectionne.
@@ -1062,8 +1100,17 @@ class LabMixin:
         return table
 
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",
-                       env_titre="high_res (unpermuted)", resources=None):
-        """Compare, PAR GENOME, l'agent avec et sans memoire intra-vie.
+                       env_titre="high_res (unpermuted)", resources=None,
+                       bras=("memory", "ablated"), entete="MEMOIRE INTACTE vs COUPEE",
+                       label_intact=None, label_bras2="all channels ablated",
+                       titre_fig="Same genomes, with and without within-life memory",
+                       fname_fig="lab_memory_ablation_evolution",
+                       titre_gain="Gain de la memoire, par genome"):
+        """Compare, PAR GENOME, deux bras qui ne different que par un facteur.
+
+        `bras` nomme les deux cotes : ("memory", "ablated") pour la memoire,
+        ("inner", "gele") pour la boucle interne. Il sert de prefixe aux cles du
+        npz et de tag de fichier, donc chaque comparaison a sa propre serie.
 
         `suffix` indexe la famille de fichiers, donc une comparaison par
         environnement : "" pour l'env non permute, "_adapt_<condition>" pour
@@ -1106,30 +1153,29 @@ class LabMixin:
             mask  = ~(np.isnan(f[k]) | np.isnan(a[k]))
             delta = a[k][mask] - f[k][mask]          # ablate - intact
             row = {"n": int(mask.sum())}
-            row.update(_dispersion(f[k][mask], "memory",   empty=float("nan")))
-            row.update(_dispersion(a[k][mask], "ablated",  empty=float("nan")))
+            row.update(_dispersion(f[k][mask], bras[0], empty=float("nan")))
+            row.update(_dispersion(a[k][mask], bras[1], empty=float("nan")))
             row.update(_dispersion(delta,      "delta",    empty=float("nan")))
             table[k] = row
             # signe inverse du tableau : positif = la memoire AIDE
             par_genome[f"gain_{k}"] = f[k][mask] - a[k][mask]
             if k == "age":
                 gain_brut = f[k] - a[k]        # non masque : indices = agent_params
-            par_genome[f"memory_{k}"]  = f[k][mask]
-            par_genome[f"ablated_{k}"] = a[k][mask]
+            par_genome[f"{bras[0]}_{k}"] = f[k][mask]
+            par_genome[f"{bras[1]}_{k}"] = a[k][mask]
 
-        print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE"
-              f" | {env_titre} ---")
-        print(f"  {'metric':<22}{'memory':>10}{'ablated':>10}{'Δ median':>11}{'Δ IQR':>20}")
+        print(f"\n--- Lab chunk {self.chunk_idx} | {entete} | {env_titre} ---")
+        print(f"  {'metric':<22}{bras[0]:>10}{bras[1]:>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
-            print(f"  {labels[k]:<22}{r['memory_p50']:>10.3f}{r['ablated_p50']:>10.3f}"
+            print(f"  {labels[k]:<22}{r[bras[0] + '_p50']:>10.3f}{r[bras[1] + '_p50']:>10.3f}"
                   f"{r['delta_p50']:>11.3f}"
                   f"{'[' + format(r['delta_p25'], '.3f') + ', ' + format(r['delta_p75'], '.3f') + ']':>20}")
 
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        tag = f"memory{suffix}"
+        tag = f"{bras[0]}{suffix}"
         with open(os.path.join(data_dir,
                                f"chunk_{self.chunk_idx}_{tag}.json"), "w") as fh:
             json.dump(payload, fh, indent=2)
@@ -1148,15 +1194,18 @@ class LabMixin:
                                   ("interoception", self.cfg.ablate_interoception),
                                   ("feedback", self.cfg.ablate_feedback))
                   if on or self.cfg.ablate_memory]
-        ref = "memory intact" if not coupes else f"as evolved ({'+'.join(coupes)} cut)"
+        ref = label_intact or ("memory intact" if not coupes
+                               else f"as evolved ({'+'.join(coupes)} cut)")
 
         plot_alone_vs_clones(
             exp_dir=exp_dir, tag=tag,
-            prefixes=("memory", "ablated"),
-            labels=(ref, "all channels ablated"),
-            titre=f"Same genomes, with and without within-life memory — {env_titre}",
-            fname=f"lab_memory_ablation_evolution{suffix}.png")
-        plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix, env_titre=env_titre)
+            prefixes=bras,
+            labels=(ref, label_bras2),
+            titre=f"{titre_fig} — {env_titre}",
+            fname=f"{fname_fig}{suffix}.png")
+        plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix,
+                              env_titre=env_titre,
+                              axe_x=f"{ref} − {label_bras2}", titre=titre_gain)
         return table, gain_brut
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):
