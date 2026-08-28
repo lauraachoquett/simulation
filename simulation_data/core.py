@@ -23,10 +23,11 @@ from simulation.utils.plots import (
     plot_life_expectancy,
     plot_invasion,
     plot_inner_loss,
+    plot_inner_loss_by_age,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
-from .demography import DemographyMixin
+from .demography import DemographyMixin, AGE_BIN
 from .genealogy import GenealogyMixin
 from .weights import WeightsMixin
 from .lab import LabMixin
@@ -99,6 +100,8 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             plot_inner_loss(
                 block_apply(np.concatenate(self.perte_history, axis=0), edges, "nanmean"),
                 exp_dir, self.start_step, steps=steps_r)
+            plot_inner_loss_by_age(self.age_somme, self.age_compte, exp_dir,
+                                   age_bin=AGE_BIN)
         if self.cfg.invasion_start > 0:
             plot_invasion(pop_r, block_apply(oracle_full, edges, 'mean'), exp_dir,
                           self.start_step, steps=steps_r,

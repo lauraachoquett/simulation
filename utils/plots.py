@@ -1859,6 +1859,62 @@ def plot_inner_loss(perte, exp_dir, start_step=0, steps=None):
     print(f"Figure saved: {out}")
 
 
+def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
+    """Erreur de prediction en fonction de l'AGE de l'agent, par tranche de run.
+
+    C'est la figure qui separe les deux effets que la courbe temporelle confond :
+
+      - une courbe qui DESCEND avec l'age = l'agent apprend pendant sa vie ;
+      - des courbes qui descendent d'une tranche a la suivante = l'evolution
+        fournit une meilleure initialisation, c'est-a-dire l'effet Baldwin.
+
+    Les deux sont necessaires. Une courbe plate mais qui descend entre tranches
+    voudrait dire que les agents naissent mieux equipes sans rien apprendre.
+    """
+    S = np.asarray(sommes, dtype=float)      # (n_chunks, n_bins)
+    C = np.asarray(comptes, dtype=float)
+    if S.size == 0 or C.sum() == 0:
+        print("No inner-loss-by-age data to plot.")
+        return
+
+    bornes = np.linspace(0, len(S), n_tranches + 1).astype(int)
+    bornes = np.unique(bornes)
+    x = (np.arange(S.shape[1]) + 0.5) * age_bin
+    cmap = plt.get_cmap("viridis")
+
+    fig, (g, d) = plt.subplots(1, 2, figsize=(14, 5))
+    for i, (lo, hi) in enumerate(zip(bornes[:-1], bornes[1:])):
+        c = C[lo:hi].sum(axis=0)
+        y = np.divide(S[lo:hi].sum(axis=0), c, out=np.full_like(c, np.nan),
+                      where=c > 0)
+        # un casier vu moins de 30 fois est du bruit, pas une mesure
+        y[c < 30] = np.nan
+        coul = cmap(i / max(len(bornes) - 2, 1))
+        g.plot(x, y, color=coul, lw=1.8,
+               label=f"chunks {lo}-{hi - 1}")
+        d.plot(x, c, color=coul, lw=1.2)
+
+    g.set_yscale("log")
+    g.set_xlabel("age de l'agent (pas)")
+    g.set_ylabel("erreur quadratique par bouchee")
+    g.set_title("Erreur de prediction selon l'age\n"
+                "descend avec l'age = apprentissage intra-vie")
+    g.grid(alpha=.3, which="both")
+    g.legend(fontsize=8, title="tranche du run")
+
+    d.set_yscale("log")
+    d.set_xlabel("age de l'agent (pas)")
+    d.set_ylabel("nb de mesures")
+    d.set_title("Effectif par casier\n(la ou c'est creux, la courbe ne dit rien)")
+    d.grid(alpha=.3, which="both")
+
+    fig.tight_layout()
+    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, "plot_inner_loss_by_age.png")
+    fig.savefig(out, dpi=140); plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_metric_pairs(par_genome, exp_dir, chunk, suffix="", titre=""):
     """Chaque metrique du lab en fonction de chaque autre, sur les agents.
 

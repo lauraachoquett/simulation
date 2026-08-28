@@ -16,6 +16,11 @@ from simulation.utils.utils_sim import classify_outcome
 # mesurent plus la meme chose. = 2 * cfg.agent_view, cf. le commentaire la-bas.
 EAT_WINDOW = 10
 
+# Resolution de la courbe erreur-vs-age de la boucle interne. 80 x 50 = 4000 pas
+# couvre largement une vie ; au-dela tout retombe dans le dernier casier.
+AGE_BIN = 50
+N_AGE_BINS = 80
+
 
 def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
     """(T, n_types) x2 : n = agents voyant le type k, k_ = ceux qui le mangent.
@@ -51,6 +56,8 @@ class DemographyMixin:
         self.mov_history = []
         self.life_history = []
         self.perte_history = []
+        self.age_somme = []
+        self.age_compte = []
 
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx
@@ -66,14 +73,24 @@ class DemographyMixin:
         # ecartes : les compter comme zero ferait croire a une prediction parfaite.
         if self.cfg.inner_loop:
             perte = np.asarray(outputs.perte_pred)             # (T, N)
-            vivants = np.asarray(outputs.alive) > 0
-            valides = np.where(vivants & np.isfinite(perte), perte, np.nan)
+            ok = (np.asarray(outputs.alive) > 0) & np.isfinite(perte)
+            valides = np.where(ok, perte, np.nan)
             n_valides = np.isfinite(valides).sum(axis=1)
             perte_chunk = np.divide(np.nansum(valides, axis=1), n_valides,
                                     out=np.full(len(pop_chunk), np.nan),
                                     where=n_valides > 0)
+            # Erreur en fonction de l'AGE de l'agent, accumulee en casiers.
+            # C'est la seule vue qui montre l'apprentissage INTRA-VIE : la courbe
+            # precedente melange nouveau-nes et agents murs, et ne peut donc pas
+            # distinguer "il apprend pendant sa vie" de "il nait mieux equipe".
+            age = np.asarray(outputs.step)[:, None] - np.asarray(outputs.born_step)
+            casier = np.clip(age // AGE_BIN, 0, N_AGE_BINS - 1)
+            somme_chunk = np.bincount(casier[ok], weights=perte[ok],
+                                      minlength=N_AGE_BINS)
+            compte_chunk = np.bincount(casier[ok], minlength=N_AGE_BINS)
         else:
             perte_chunk = np.zeros(len(pop_chunk))
+            somme_chunk = compte_chunk = np.zeros(N_AGE_BINS)
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
@@ -84,6 +101,8 @@ class DemographyMixin:
         self.seen_history.append(seen_chunk)
         self.eaten_seen_history.append(eaten_seen_chunk)
         self.perte_history.append(perte_chunk)
+        self.age_somme.append(somme_chunk)
+        self.age_compte.append(compte_chunk)
         self.mov_history.append(mov_chunk)
         self.life_history.append(life_chunk)
 
@@ -96,6 +115,8 @@ class DemographyMixin:
             n_seen        = seen_chunk,
             n_eaten_seen  = eaten_seen_chunk,
             perte_pred    = perte_chunk,
+            perte_age_somme  = somme_chunk,
+            perte_age_compte = compte_chunk,
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )
