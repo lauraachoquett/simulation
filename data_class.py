@@ -216,6 +216,14 @@ class Config(NamedTuple):
     # la politique et le conv restent evolues. Les poids appris meurent avec
     # l'agent : l'enfant repart du genome. Demande model_version="v2".
     inner_loop : bool = False
+
+    # Plafond de la boucle interne : v_pred est impose aux vrais delta_energy,
+    # en permanence, quelle que soit la permutation en cours. L'evolution part
+    # donc d'une information PARFAITE. Repond a une seule question -- la tete de
+    # politique est-elle capable d'apprendre a lire v_pred ? Si meme la, elle
+    # n'y arrive pas, ce n'est plus un probleme d'amorcage mais d'architecture.
+    # N'a pas besoin de inner_loop : la tete de valeur est court-circuitee.
+    vpred_oracle : bool = False
     # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
     # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
     # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,

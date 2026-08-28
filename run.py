@@ -91,10 +91,30 @@ def build_model(cfg, valeur_forcee=()):
         memory_mode=cfg.memory_mode,
         # la tete de valeur n'existe que si la boucle interne tourne : sans ce
         # garde-fou tous les runs precedents changeraient de nombre de parametres
-        predict_value=len(cfg.resources) if cfg.inner_loop else 0,
+        # la tete de valeur existe des que l'un des deux la demande. Sans ce
+        # garde-fou tous les runs precedents changeraient de nombre de parametres
+        predict_value=(len(cfg.resources)
+                       if (cfg.inner_loop or cfg.vpred_oracle) else 0),
         # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
         valeur_forcee=tuple(valeur_forcee),
     )
+
+
+# Les shuffles permutent cfg.resources, donc les valeurs imposees changent avec
+# eux. On garde un modele par jeu de valeurs : il n'y a que len(resources)!
+# permutations, donc au plus 6 compilations sur tout le run, contre une par
+# shuffle si on reconstruisait a chaque fois.
+_MODELES_ORACLE = {}
+
+
+def model_pour(cfg, model_defaut):
+    """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
+    if not cfg.vpred_oracle:
+        return model_defaut
+    cle = tuple(float(r.delta_energy) for r in cfg.resources)
+    if cle not in _MODELES_ORACLE:
+        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=cle)
+    return _MODELES_ORACLE[cle]
 
 
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', subkeys_init=None):
@@ -163,6 +183,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if cfg.vpred_oracle:
+        print("[vpred oracle] v_pred impose aux vraies valeurs : "
+              + "  ".join(f"c{i}={LABELS[r.id]} {r.delta_energy:+g}"
+                          for i, r in enumerate(cfg.resources))
+              + "\n               la tete de valeur est court-circuitee "
+                "(plafond : l'evolution part d'une information parfaite)")
     if cfg.inner_loop:
         n_inner = int(masque_valeur(model).sum())
         print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
@@ -209,7 +235,10 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} START  @ {time.strftime('%H:%M:%S')}")
-            state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
+            # avec vpred_oracle, le modele porte les valeurs de la permutation
+            # en cours ; sans, model_pour renvoie `model` inchange
+            state, outputs = run_simulation_chunk(state, model_pour(cfg, model),
+                                                  keys_chunk, cfg)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} DONE   @ {time.strftime('%H:%M:%S')}")
             
   
@@ -249,13 +278,14 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                     fut = executor.submit(_video_worker, outputs_np, vid_path, *args)
                     pending_futures[fut] = label if label is not None else vid_path
                     return fut
-                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model,exp_dir = exp_dir,n=50,submit_video=submit_video)
+                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model_pour(cfg, model),exp_dir = exp_dir,n=50,submit_video=submit_video)
 
             ## EVALUABILITE ##
             if cfg.evolvability_freq > 0 and int(state.step) % cfg.evolvability_freq == 0:
                 subkey_lab, subkey_evo = random.split(subkey_lab)
                 sim_data.launch_evolvability(state=state, key_env=subkey_env_lab,
-                                             subkey_sim=subkey_evo, model=model,
+                                             subkey_sim=subkey_evo,
+                                             model=model_pour(cfg, model),
                                              exp_dir=exp_dir)
 
             chunks_survived+=1
@@ -348,6 +378,7 @@ CLI_FLAGS = [
     (("--mem-ablation",), "lab_memory_ablation"),
     (("--weights",), "track_weights"),
     (("--inner",),   "inner_loop"),
+    (("--vpred-oracle",), "vpred_oracle"),
 ]
 
 
@@ -419,6 +450,9 @@ def parse_cli(cfg):
         maj[ABLATIONS[lettre]] = True
 
     # apres les ablations : -x m les pose ici, les tester plus haut les raterait
+    if maj.get("vpred_oracle") and maj["model_version"] != "v2":
+        p.error("--vpred-oracle demande -m v2 : la tete de valeur n'existe "
+                "qu'en memoire separee.")
     if maj.get("inner_loop"):
         if maj["model_version"] != "v2":
             p.error("--inner demande -m v2 : en v1 le LSTM ne recoit pas "
