@@ -1782,6 +1782,47 @@ CORR_TITRES = {"age": "lifespan", "mean_rew": "intake /step",
                "greediness": "greediness", "adapt_gain": "net gain /step"}
 
 
+def plot_invasion(pop, oracles, exp_dir, start_step=0, steps=None,
+                  invasion_start=None, cible=None):
+    """Frequence des envahisseurs au cours du temps.
+
+    C'est LA figure du test : si la frequence monte, discriminer paie ; si elle
+    stagne ou retombe, l'environnement ne le recompense pas.
+    """
+    pop = np.asarray(pop, dtype=float)
+    ora = np.asarray(oracles, dtype=float)
+    x = (np.asarray(steps) if steps is not None
+         else np.arange(start_step, start_step + len(pop)))
+    freq = np.divide(ora, pop, out=np.zeros_like(ora), where=pop > 0)
+
+    fig, (h, b) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
+                               gridspec_kw={"height_ratios": [2, 1]})
+    h.plot(x, 100 * freq, color="#C1121F", lw=2, label="envahisseurs")
+    if cible is not None:
+        h.axhline(100 * cible, color="0.4", ls="--", lw=1,
+                  label=f"cible d'injection ({100*cible:.0f}%)")
+    if invasion_start is not None:
+        for ax in (h, b):
+            ax.axvline(invasion_start, color="0.3", ls=":", lw=1.4)
+        h.annotate("injection", (invasion_start, h.get_ylim()[1]),
+                   xytext=(6, -12), textcoords="offset points", fontsize=9, color="0.3")
+    h.set_ylabel("part de la population (%)")
+    h.set_ylim(bottom=0)
+    h.grid(alpha=.3); h.legend(loc="best")
+    h.set_title("Test d'invasion — frequence des oracles")
+
+    b.plot(x, pop, color="0.35", lw=1.2, label="population totale")
+    b.plot(x, ora, color="#C1121F", lw=1.2, label="oracles")
+    b.set_ylabel("effectif"); b.set_xlabel("Steps")
+    b.grid(alpha=.3); b.legend(loc="best", fontsize=9)
+
+    fig.tight_layout()
+    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, "plot_invasion.png")
+    fig.savefig(out, dpi=140); plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_metric_pairs(par_genome, exp_dir, chunk, suffix="", titre=""):
     """Chaque metrique du lab en fonction de chaque autre, sur les agents.
 

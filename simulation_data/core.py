@@ -21,6 +21,7 @@ from simulation.utils.plots import (
     plot_current_config,
     plot_lifetime_vs_step,
     plot_life_expectancy,
+    plot_invasion,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
@@ -60,6 +61,7 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         # Les donnees pleine resolution restent dans les .npz : tools/replot.py
         # les rejoue a la demande.
         pop_full      = np.concatenate(self.pop_history, axis=0)
+        oracle_full   = np.concatenate(self.oracle_history, axis=0)
         res_full      = np.concatenate(self.res_history, axis=0)
         consumed_full = np.concatenate(self.consumed_history, axis=0)
         seen_full     = np.concatenate(self.seen_history, axis=0)
@@ -92,6 +94,12 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_phase_portrait_png(
             pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
+        if self.cfg.invasion_start > 0:
+            plot_invasion(pop_r, block_apply(oracle_full, edges, 'mean'), exp_dir,
+                          self.start_step, steps=steps_r,
+                          invasion_start=self.cfg.invasion_start,
+                          cible=self.cfg.invasion_frac)
+
         life_data = np.concatenate(self.life_history, axis=1)
         # les 1500 premiers pas sont ecartes : apres une reprise il peut ne
         # rester aucun point avant plusieurs chunks, il n'y a alors rien a tracer

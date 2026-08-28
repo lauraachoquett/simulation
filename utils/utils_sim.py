@@ -112,6 +112,7 @@ def init_state(key, cfg, model):
         parent_id=jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32),
         born_step=jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32),
         params=params,
+        is_oracle=jnp.zeros((cfg.n_agents_max,)),
         policy_states=policy_states
     )
 

@@ -44,6 +44,7 @@ class DemographyMixin:
     def _init_demography(self):
         self.pop_history = []
         self.res_history = []
+        self.oracle_history = []
         self.consumed_history = []
         self.seen_history = []
         self.eaten_seen_history = []
@@ -53,6 +54,8 @@ class DemographyMixin:
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx
         pop_chunk  = np.array(outputs.alive.sum(axis=1))          # (T,)
+        # envahisseurs vivants, pour la courbe d'invasion
+        oracle_chunk = np.array((outputs.alive * outputs.is_oracle).sum(axis=1))
         n_types = len(self.cfg.resources)
         res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3)))
         consumed_chunk = np.array(outputs.consumed_res)           # (T, n_types)
@@ -62,6 +65,7 @@ class DemographyMixin:
 
         self.pop_history.append(pop_chunk)
         self.res_history.append(res_chunk)
+        self.oracle_history.append(oracle_chunk)
         self.consumed_history.append(consumed_chunk)
         self.seen_history.append(seen_chunk)
         self.eaten_seen_history.append(eaten_seen_chunk)
@@ -72,6 +76,7 @@ class DemographyMixin:
             os.path.join(data_dir, f"chunk_{self.chunk_idx:05d}.npz"),
             population    = pop_chunk,
             resources     = res_chunk,
+            oracles       = oracle_chunk,
             consumed      = consumed_chunk,
             n_seen        = seen_chunk,
             n_eaten_seen  = eaten_seen_chunk,

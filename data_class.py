@@ -19,6 +19,7 @@ class AgentState:
     parent_id: jnp.ndarray             # (n_agents,)
     born_step: jnp.ndarray             # (n_agents,)
     params: jnp.ndarray                # (n_agents, num_params)
+    is_oracle: jnp.ndarray             # (n_agents,) 1 = politique codee en dur
     policy_states: Any                  # État caché du RNN (Pytree)
 
 @struct.dataclass
@@ -92,6 +93,11 @@ class Config(NamedTuple):
     oracle_agent : bool = False
     # l'oracle se gare a cote d'une ressource au lieu de la manger a satiete
     oracle_wait : bool = True
+
+    # test d'invasion : a partir de invasion_start, les naissances sont
+    # converties en oracles jusqu'a ce qu'ils soient invasion_frac de n_agents_max
+    invasion_start : int = 0          # 0 = pas d'invasion
+    invasion_frac : float = 0.10
     
     resources: tuple  = BASE_RESOURCES
     # Lab env paramaeters

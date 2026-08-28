@@ -36,6 +36,7 @@ class StepLog(NamedTuple):
     consumed_res: jax.Array   # (n_types,) -> unités retirées de la grille PENDANT ce step
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
+    is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
     
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -98,24 +99,25 @@ def run_simulation_chunk(state,model,keys, cfg):
                 lstm_c=jnp.zeros_like(new_policy_states.lstm_c),
                 keys=new_policy_states.keys,
             )
-        if cfg.oracle_agent:
-            actions_id = jax.nn.one_hot(
-                oracle_actions(
-                    state.obs, cfg.resources,
-                    energy=state.agents.energy if cfg.oracle_wait else None,
-                    energy_max=cfg.energy_max if cfg.oracle_wait else None),
-                cfg.output_dim)
-        elif cfg.dumb_agent:  
-            actions_id = jax.nn.one_hot(
-                random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=cfg.output_dim),
-                cfg.output_dim,
-            )
+        if cfg.dumb_agent:
+            acts_idx = random.randint(key_action, shape=(cfg.n_agents_max,),
+                                      minval=0, maxval=cfg.output_dim)
         else:
-            
-            actions_id = jax.nn.one_hot(
-                random.categorical(key_action, actions_logit  / cfg.temperature, axis=-1),
-                cfg.output_dim,
-            )
+            acts_idx = random.categorical(key_action, actions_logit / cfg.temperature, axis=-1)
+
+        # L'oracle remplace le reseau AGENT PAR AGENT : cfg.oracle_agent le force
+        # pour tous, is_oracle ne le donne qu'aux envahisseurs. Il est calcule
+        # pour tout le monde -- quelques operations sur (N, 11, 11, C), du meme
+        # ordre que la passe conv -- et selectionne ensuite.
+        if cfg.oracle_agent or cfg.invasion_start > 0:
+            a_oracle = oracle_actions(
+                state.obs, cfg.resources,
+                energy=state.agents.energy if cfg.oracle_wait else None,
+                energy_max=cfg.energy_max if cfg.oracle_wait else None)
+            prend = (agents.is_oracle > 0) if not cfg.oracle_agent else jnp.ones_like(agents.is_oracle, bool)
+            acts_idx = jnp.where(prend, a_oracle, acts_idx)
+
+        actions_id = jax.nn.one_hot(acts_idx, cfg.output_dim)
 
         acts = jnp.argmax(actions_id, axis=1)
         agents= vmap_update_agents_position(agents,acts,cfg.grid_length) 
@@ -188,6 +190,19 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_alive = survives_int.at[free_indices].set(1)
             final_parent_id = agents.parent_id.at[free_indices].set(parent_indices)
             final_born_step = agents.born_step.at[free_indices].set(step_idx)
+
+            # Invasion : l'enfant herite du drapeau de son parent, sauf pendant
+            # la fenetre ou on convertit les naissances en oracles jusqu'a
+            # atteindre la cible. rang = combien d'oracles cette naissance-ci
+            # ajouterait, pour ne pas depasser.
+            herite = agents.is_oracle[parent_indices]
+            n_vivants = (agents.is_oracle * survives_int).sum()
+            cible = cfg.invasion_frac * cfg.n_agents_max
+            rang = jnp.cumsum(spawn_mask) - 1
+            convertit = (spawn_mask & (step_idx >= cfg.invasion_start)
+                         & (cfg.invasion_start > 0) & (n_vivants + rang < cible))
+            final_is_oracle = agents.is_oracle.at[free_indices].set(
+                jnp.where(convertit, 1.0, herite))
             
             final_alive_without_0 = final_alive.at[0].set(0)
             
@@ -216,6 +231,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_alive_without_0 = final_alive.at[0].set(0)
             final_policy_states = new_policy_states
             final_params = agents.params
+            final_is_oracle = agents.is_oracle
             
             
         # Update spatial grid with agents positions
@@ -231,7 +247,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             parent_id=final_parent_id,
             born_step=final_born_step,
             policy_states = final_policy_states,
-            params = final_params
+            params = final_params,
+            is_oracle = final_is_oracle,
         )
         
         new_grid = jnp.concatenate([grid_resources, grid_agents[None], grid_walls[None]], axis=0)
@@ -263,6 +280,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             consumed_res = consumed_per_type,
             saw_res = saw_res_step,
             ate_res = ate_res_step,
+            is_oracle = state.agents.is_oracle,
         )
         
         return new_state, log
