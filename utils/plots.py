@@ -1860,6 +1860,54 @@ def _bary(p_good, p_medium, p_poison):
     return p_poison + p_good / 2.0, (np.sqrt(3) / 2.0) * p_good
 
 
+def _teinte_id(nom):
+    """Couleur du sommet, alpha ignore (COLOR_BY_ID[1] a 8 chiffres hex)."""
+    from simulation.data_class import LABELS, COLOR_BY_ID
+    c = COLOR_BY_ID[LABELS.index(nom)]
+    return c[:7] if len(c) == 9 else c
+
+
+def _cadre_simplex(ax, etiquettes=True):
+    """Triangle, grille interne, graduations et sommets. Partage par toutes les
+    figures en simplex pour qu'elles restent lisibles de la meme facon."""
+    coins = np.array([_SOMMETS["medium"], _SOMMETS["poison"], _SOMMETS["good"],
+                      _SOMMETS["medium"]])
+    ax.plot(coins[:, 0], coins[:, 1], color="0.25", lw=1.4, zorder=2)
+
+    for f in np.arange(0.2, 1.0, 0.2):
+        for a, b in (((f, 1 - f, 0), (f, 0, 1 - f)),      # good constant
+                     ((1 - f, f, 0), (0, f, 1 - f)),      # medium constant
+                     ((1 - f, 0, f), (0, 1 - f, f))):     # poison constant
+            x, y = zip(_bary(*a), _bary(*b))
+            ax.plot(x, y, color="0.85", lw=0.7, zorder=1)
+
+    if etiquettes:
+        # une composante par cote, sur le bord ou naissent ses iso-lignes
+        for f in np.arange(0.2, 1.0, 0.2):
+            xg, yg = _bary(f, 0, 1 - f)                    # good, cote droit
+            ax.text(xg + .028, yg + .008, f"{100*f:.0f}", ha="left", va="center",
+                    fontsize=8, color=_teinte_id("good"))
+            xp, yp = _bary(0, 1 - f, f)                    # poison, cote bas
+            ax.text(xp, yp - .028, f"{100*f:.0f}", ha="center", va="top",
+                    fontsize=8, color=_teinte_id("poison"))
+            xm, ym = _bary(1 - f, f, 0)                    # medium, cote gauche
+            ax.text(xm - .028, ym + .008, f"{100*f:.0f}", ha="right", va="center",
+                    fontsize=8, color=_teinte_id("medium"))
+
+    for nom, (dx, dy, ha, va) in (("good", (0, .040, "center", "bottom")),
+                                  ("medium", (-.045, -.030, "right", "top")),
+                                  ("poison", (.045, -.030, "left", "top"))):
+        x0, y0 = _SOMMETS[nom]
+        ax.text(x0 + dx, y0 + dy, nom, ha=ha, va=va, fontsize=13, weight="bold",
+                color=_teinte_id(nom))
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+    marge = .09
+    ax.set_xlim(-marge, 1 + marge)
+    ax.set_ylim(-marge, np.sqrt(3) / 2 + marge)
+
+
 def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                       suffix="", titre="", fig_dir=None, parent=None,
                       age_max=None):
@@ -1889,44 +1937,7 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     n_exclus = int((~ok).sum())
 
     fig, ax = plt.subplots(figsize=(7.5, 7))
-
-    # cadre
-    coins = np.array([_SOMMETS["medium"], _SOMMETS["poison"], _SOMMETS["good"],
-                      _SOMMETS["medium"]])
-    ax.plot(coins[:, 0], coins[:, 1], color="0.25", lw=1.4, zorder=2)
-
-    # grille interne : trois familles de paralleles aux cotes
-    for f in np.arange(0.2, 1.0, 0.2):
-        for a, b in (((f, 1 - f, 0), (f, 0, 1 - f)),      # good constant
-                     ((1 - f, f, 0), (0, f, 1 - f)),      # medium constant
-                     ((1 - f, 0, f), (0, 1 - f, f))):     # poison constant
-            x, y = zip(_bary(*a), _bary(*b))
-            ax.plot(x, y, color="0.85", lw=0.7, zorder=1)
-
-    # une composante par cote, sur le bord ou naissent ses iso-lignes, coloree
-    # comme son sommet : sinon deux series graduent la meme composante.
-    def _teinte(nom):
-        c = COLOR_BY_ID[LABELS.index(nom)]
-        return c[:7] if len(c) == 9 else c        # 8 chiffres hex = alpha, ignore
-
-    for f in np.arange(0.2, 1.0, 0.2):
-        xg, yg = _bary(f, 0, 1 - f)                        # good, cote droit
-        ax.text(xg + .028, yg + .008, f"{100*f:.0f}", ha="left", va="center",
-                fontsize=8, color=_teinte("good"))
-        xp, yp = _bary(0, 1 - f, f)                        # poison, cote bas
-        ax.text(xp, yp - .028, f"{100*f:.0f}", ha="center", va="top",
-                fontsize=8, color=_teinte("poison"))
-        xm, ym = _bary(1 - f, f, 0)                        # medium, cote gauche
-        ax.text(xm - .028, ym + .008, f"{100*f:.0f}", ha="right", va="center",
-                fontsize=8, color=_teinte("medium"))
-
-    # sommets
-    for nom, (dx, dy, ha, va) in (("good", (0, .040, "center", "bottom")),
-                                  ("medium", (-.045, -.030, "right", "top")),
-                                  ("poison", (.045, -.030, "left", "top"))):
-        x0, y0 = _SOMMETS[nom]
-        ax.text(x0 + dx, y0 + dy, nom, ha=ha, va=va, fontsize=13, weight="bold",
-                color=_teinte(nom))
+    _cadre_simplex(ax)
 
     # agents
     if p.size:
@@ -1964,11 +1975,6 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
         ax.legend(loc="upper left", frameon=False, fontsize=9,
                   bbox_to_anchor=(-.02, 1.0))
 
-    ax.set_aspect("equal")
-    ax.axis("off")
-    marge = .09
-    ax.set_xlim(-marge, 1 + marge)
-    ax.set_ylim(-marge, np.sqrt(3) / 2 + marge)
     sous = f"{int(ok.sum())} agents"
     if n_exclus:
         sous += f"  ({n_exclus} exclus : rien mange)"
@@ -1982,6 +1988,57 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Figure saved: {out}")
+
+
+def plot_energy_expectation(resources, out_path, niveaux=7):
+    """Esperance d'energie par item mange, pour chaque composition de regime.
+
+    E[de] = somme_i p_i * de_i : lineaire sur le simplex, donc un degrade dont
+    la ligne zero separe les regimes rentables des regimes deficitaires. Ne
+    depend que de data_class, aucune simulation n'est necessaire.
+    """
+    from simulation.data_class import LABELS
+
+    par_id = {r.id: r for r in resources}
+    if set(par_id) != {0, 1, 2}:
+        print(f"Esperance : il faut les 3 identites, reçu {sorted(par_id)}.")
+        return
+    de = np.array([par_id[LABELS.index(n)].delta_energy
+                   for n in ("good", "medium", "poison")], dtype=float)
+
+    # maillage barycentrique regulier
+    N = 200
+    i, j = np.meshgrid(np.arange(N + 1), np.arange(N + 1), indexing="ij")
+    garde = (i + j) <= N
+    pg, pp = i[garde] / N, j[garde] / N
+    pm = 1.0 - pg - pp
+    x, y = _bary(pg, pm, pp)
+    E = pg * de[0] + pm * de[1] + pp * de[2]
+
+    vmax = float(np.abs(de).max())
+    fig, ax = plt.subplots(figsize=(9.2, 7))
+    tcf = ax.tricontourf(x, y, E, levels=np.linspace(-vmax, vmax, 41),
+                         cmap="RdYlGn", vmin=-vmax, vmax=vmax, zorder=0)
+    cs = ax.tricontour(x, y, E, levels=niveaux, colors="0.30", linewidths=.6,
+                       zorder=1)
+    ax.clabel(cs, fmt="%+.2f", fontsize=7.5, inline=True)
+    z = ax.tricontour(x, y, E, levels=[0.0], colors="black", linewidths=2.2,
+                      zorder=3)
+    ax.clabel(z, fmt={0.0: "break-even"}, fontsize=9, inline=True)
+
+    _cadre_simplex(ax)
+    cb = fig.colorbar(tcf, ax=ax, shrink=.72, pad=.10,
+                      ticks=np.linspace(-vmax, vmax, 5))
+    cb.set_label("expected energy per item eaten", fontsize=10)
+
+    detail = "   ".join(f"{n} {par_id[LABELS.index(n)].delta_energy:+g}"
+                        for n in ("good", "medium", "poison"))
+    ax.set_title("Expected energy of a diet\n" + detail, fontsize=12)
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out_path}")
 
 
 EVO_METRIQUES = ["age", "mean_rew", "mean_speed", "energy_end",
