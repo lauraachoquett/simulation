@@ -67,7 +67,7 @@ def init_inner(cfg, params):
         tampon_r=jnp.zeros((n, k)),
         carry_h=jnp.zeros((n, cfg.hidden_dim)),
         carry_c=jnp.zeros((n, cfg.hidden_dim)),
-        perte=jnp.zeros((n,)),
+        perte=jnp.full((n,), jnp.nan),   # rien de mesure avant la 1re fenetre
     )
 
 

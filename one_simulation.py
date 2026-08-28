@@ -337,7 +337,10 @@ def run_simulation_chunk(state,model,keys, cfg):
                         z(inner_maj.carry_h[0])),
                     carry_c=inner_maj.carry_c.at[free_indices].set(
                         z(inner_maj.carry_c[0])),
-                    perte=inner_maj.perte.at[free_indices].set(0.0),
+                    # NaN et non zero : le nouveau-ne n'a pas encore de perte,
+                    # un zero le ferait compter comme "predit parfaitement" et
+                    # tirerait la courbe vers le bas a chaque renouvellement.
+                    perte=inner_maj.perte.at[free_indices].set(jnp.nan),
                 )
             else:
                 final_inner = None
