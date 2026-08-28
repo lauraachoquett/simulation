@@ -74,9 +74,13 @@ def main():
     a = p.parse_args()
 
     cfg, _ = load_config(a.exp)
-    if not cfg.inner_loop:
-        raise SystemExit("Ce run n'a pas de tete de valeur (inner_loop=False) : "
-                         "il n'y a pas de v_pred a sonder.")
+    # la tete existe des que l'un des deux flags la demande. Sur un run
+    # --vpred-oracle le bras "appris" n'a pas de sens (la tete est
+    # court-circuitee et n'a jamais ete entrainee) : seuls vrai vs nul comptent.
+    if not (cfg.inner_loop or cfg.vpred_oracle):
+        raise SystemExit("Ce run n'a pas de tete de valeur : il n'y a pas de "
+                         "v_pred a sonder.")
+    bras = (("appris", ()),) if cfg.inner_loop else ()
 
     state = load_checkpoint(a.exp, a.chunk)
     vivants = np.asarray(state.agents.alive) > 0
@@ -104,8 +108,8 @@ def main():
     cfg_lab = cfg._replace(log_grid=False, log_obs=False)
 
     res = {}
-    for nom, forcee in (("appris", ()), ("vrai", vraies),
-                        ("nul", (0.0,) * len(cfg.resources))):
+    for nom, forcee in bras + (("vrai", vraies),
+                               ("nul", (0.0,) * len(cfg.resources))):
         modele = build_model(cfg, valeur_forcee=forcee)
         _, out = vmap_over_agents_env_lab_high_res(genomes, k_env, k_sims,
                                                    modele, cfg_lab)
@@ -119,13 +123,14 @@ def main():
               f"{'Δ vs nul':>12}{'signes':>13}{'p':>9}")
         nul = res["nul"][j]
         print(ligne("nul", nul))
-        for nom in ("appris", "vrai"):
+        for nom in [n for n, _ in bras] + ["vrai"]:
             print(ligne(nom, res[nom][j], ref=nul))
 
     d_vrai = np.median(res["vrai"][0] - res["nul"][0])
-    d_appris = np.median(res["appris"][0] - res["nul"][0])
-    print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents, "
-          f"l'apprise en vaut {d_appris:+.1f}.")
+    print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents.")
+    if bras:
+        d_appris = np.median(res["appris"][0] - res["nul"][0])
+        print(f"          l'information apprise en vaut {d_appris:+.1f}.")
     if abs(d_vrai) < 0.02 * np.median(nul):
         print("-> cette population ignore v_pred : lui donner l'information "
               "parfaite ne change rien.\n"
