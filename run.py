@@ -68,7 +68,7 @@ def save_script(exp_dir):
 
     
         
-def build_model(cfg):
+def build_model(cfg, valeur_forcee=()):
     """Unique point de construction du reseau.
 
     Les deux branches de launch_simulation_chunked (nouveau run / reprise)
@@ -92,6 +92,8 @@ def build_model(cfg):
         # la tete de valeur n'existe que si la boucle interne tourne : sans ce
         # garde-fou tous les runs precedents changeraient de nombre de parametres
         predict_value=len(cfg.resources) if cfg.inner_loop else 0,
+        # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
+        valeur_forcee=tuple(valeur_forcee),
     )
 
 
