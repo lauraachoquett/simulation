@@ -369,6 +369,9 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
+    p.add_argument("--init", dest="init_scale", choices=["constant", "lecun"],
+                   default=cfg.init_scale,
+                   help="echelle des poids initiaux (defaut %(default)s)")
     p.add_argument("--shuffle", dest="shuffle_version", choices=["v1", "v2"],
                    default=cfg.shuffle_version,
                    help="version du shuffle (defaut %(default)s) ; v1 = avant le 18 aout")
@@ -390,6 +393,7 @@ def parse_cli(cfg):
     maj.update({c: getattr(args, c) for _, c in CLI_FLAGS})
     maj["model_version"] = args.model_version
     maj["shuffle_version"] = args.shuffle_version
+    maj["init_scale"] = args.init_scale
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))

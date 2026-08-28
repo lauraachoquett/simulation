@@ -156,6 +156,14 @@ class Config(NamedTuple):
     # amnesique. A 1 la retention passe a ~0.73. 0 retablit l'ancien comportement.
     lstm_forget_bias : float = 1.0
 
+    # Echelle des poids a l'initialisation des genomes.
+    #   "constant" : ecart-type 0.01 partout, quelle que soit la couche
+    #   "lecun"    : 1/sqrt(fan_in) par couche, biais a zero (la convention)
+    # A 0.01 le signal est divise par ~15 a chaque couche : la population de
+    # depart ne reagit pas a ce qu'elle voit. Changer ceci demande de remonter
+    # temperature, qui compensait des logits minuscules.
+    init_scale : str = "constant"
+
     # fraction de graines positives au-dela de laquelle un genome rejoue est
     # filme, intact et ablate. 1.0 desactive les videos de rejeu.
     replay_video_min_frac : float = 0.8

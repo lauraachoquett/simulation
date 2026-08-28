@@ -38,6 +38,15 @@ def masque_forget_bias(model):
     return jnp.concatenate(morceaux)
 
 
+def stds_fan_in(model):
+    """(num_params,) : 1/sqrt(fan_in) pour les poids, 0 pour les biais."""
+    morceaux = []
+    for _, feuille in jax.tree_util.tree_flatten_with_path(model.params)[0]:
+        s = 1.0 / np.sqrt(feuille.shape[0]) if feuille.ndim >= 2 else 0.0
+        morceaux.append(jnp.full(feuille.size, s))
+    return jnp.concatenate(morceaux)
+
+
 def init_state(key, cfg, model):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
@@ -78,7 +87,14 @@ def init_state(key, cfg, model):
     alive_mask = jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32).at[1:cfg.n_agents_init+1].set(1)
     
     # Paramètres réseau et état RNN
-    params = random.normal(sk_params, (cfg.n_agents_max, model.num_params)) / 100
+    bruit = random.normal(sk_params, (cfg.n_agents_max, model.num_params))
+    if cfg.init_scale == "lecun":
+        params = bruit * stds_fan_in(model)
+    elif cfg.init_scale == "constant":
+        params = bruit / 100
+    else:
+        raise ValueError(f"init_scale inconnu : {cfg.init_scale!r} "
+                         "(attendu 'constant' ou 'lecun')")
     # sans ca la forget gate demarre a sigmoid(~0) = 0.5 : le carry est divise
     # par deux a chaque pas et la population de depart n'a aucune memoire.
     if cfg.lstm_forget_bias:
