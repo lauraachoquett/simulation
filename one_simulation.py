@@ -100,7 +100,11 @@ def run_simulation_chunk(state,model,keys, cfg):
             )
         if cfg.oracle_agent:
             actions_id = jax.nn.one_hot(
-                oracle_actions(state.obs, cfg.resources), cfg.output_dim)
+                oracle_actions(
+                    state.obs, cfg.resources,
+                    energy=state.agents.energy if cfg.oracle_wait else None,
+                    energy_max=cfg.energy_max if cfg.oracle_wait else None),
+                cfg.output_dim)
         elif cfg.dumb_agent:  
             actions_id = jax.nn.one_hot(
                 random.randint(key_action, shape=(cfg.n_agents_max,), minval=0, maxval=cfg.output_dim),

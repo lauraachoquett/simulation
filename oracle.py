@@ -16,11 +16,19 @@ import jax
 import jax.numpy as jnp
 
 
-def oracle_actions(obs, resources, cout_distance=0.05):
+def oracle_actions(obs, resources, energy=None, energy_max=None,
+                   cout_distance=0.05):
     """(N, side, side, C) -> (N,) indice d'action.
 
     `obs` est la vue egocentrique deja tournee. Le bourrage hors grille vaut -1,
     donc `> 0` l'exclut naturellement.
+
+    Avec `energy` et `energy_max`, l'agent se GARE au lieu de manger a satiete :
+    au-dessus du seuil, s'il a une ressource juste devant, il reste immobile.
+    Deux raisons -- le gain serait rogne par le plafond, et l'immobilite coute
+    factor_energy_decay_not_moving fois moins cher que la marche. La ressource
+    reste sur la case d'a cote, disponible quand la faim revient : on ne mange
+    que ce qui est SOUS soi.
     """
     n_types = len(resources)
     de = jnp.array([r.delta_energy for r in resources])          # (n_types,)
@@ -64,4 +72,9 @@ def oracle_actions(obs, resources, cout_distance=0.05):
     devant = val[:, c + 1, c]
     mur_devant = obs[:, c + 1, c, n_types + 1] > 0
     action = jnp.where((action == 3) & ((devant < 0) | mur_devant), 1, action)
+
+    if energy is not None and energy_max is not None:
+        seuil = energy_max - jnp.maximum(de.max(), 0.0)
+        action = jnp.where((energy >= seuil) & (devant > 0), 0, action)
+
     return action.astype(jnp.int32)

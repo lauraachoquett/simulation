@@ -90,6 +90,8 @@ class Config(NamedTuple):
 
     # politique codee en dur, sans reseau (cf. simulation/oracle.py)
     oracle_agent : bool = False
+    # l'oracle se gare a cote d'une ressource au lieu de la manger a satiete
+    oracle_wait : bool = True
     
     resources: tuple  = BASE_RESOURCES
     # Lab env paramaeters
