@@ -17,7 +17,7 @@ import jax.numpy as jnp
 
 
 def oracle_actions(obs, resources, energy=None, energy_max=None,
-                   cout_distance=0.05):
+                   croyance=None, cout_distance=0.05):
     """(N, side, side, C) -> (N,) indice d'action.
 
     `obs` est la vue egocentrique deja tournee. Le bourrage hors grille vaut -1,
@@ -31,13 +31,18 @@ def oracle_actions(obs, resources, energy=None, energy_max=None,
     que ce qui est SOUS soi.
     """
     n_types = len(resources)
-    de = jnp.array([r.delta_energy for r in resources])          # (n_types,)
+    # `croyance` (N, n_types) remplace la connaissance parfaite : l'agent agit
+    # sur ce qu'il a appris, pas sur la verite.
+    de = (jnp.array([r.delta_energy for r in resources]) if croyance is None
+          else croyance)                                         # (n_types,) ou (N, n_types)
     side = obs.shape[1]
     c = side // 2
 
     present = obs[..., :n_types] > 0                             # (N, s, s, n)
-    # valeur d'une case = le meilleur delta_energy qui s'y trouve
-    val = jnp.max(jnp.where(present, de, -jnp.inf), axis=-1)     # (N, s, s)
+    # valeur d'une case = le meilleur delta_energy qui s'y trouve. Avec une
+    # croyance par agent il faut la diffuser sur les deux axes spatiaux.
+    de_b = de if de.ndim == 1 else de[:, None, None, :]
+    val = jnp.max(jnp.where(present, de_b, -jnp.inf), axis=-1)   # (N, s, s)
     val = jnp.where(jnp.isfinite(val), val, 0.0)                 # case vide -> 0
 
     lignes = jnp.arange(side)[:, None]
@@ -74,7 +79,7 @@ def oracle_actions(obs, resources, energy=None, energy_max=None,
     action = jnp.where((action == 3) & ((devant < 0) | mur_devant), 1, action)
 
     if energy is not None and energy_max is not None:
-        seuil = energy_max - jnp.maximum(de.max(), 0.0)
+        seuil = energy_max - jnp.maximum(de.max(), 0.0)   # scalaire : le meilleur connu
         action = jnp.where((energy >= seuil) & (devant > 0), 0, action)
 
     return action.astype(jnp.int32)

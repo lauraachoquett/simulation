@@ -74,6 +74,8 @@ def init_state_lab(key, cfg, model,agent_params):
         born_step=jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32),
         params=params,
         is_oracle=jnp.zeros((cfg.n_agents_max,)),
+        croyance=jnp.full((cfg.n_agents_max, len(cfg.resources)),
+                          cfg.croyance_init),
         policy_states=policy_states
     )
 

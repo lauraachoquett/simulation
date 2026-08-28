@@ -20,6 +20,7 @@ class AgentState:
     born_step: jnp.ndarray             # (n_agents,)
     params: jnp.ndarray                # (n_agents, num_params)
     is_oracle: jnp.ndarray             # (n_agents,) 1 = politique codee en dur
+    croyance: jnp.ndarray              # (n_agents, n_types) delta_energy estime
     policy_states: Any                  # État caché du RNN (Pytree)
 
 @struct.dataclass
@@ -98,6 +99,12 @@ class Config(NamedTuple):
     # converties en oracles jusqu'a ce qu'ils soient invasion_frac de n_agents_max
     invasion_start : int = 0          # 0 = pas d'invasion
     invasion_frac : float = 0.10
+
+    # L'oracle apprend-il la valeur des canaux, ou la connait-il d'avance ?
+    # "apprenant" : croyance optimiste a la naissance, corrigee a chaque bouchee.
+    # C'est la remise a zero a la naissance qui fait le test intra-vie.
+    oracle_apprend : bool = True
+    croyance_init : float = 1.0
     
     resources: tuple  = BASE_RESOURCES
     # Lab env paramaeters

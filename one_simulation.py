@@ -113,7 +113,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             a_oracle = oracle_actions(
                 state.obs, cfg.resources,
                 energy=state.agents.energy if cfg.oracle_wait else None,
-                energy_max=cfg.energy_max if cfg.oracle_wait else None)
+                energy_max=cfg.energy_max if cfg.oracle_wait else None,
+                croyance=agents.croyance if cfg.oracle_apprend else None)
             prend = (agents.is_oracle > 0) if not cfg.oracle_agent else jnp.ones_like(agents.is_oracle, bool)
             acts_idx = jnp.where(prend, a_oracle, acts_idx)
 
@@ -136,6 +137,12 @@ def run_simulation_chunk(state,model,keys, cfg):
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving,1) * survives_int, cfg.energy_max)
 
         ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
+
+        # Ce que l'agent APPREND de sa bouchee. Les trois delta_energy etant
+        # distincts, une seule suffit a identifier le canal goute. La croyance
+        # est par CANAL, donc elle devient fausse apres un shuffle : c'est
+        # exactement la reevaluation intra-vie qu'on veut mesurer.
+        croyance_maj = jnp.where(ate_res_step, rewards[:, None], agents.croyance)
         saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
 
 
@@ -203,6 +210,9 @@ def run_simulation_chunk(state,model,keys, cfg):
                          & (cfg.invasion_start > 0) & (n_vivants + rang < cible))
             final_is_oracle = agents.is_oracle.at[free_indices].set(
                 jnp.where(convertit, 1.0, herite))
+            # le nouveau-ne ne sait rien : c'est ce qui force a reapprendre a
+            # chaque vie, et donc ce qui fait du test un test intra-vie
+            final_croyance = croyance_maj.at[free_indices].set(cfg.croyance_init)
             
             final_alive_without_0 = final_alive.at[0].set(0)
             
@@ -232,6 +242,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_policy_states = new_policy_states
             final_params = agents.params
             final_is_oracle = agents.is_oracle
+            final_croyance = croyance_maj
             
             
         # Update spatial grid with agents positions
@@ -249,6 +260,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             policy_states = final_policy_states,
             params = final_params,
             is_oracle = final_is_oracle,
+            croyance = final_croyance,
         )
         
         new_grid = jnp.concatenate([grid_resources, grid_agents[None], grid_walls[None]], axis=0)
