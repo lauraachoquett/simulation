@@ -17,7 +17,7 @@ from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.oracle import oracle_actions
-from simulation.utils.utils_sim import masque_valeur
+from simulation.utils.utils_sim import masque_valeur, masque_politique
 
 from typing import NamedTuple
 import jax
@@ -79,6 +79,48 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
         inner.tampon_in, inner.tampon_eaten, inner.tampon_r)
     maj = inner.params_vie - cfg.inner_lr * grad * masque[None] * vivants[:, None]
     return maj, val
+
+
+# Indice de l'action "avancer" : la seule qui deplace sur une case, donc la
+# seule dont la valeur immediate soit definie. Cf. agent_mov.action_depl_theta.
+AVANCER = 3
+
+
+def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
+                           vivants, masque):
+    """Un pas de SGD sur -somme_a pi(a) * v_hat(a), par agent.
+
+    v_hat n'est defini que pour "avancer" : les autres actions ne posent l'agent
+    sur aucune case, leur valeur immediate est nulle. La loss se reduit donc a
+    -pi(avancer) * valeur_de_la_case_devant, ce qui pousse a avancer sur ce que
+    l'agent croit bon et a s'en detourner sinon.
+
+    La croyance passe par stop_gradient : c'est une CIBLE. Sans ca le reseau
+    baisserait la loss en gonflant v_pred au lieu de corriger ses actions.
+
+    Calculee au pas courant et non sur la fenetre : elle ne demande aucune
+    assignation de credit dans le temps, et stocker les observations d'une
+    fenetre couterait des gigaoctets.
+    """
+    n_types = len(cfg.resources)
+    centre = cfg.agent_view
+
+    def perte(theta, h, c, obs, mem_in):
+        p = model.format_one_fn(theta)
+        # meme decoupage que l'entree du LSTM, cf. get_actions
+        la, rw = mem_in[:cfg.output_dim], mem_in[cfg.output_dim:cfg.output_dim + 1]
+        en, le = mem_in[cfg.output_dim + 1:cfg.output_dim + 2], mem_in[cfg.output_dim + 2:]
+        _, _, v = model.valeur_apply(jax.lax.stop_gradient(p), h, c, mem_in)
+        v = jax.lax.stop_gradient(v * cfg.vpred_gain)
+
+        logits = model.logits_apply(p, h, c, obs, la, rw, en, le)
+        pi = jax.nn.softmax(logits / cfg.temperature)
+        # la case devant : ligne +1 dans la vue egocentrique (cf. oracle.py)
+        v_devant = (obs[centre + 1, centre, :n_types] * v).sum()
+        return -pi[AVANCER] * v_devant
+
+    grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
+    return params_vie - cfg.inner_policy_lr * grad * masque[None] * vivants[:, None]
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -208,6 +250,15 @@ def run_simulation_chunk(state,model,keys, cfg):
                 state_in.rewards,
                 jnp.expand_dims(state_in.agents.energy, 1).astype(jnp.float32),
                 state_in.last_eaten.astype(jnp.float32)], axis=1)      # (N, d_mem)
+
+            # Loss de politique : chaque pas, sur la vue et la croyance courantes.
+            if cfg.inner_policy:
+                inner_maj = inner_maj.replace(
+                    params_vie=pas_gradient_politique(
+                        model, cfg, inner_maj.params_vie,
+                        agents.policy_states.lstm_h, agents.policy_states.lstm_c,
+                        state.obs, mem_in, survives_int.astype(jnp.float32),
+                        masque_politique(model)))
 
             case = step_idx % cfg.inner_window
             inner_maj = inner_maj.replace(

@@ -134,6 +134,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if cfg.inner_policy:
+        print(f"[loss politique] -somme_a pi(a) v_hat(a), lr={cfg.inner_policy_lr:g}, "
+              "a chaque pas")
     if cfg.value_map:
         print("[value map] canal supplementaire : valeur de chaque case, "
               "peinte avant le conv")
@@ -333,6 +336,7 @@ CLI_PARAMS = [
     (("--inner-lr",),     "inner_lr",                       float),
     (("--inner-window",), "inner_window",                   int),
     (("--vpred-gain",),   "vpred_gain",                     float),
+    (("--inner-policy-lr",), "inner_policy_lr",             float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
@@ -346,6 +350,7 @@ CLI_FLAGS = [
     (("--inner",),   "inner_loop"),
     (("--vpred-oracle",), "vpred_oracle"),
     (("--value-map",),   "value_map"),
+    (("--inner-policy",), "inner_policy"),
 ]
 
 
@@ -417,6 +422,13 @@ def parse_cli(cfg):
         maj[ABLATIONS[lettre]] = True
 
     # apres les ablations : -x m les pose ici, les tester plus haut les raterait
+    if maj.get("inner_policy"):
+        if not maj.get("inner_loop"):
+            p.error("--inner-policy demande --inner : la loss de politique vise "
+                    "la croyance produite par la boucle interne.")
+        if maj.get("vpred_oracle"):
+            p.error("--inner-policy avec --vpred-oracle ne laisse rien emerger : "
+                    "valeur donnee ET politique entrainee, c'est un oracle.")
     if maj.get("value_map") and not (maj.get("inner_loop") or maj.get("vpred_oracle")):
         p.error("--value-map demande une tete de valeur : ajouter --inner ou "
                 "--vpred-oracle.")

@@ -236,6 +236,18 @@ class Config(NamedTuple):
     # decouvrir par la tete -- probe_action met 44 mises a jour au lieu de 506
     # pour atteindre 99%. Demande la tete de valeur (inner_loop ou vpred_oracle).
     value_map : bool = False
+
+    # Seconde loss de la boucle interne, sur la POLITIQUE cette fois :
+    #     L = - somme_a pi(a) * v_hat(a)
+    # v_hat(a) est la valeur que l'agent CROIT trouver sur la case qu'atteint
+    # l'action a. Minimiser revient a rendre la politique un peu plus gloutonne
+    # vis-a-vis de sa propre estimation. La cible est sa croyance, pas la verite :
+    # rien ne vient de l'environnement, et une croyance fausse produit une
+    # politique fausse. Sans elle, seule l'evolution faconne la tete.
+    inner_policy : bool = False
+    # Appliquee a CHAQUE pas, contre une fois par fenetre pour la loss de valeur :
+    # le pas doit donc etre bien plus petit. 0.005 x 500 pas ~ 0.5 x 1 fenetre.
+    inner_policy_lr : float = 0.005
     # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
     # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
     # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,

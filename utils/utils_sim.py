@@ -131,6 +131,16 @@ def masque_valeur(model):
     return jnp.concatenate(morceaux)
 
 
+def masque_politique(model):
+    """(num_params,) : 1 sur le conv et la tete, 0 sur le LSTM et la valeur.
+
+    Complementaire de masque_valeur. La tete de valeur DOIT en etre exclue :
+    sinon la loss de politique la deformerait pour justifier les actions plutot
+    que de corriger les actions -- l'agent apprendrait a croire ce qui l'arrange.
+    """
+    return 1.0 - masque_valeur(model)
+
+
 def init_inner(cfg, params):
     """InnerState au depart : la copie de travail part du genome, tampons vides."""
     if not cfg.inner_loop:
