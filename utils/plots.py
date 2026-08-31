@@ -1889,6 +1889,9 @@ def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
                       where=c > 0)
         # un casier vu moins de 30 fois est du bruit, pas une mesure
         y[c < 30] = np.nan
+        # le dernier casier empile TOUS les ages au-dela de la borne : ce n'est
+        # pas une mesure a cet age-la, c'est une queue tronquee
+        y[-1] = np.nan
         coul = cmap(i / max(len(bornes) - 2, 1))
         g.plot(x, y, color=coul, lw=1.8,
                label=f"chunks {lo}-{hi - 1}")

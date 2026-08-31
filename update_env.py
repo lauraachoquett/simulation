@@ -63,16 +63,19 @@ def resources_growth(carry, cfg, crowd_brake=True, step=None):
         # scalaire booleen, diffuse sur les n_types.
         commence = step >= cfg.crowd_start
         trop = (count > cfg.crowd_limit) & commence
-        # Par defaut le frein ramene a la croissance du POISON : c'est la
-        # ressource la plus lente, et la suivre evite de dupliquer sa valeur
-        # dans Config au risque de les desynchroniser. Lu par identite, donc
-        # insensible aux permutations de canaux.
-        poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+        # Par defaut le frein ramene a la croissance de la ressource la PLUS
+        # LENTE, et la suivre evite de dupliquer sa valeur dans Config au risque
+        # de les desynchroniser. C'est le poison a trois ressources, mais on le
+        # lit sur prob_factor et non sur l'identite : nommer le poison plantait
+        # des qu'une config ne l'incluait pas. A une seule ressource, la plus
+        # lente est elle-meme, donc le frein est neutre -- ce qui est le
+        # comportement voulu, il n'y a personne a ralentir en faveur de qui.
+        lente = min(cfg.resources, key=lambda r: r.prob_factor)
         frein_pf = cfg.crowd_prob_factor
         frein_pr = cfg.crowd_pop_res_prob
-        prob_factor  = jnp.where(trop, poison.prob_factor if frein_pf is None
+        prob_factor  = jnp.where(trop, lente.prob_factor if frein_pf is None
                                  else frein_pf,  prob_factor)
-        pop_res_prob = jnp.where(trop, poison.pop_res_prob if frein_pr is None
+        pop_res_prob = jnp.where(trop, lente.pop_res_prob if frein_pr is None
                                  else frein_pr, pop_res_prob)
 
     # L'alea suit l'IDENTITE de la ressource, pas l'indice de canal : sinon une

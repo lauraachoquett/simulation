@@ -122,8 +122,10 @@ def main():
     # valeurs vraies DANS L'ORDRE DES CANAUX du run : cfg.resources a pu etre
     # permute par les shuffles, les lire ailleurs donnerait un oracle faux.
     vraies = tuple(float(r.delta_energy) for r in cfg.resources)
-    canal_poison = next(i for i, r in enumerate(cfg.resources)
-                        if LABELS[r.id] == "poison")
+    # canal le plus nefaste, et non "le poison" nomme : une config sans poison
+    # plantait ici. A trois ressources c'est le meme canal qu'avant.
+    canal_poison = min(range(len(cfg.resources)),
+                       key=lambda i: cfg.resources[i].delta_energy)
     print(f"checkpoint {a.exp} chunk {a.chunk} | {len(tirage)} genomes tires "
           f"parmi {idx.size} vivants")
     print("valeurs par canal : "

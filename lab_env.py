@@ -195,12 +195,13 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
-    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+    # la plus lente, et non "le poison" : une config sans poison plantait ici
+    lente = min(cfg.resources, key=lambda r: r.prob_factor)
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
-                  prob_factor=poison.prob_factor * HIGH_RES_GROWTH_SCALE,
-                  pop_res_prob=poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
+        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40),
+                  prob_factor=lente.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=lente.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
@@ -224,12 +225,13 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         log_obs=True,          # idem
     )
     count_by_id =HIGH_RES_COUNTS
-    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+    # la plus lente, et non "le poison" : une config sans poison plantait ici
+    lente = min(cfg.resources, key=lambda r: r.prob_factor)
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
-                  prob_factor=4*poison.prob_factor * HIGH_RES_GROWTH_SCALE,
-                  pop_res_prob=4*poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
+        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40),
+                  prob_factor=4*lente.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=4*lente.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
@@ -249,7 +251,7 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
     
     
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40)) for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs    
@@ -261,6 +263,11 @@ def rotate_resources(resources, shift):
     return permute_canaux(resources, shift)
 
 def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
+    # A une seule ressource il n'existe aucune rotation non triviale : la liste
+    # reste vide et le tree_map de fin n'a rien a empiler. On sort avant, les
+    # appelants doivent tester le None.
+    if not rotations_for(cfg.resources):
+        return None, None
     states, outputs = [], []
     for rot in rotations_for(cfg.resources):
         s, o = launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=rot)

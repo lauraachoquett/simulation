@@ -133,8 +133,10 @@ def rotation_name(resources, rot):
     if rot == 0:
         return "baseline"
     rotated = rotate_resources(resources, rot)
-    poison_ch = next(k for k, r in enumerate(rotated) if LABELS[r.id] == "poison")
-    return f"{LABELS[resources[poison_ch].id]}_to_poison"
+    # On nomme la condition par la ressource la plus NEFASTE, pas par "le
+    # poison" : une config qui n'en contient pas plantait ici.
+    pire = min(range(len(rotated)), key=lambda k: rotated[k].delta_energy)
+    return f"{LABELS[resources[pire].id]}_to_{LABELS[rotated[pire].id]}"
 
 
 def config_caption(resources, rotated, steps_in_place=None):
@@ -406,8 +408,14 @@ class LabMixin:
                             label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
-            final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
-                agent_params, key_env, key_sim, model, cfg_m)
+            # A une ressource il n'y a aucune permutation a tester : tous les
+            # rollouts adapt sont sautes, et la boucle sur rotations_for plus bas
+            # ne tourne pas non plus.
+            rotations = rotations_for(self.cfg.resources)
+            final_state = outputs_adapt = None
+            if rotations:
+                final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
+                    agent_params, key_env, key_sim, model, cfg_m)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
             # Le MEME rollout, memes genomes, memes cles, memoire coupee. C'est
@@ -417,8 +425,9 @@ class LabMixin:
             outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
                 cfg_abl = cfg_m._replace(ablate_recurrence=True)   # grille non journalisee aussi
-                _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
-                    agent_params, key_env, key_sim, model, cfg_abl)
+                if rotations:
+                    _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
+                        agent_params, key_env, key_sim, model, cfg_abl)
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
                 self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
@@ -431,8 +440,9 @@ class LabMixin:
             outputs_adapt_gele = outputs_high_gele = None
             if self.cfg.inner_loop:
                 cfg_gele = cfg_m._replace(inner_loop=False)
-                _, outputs_adapt_gele = vmap_over_agents_env_lab_adapt(
-                    agent_params, key_env, key_sim, model, cfg_gele)
+                if rotations:
+                    _, outputs_adapt_gele = vmap_over_agents_env_lab_adapt(
+                        agent_params, key_env, key_sim, model, cfg_gele)
                 _, outputs_high_gele = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_gele)
                 self.compare_memory(outputs_high, outputs_high_gele, exp_dir,
@@ -447,7 +457,7 @@ class LabMixin:
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
-            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
+            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt) if rotations else None
 
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]
@@ -488,7 +498,7 @@ class LabMixin:
                     outputs_high, self.cfg.resources, label=LABELS[r.id])
                 base_par_type[r.id] = (bn_i, bk_i)
 
-            for j, rot in enumerate(rotations_for(self.cfg.resources)):          # j = position sur l'axe, rot = vraie rotation
+            for j, rot in enumerate(rotations):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
                 # On indexe TOUT par la condition experimentale, pas par l'indice de
