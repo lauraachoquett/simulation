@@ -23,6 +23,9 @@ EAT_WINDOW = 10
 AGE_BIN = 50
 N_AGE_BINS = 240
 
+# Largeur des cohortes de naissance pour le succes reproducteur.
+COHORTE = 1000
+
 
 def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
     """(T, n_types) x2 : n = agents voyant le type k, k_ = ceux qui le mangent.
@@ -58,6 +61,13 @@ class DemographyMixin:
         self.mov_history = []
         self.life_history = []
         self.perte_history = []
+        # succes reproducteur : {(emplacement, born_step) -> nb d'enfants}. La
+        # cle est le COUPLE, pas l'emplacement seul : les emplacements sont
+        # reutilises a chaque naissance, parent_id ne designe donc pas un agent.
+        self.enfants = {}
+        # cohorte -> histogramme du nb d'enfants, une fois les agents morts
+        self.enfants_par_cohorte = {}
+        self.dernier_born = None      # derniere ligne du chunk precedent
         self.age_somme = []
         self.age_compte = []
 
@@ -102,6 +112,7 @@ class DemographyMixin:
         self.consumed_history.append(consumed_chunk)
         self.seen_history.append(seen_chunk)
         self.eaten_seen_history.append(eaten_seen_chunk)
+        self._suivre_descendance(outputs)
         self.perte_history.append(perte_chunk)
         self.age_somme.append(somme_chunk)
         self.age_compte.append(compte_chunk)
@@ -122,6 +133,66 @@ class DemographyMixin:
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )
+
+    def _suivre_descendance(self, outputs):
+        """Compte les enfants de chaque agent, et ferme les cohortes achevees.
+
+        Un agent n'est comptabilise qu'une fois MORT : tant qu'il vit il peut
+        encore se reproduire, et l'inclure sous-estimerait sa descendance. Les
+        cohortes recentes restent donc incompletes, et le trace les ecarte.
+        """
+        born = np.asarray(outputs.born_step)          # (T, N)
+        par = np.asarray(outputs.parent_id)
+        alive = np.asarray(outputs.alive)
+
+        if self.dernier_born is None:
+            # Les FONDATEURS n'ont pas de naissance dans les logs : sans cette
+            # inscription, seuls ceux qui se reproduisent existeraient (crees par
+            # la branche parent), et la cohorte 0 perdrait tous ceux restes sans
+            # descendance -- sa moyenne serait tiree vers le haut.
+            for i in range(1, born.shape[1]):
+                if alive[0, i] > 0:
+                    self.enfants.setdefault((i, int(born[0, i])), 0)
+        precedent = (self.dernier_born if self.dernier_born is not None
+                     else born[0])
+        lignes = np.vstack([precedent[None], born])   # (T+1, N)
+        # une naissance = born_step qui change dans un emplacement. L'emplacement
+        # 0 est sacrificiel (cf. final_alive_without_0) et recoit le bourrage des
+        # index de naissance : on l'ignore.
+        nouveaux = np.nonzero(lignes[1:] != lignes[:-1])
+        for t, i in zip(*nouveaux):
+            if i == 0:
+                continue
+            self.enfants.setdefault((int(i), int(born[t, i])), 0)
+            p = int(par[t, i])
+            if p != 0:
+                # born_step du parent AU MOMENT de la naissance : c'est ce qui
+                # identifie l'occupant de l'emplacement a cet instant-la
+                cle = (p, int(born[t, p]))
+                self.enfants[cle] = self.enfants.get(cle, 0) + 1
+
+        # cloture : tout agent qui n'occupe plus son emplacement, ou qui l'occupe
+        # mort, ne fera plus d'enfants
+        vivants = {(i, int(born[-1, i])) for i in range(born.shape[1])
+                   if alive[-1, i] > 0}
+        for cle in [k for k in self.enfants if k not in vivants]:
+            n = self.enfants.pop(cle)
+            c = cle[1] // COHORTE
+            h = self.enfants_par_cohorte.setdefault(c, np.zeros(1, dtype=np.int64))
+            if n >= len(h):
+                h = np.pad(h, (0, n + 1 - len(h)))
+                self.enfants_par_cohorte[c] = h
+            h[n] += 1
+
+        self.dernier_born = born[-1]
+
+    def cohortes_ouvertes(self):
+        """cohorte -> nb d'agents encore vivants, dont la descendance n'est pas close."""
+        d = {}
+        for _, b in self.enfants:
+            c = b // COHORTE
+            d[c] = d.get(c, 0) + 1
+        return d
 
     def check_end_condition(self):
         pop_full = np.concatenate(self.pop_history)

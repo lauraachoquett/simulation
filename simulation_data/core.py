@@ -24,10 +24,11 @@ from simulation.utils.plots import (
     plot_invasion,
     plot_inner_loss,
     plot_inner_loss_by_age,
+    plot_offspring_by_cohort,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
-from .demography import DemographyMixin, AGE_BIN
+from .demography import DemographyMixin, AGE_BIN, COHORTE
 from .genealogy import GenealogyMixin
 from .weights import WeightsMixin
 from .lab import LabMixin
@@ -96,6 +97,8 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_phase_portrait_png(
             pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
+        plot_offspring_by_cohort(self.enfants_par_cohorte,
+                                 self.cohortes_ouvertes(), exp_dir, COHORTE)
         if self.cfg.inner_loop:
             plot_inner_loss(
                 block_apply(np.concatenate(self.perte_history, axis=0), edges, "nanmean"),

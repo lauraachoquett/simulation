@@ -1920,6 +1920,100 @@ def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
     print(f"Figure saved: {out}")
 
 
+def _quantiles_hist(h, qs=(0.25, 0.5, 0.75)):
+    """Quantiles d'un histogramme d'entiers (h[k] = nb d'agents ayant k enfants).
+
+    Meme convention que np.percentile par defaut (interpolation lineaire), pour
+    qu'une bande IQR se lise comme partout ailleurs. On passe par l'histogramme
+    et non par les valeurs brutes : garder un million d'entiers par cohorte
+    couterait cher pour un resultat identique.
+    """
+    n = int(h.sum())
+    if n == 0:
+        return [float("nan")] * len(qs)
+    cum = np.cumsum(h)
+    # valeur de la k-ieme statistique d'ordre (rang 0-indexe)
+    au_rang = lambda k: float(np.searchsorted(cum, k, side="right"))
+    out = []
+    for q in qs:
+        r = (n - 1) * q
+        bas, haut = int(np.floor(r)), int(np.ceil(r))
+        v = au_rang(bas)
+        out.append(v + (r - bas) * (au_rang(haut) - v))
+    return out
+
+
+def plot_offspring_by_cohort(par_cohorte, ouvertes, exp_dir, cohorte=1000,
+                             tolerance=0.05):
+    """Nombre d'enfants par agent, selon sa cohorte de naissance.
+
+    A l'equilibre demographique la MOYENNE est epinglee autour de 1 : chaque
+    agent en remplace un. Ce qui porte l'information est la DISPERSION -- c'est
+    elle qui mesure l'intensite de la selection. Un IQR nul veut dire que tous
+    les agents se valent et que seule la derive agit.
+
+    Une cohorte n'est tracee que si la part de ses membres encore vivants est
+    sous `tolerance` : leur descendance n'est pas achevee et paraitrait
+    artificiellement faible. Exiger zero survivant serait trop strict -- un seul
+    agent de longue vie garderait sa cohorte ouverte indefiniment -- mais les
+    survivants sont justement les plus feconds, donc la part restante biaise
+    vers le bas et doit rester petite.
+    """
+    def part_ouverte(c):
+        vivants = ouvertes.get(c, 0)
+        return vivants / max(vivants + int(par_cohorte[c].sum()), 1)
+
+    cles = sorted(c for c in par_cohorte if part_ouverte(c) <= tolerance)
+    if not cles:
+        print("No completed birth cohort to plot yet.")
+        return
+
+    x = np.array(cles, dtype=float) * cohorte + cohorte / 2
+    moy, q1, med, q3, eff = [], [], [], [], []
+    for c in cles:
+        h = par_cohorte[c]
+        n = h.sum()
+        moy.append(float((np.arange(len(h)) * h).sum() / max(n, 1)))
+        a, b, d = _quantiles_hist(h)
+        q1.append(a); med.append(b); q3.append(d); eff.append(int(n))
+    moy, q1, med, q3 = map(np.array, (moy, q1, med, q3))
+
+    fig, (h_ax, b_ax) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
+                                     gridspec_kw={"height_ratios": [2, 1]})
+    # marqueurs : avec peu de cohortes, des lignes seules ne montrent pas ou
+    # sont les points, et une mediane a zero disparait sous l'axe
+    h_ax.fill_between(x, q1, q3, color="#457B9D", alpha=.25, label="IQR")
+    h_ax.plot(x, med, color="#1D3557", lw=1.6, marker="o", ms=4,
+              label="mediane", zorder=3)
+    h_ax.plot(x, moy, color="#E63946", lw=1.6, ls="--", marker="s", ms=4,
+              label="moyenne", zorder=3)
+    h_ax.axhline(1.0, color="0.5", lw=1, ls=":")
+    h_ax.annotate("remplacement (1)", (x[0], 1.0), xytext=(4, 4),
+                  textcoords="offset points", fontsize=8, color="0.4")
+    h_ax.set_ylabel("enfants par agent")
+    h_ax.set_ylim(bottom=0)
+    h_ax.grid(alpha=.3); h_ax.legend(loc="best")
+    h_ax.set_title("Succes reproducteur par cohorte de naissance\n"
+                   "la dispersion mesure l'intensite de la selection")
+
+    b_ax.plot(x, eff, color="0.35", lw=1.2, marker="o", ms=3)
+    b_ax.set_ylabel("agents dans la cohorte")
+    b_ax.set_xlabel("pas de naissance")
+    b_ax.grid(alpha=.3)
+    ecartees = len(par_cohorte) - len(cles)
+    if ecartees:
+        b_ax.annotate(f"{ecartees} cohorte(s) trop recente(s), non tracee(s) "
+                      f"(plus de {100*tolerance:.0f}% de survivants)",
+                      (0.99, 0.05), xycoords="axes fraction", ha="right",
+                      fontsize=8, color="0.4")
+
+    fig.tight_layout()
+    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, "plot_offspring_by_cohort.png")
+    fig.savefig(out, dpi=140); plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_metric_pairs(par_genome, exp_dir, chunk, suffix="", titre=""):
     """Chaque metrique du lab en fonction de chaque autre, sur les agents.
 
