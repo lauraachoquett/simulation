@@ -98,7 +98,8 @@ def main():
     vraies = tuple(float(r.delta_energy) for r in cfg.resources)
     canal_poison = next(i for i, r in enumerate(cfg.resources)
                         if LABELS[r.id] == "poison")
-    print(f"checkpoint {a.exp} chunk {a.chunk} | {len(tirage)} genomes vivants")
+    print(f"checkpoint {a.exp} chunk {a.chunk} | {len(tirage)} genomes tires "
+          f"parmi {idx.size} vivants")
     print("valeurs par canal : "
           + "  ".join(f"c{i}={LABELS[r.id]} {r.delta_energy:+g}"
                       for i, r in enumerate(cfg.resources)))
