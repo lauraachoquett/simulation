@@ -134,6 +134,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if cfg.value_map:
+        print("[value map] canal supplementaire : valeur de chaque case, "
+              "peinte avant le conv")
     if cfg.vpred_gain != 1.0:
         print(f"[vpred gain] v_pred multiplie par {cfg.vpred_gain:g} avant la tete")
     if cfg.vpred_oracle:
@@ -342,6 +345,7 @@ CLI_FLAGS = [
     (("--weights",), "track_weights"),
     (("--inner",),   "inner_loop"),
     (("--vpred-oracle",), "vpred_oracle"),
+    (("--value-map",),   "value_map"),
 ]
 
 
@@ -413,6 +417,9 @@ def parse_cli(cfg):
         maj[ABLATIONS[lettre]] = True
 
     # apres les ablations : -x m les pose ici, les tester plus haut les raterait
+    if maj.get("value_map") and not (maj.get("inner_loop") or maj.get("vpred_oracle")):
+        p.error("--value-map demande une tete de valeur : ajouter --inner ou "
+                "--vpred-oracle.")
     if maj.get("vpred_oracle") and maj["model_version"] != "v2":
         p.error("--vpred-oracle demande -m v2 : la tete de valeur n'existe "
                 "qu'en memoire separee.")

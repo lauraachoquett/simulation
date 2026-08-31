@@ -22,10 +22,11 @@ Variantes comparees :
     aveugle  v_pred remplace par des zeros -- le plancher, ce qu'on fait sans
              l'information. Toute variante qui ne le bat pas n'a rien appris.
     concat   le cablage actuel : v_pred concatene a l'entree de la tete
-    carte    un canal d'observation en plus, ou chaque case porte la valeur de
-             ce qui s'y trouve : carte[i,j] = somme_k obs[i,j,k] * v_pred[k].
-             Le produit vision x valeur est fait en amont, la tete n'a plus qu'a
+    carte    l'option value_map du reseau : un canal d'observation en plus, ou
+             chaque case porte la valeur de ce qui s'y trouve. Le produit
+             vision x valeur est fait avant le conv, la tete n'a plus qu'a
              suivre un champ scalaire (c'est ce que fait simulation/oracle.py).
+             C'est le MEME code que la simulation, pas une imitation.
 """
 import argparse
 
@@ -87,25 +88,15 @@ def echantillons(cle, n, cote, de, bons, mauvais):
     return obs, v, cible
 
 
-def ajoute_carte(obs, v, n_types):
-    """Canal supplementaire : la valeur de ce qui occupe chaque case.
-
-    Ajoute EN DERNIER pour ne pas decaler l'indice du canal des murs.
-    """
-    carte = (obs[..., :n_types] * v[:, None, None, :]).sum(-1, keepdims=True)
-    return jnp.concatenate([obs, carte], axis=-1)
-
-
 def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
     n_types = de.shape[0]
     modele = MetaRNN_bcppr(4, out_fn="categorical", hidden_layers=list(a.hidden),
                            encoder_in=False, encoder_layers=[], carry_size=a.carry,
-                           memory_mode="separee", predict_value=n_types)
+                           memory_mode="separee", predict_value=n_types,
+                           value_map=avec_carte)
 
     cle, c0 = jax.random.split(cle)
     obs0, v0, _ = echantillons(c0, 1, a.cote, de, bons, mauvais)
-    if avec_carte:
-        obs0 = ajoute_carte(obs0, v0, n_types)
     z = jnp.zeros(a.carry)
     params = modele.init(jax.random.PRNGKey(a.seed), z, z, obs0[0],
                          jnp.zeros(4), jnp.zeros(1), jnp.ones(1),
@@ -130,8 +121,6 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
     @jax.jit
     def pas(params, etat, cle):
         obs, v, cible = echantillons(cle, a.batch, a.cote, de, bons, mauvais)
-        if avec_carte:
-            obs = ajoute_carte(obs, v, n_types)
         (l, ex), g = jax.value_and_grad(perte, has_aux=True)(params, (obs, v, cible))
         maj, etat = opt.update(g, etat, params)
         return optax.apply_updates(params, maj), etat, l, ex
@@ -148,8 +137,7 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
     # evaluation sur un lot neuf, plus grand
     cle, ct = jax.random.split(cle)
     obs, v, cible = echantillons(ct, 4096, a.cote, de, bons, mauvais)
-    obs_in = ajoute_carte(obs, v, n_types) if avec_carte else obs
-    pred = jnp.argmax(logits(params, obs_in, v), -1)
+    pred = jnp.argmax(logits(params, obs, v), -1)
     exact = float((pred == cible).mean())
 
     # le cas qui compte : du poison devant. Y avancer est l'erreur couteuse.

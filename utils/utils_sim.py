@@ -69,6 +69,7 @@ def build_model(cfg, valeur_forcee=()):
         # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
         valeur_forcee=tuple(valeur_forcee),
         value_gain=cfg.vpred_gain,
+        value_map=cfg.value_map,
     )
 
 
