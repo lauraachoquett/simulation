@@ -16,12 +16,16 @@ from simulation.utils.utils_sim import classify_outcome
 # mesurent plus la meme chose. = 2 * cfg.agent_view, cf. le commentaire la-bas.
 EAT_WINDOW = 10
 
-# Resolution de la courbe erreur-vs-age de la boucle interne. 240 x 50 = 12000
-# pas : a 4000 le dernier casier debordait, il empilait tous les agents plus
-# vieux et faisait un pic artificiel en bout de courbe. Il reste un fourre-tout,
-# simplement place la ou plus personne ne vit.
+# Resolution de la courbe erreur-vs-age de la boucle interne.
 AGE_BIN = 50
+# Borne de depart, doublee des qu'un agent la depasse : une constante en dur
+# tronquait la courbe et empilait tout le surplus dans le dernier casier, ce qui
+# faisait un pic artificiel. Elle se cale donc sur la duree de vie reelle.
 N_AGE_BINS = 240
+# Plafond de securite : un agent qui ne meurt jamais ferait croitre les tableaux
+# sans fin. Au-dela, le dernier casier redevient un fourre-tout -- mais il n'est
+# jamais trace, donc il ne peut pas mentir.
+MAX_AGE_BINS = 4000
 
 # Largeur des cohortes de naissance pour le succes reproducteur.
 COHORTE = 1000
@@ -70,6 +74,7 @@ class DemographyMixin:
         self.dernier_born = None      # derniere ligne du chunk precedent
         self.age_somme = []
         self.age_compte = []
+        self.n_age_bins = N_AGE_BINS
 
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx
@@ -96,13 +101,14 @@ class DemographyMixin:
             # precedente melange nouveau-nes et agents murs, et ne peut donc pas
             # distinguer "il apprend pendant sa vie" de "il nait mieux equipe".
             age = np.asarray(outputs.step)[:, None] - np.asarray(outputs.born_step)
-            casier = np.clip(age // AGE_BIN, 0, N_AGE_BINS - 1)
+            self._elargir_casiers(int(age.max()) // AGE_BIN + 1)
+            casier = np.clip(age // AGE_BIN, 0, self.n_age_bins - 1)
             somme_chunk = np.bincount(casier[ok], weights=perte[ok],
-                                      minlength=N_AGE_BINS)
-            compte_chunk = np.bincount(casier[ok], minlength=N_AGE_BINS)
+                                      minlength=self.n_age_bins)
+            compte_chunk = np.bincount(casier[ok], minlength=self.n_age_bins)
         else:
             perte_chunk = np.zeros(len(pop_chunk))
-            somme_chunk = compte_chunk = np.zeros(N_AGE_BINS)
+            somme_chunk = compte_chunk = np.zeros(self.n_age_bins)
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
@@ -133,6 +139,25 @@ class DemographyMixin:
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
         )
+
+    def _elargir_casiers(self, besoin):
+        """Double la borne d'age jusqu'a couvrir `besoin`, et complete l'historique.
+
+        Les tableaux deja accumules sont rallonges de zeros : ils doivent tous
+        garder la meme longueur pour que le trace les empile.
+        """
+        if besoin <= self.n_age_bins or self.n_age_bins >= MAX_AGE_BINS:
+            return
+        neuf = self.n_age_bins
+        while neuf < besoin and neuf < MAX_AGE_BINS:
+            neuf *= 2
+        neuf = min(neuf, MAX_AGE_BINS)
+        pad = neuf - self.n_age_bins
+        self.age_somme = [np.pad(a, (0, pad)) for a in self.age_somme]
+        self.age_compte = [np.pad(a, (0, pad)) for a in self.age_compte]
+        print(f"[age] borne portee a {neuf * AGE_BIN} pas "
+              f"({neuf} casiers) : un agent l'a depassee")
+        self.n_age_bins = neuf
 
     def _suivre_descendance(self, outputs):
         """Compte les enfants de chaque agent, et ferme les cohortes achevees.
