@@ -529,6 +529,15 @@ class LabMixin:
                                         suffix=f"_adapt_{name}",
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot)
+                    # Rejeu des meilleurs genomes dans l'env PERMUTE. Depend de
+                    # gain_rot, donc doit rester DANS ce bloc : l'en sortir le
+                    # laisserait non defini quand lab_memory_ablation est faux.
+                    if self.cfg.replay_top_n > 0:
+                        subkey_sim, k_rej = random.split(subkey_sim)
+                        self.replay_top_gain(agent_params, gain_rot, key_env, k_rej,
+                                             model, exp_dir, submit_video=submit_video,
+                                             rot=rot, name=f"adapt_{name}",
+                                             resources=resources_rot)
                 # C'est ICI que la boucle interne doit payer : sous permutation,
                 # la valeur des canaux a change et seul un apprentissage pendant
                 # la vie peut la retrouver.
@@ -540,21 +549,14 @@ class LabMixin:
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot,
                                         bras=("inner", "gele"),
-                                    entete="GRADIENT INTRA-VIE vs POIDS GELES",
-                                    label_intact="gradient on",
-                                    label_bras2="weights frozen for life",
-                                    titre_fig="Same genomes, with and without the inner loop",
-                                    fname_fig="lab_inner_loop_evolution",
-                                    titre_gain="Gain de la boucle interne, par genome")
-                    # selection ET rejeu dans l'env PERMUTE : c'est la que la
-                    # memoire est censee servir, pas dans celui pour lequel le
-                    # genome a deja ete selectionne.
-                    if self.cfg.replay_top_n > 0:
-                        subkey_sim, k_rej = random.split(subkey_sim)
-                        self.replay_top_gain(agent_params, gain_rot, key_env, k_rej,
-                                             model, exp_dir, submit_video=submit_video,
-                                             rot=rot, name=f"adapt_{name}",
-                                             resources=resources_rot)
+                                        entete="GRADIENT INTRA-VIE vs POIDS GELES",
+                                        label_intact="gradient on",
+                                        label_bras2="weights frozen for life",
+                                        titre_fig="Same genomes, with and without "
+                                                  "the inner loop",
+                                        fname_fig="lab_inner_loop_evolution",
+                                        titre_gain="Gain de la boucle interne, "
+                                                   "par genome")
 
                 av_rot = self.available_by_type(
                     jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), n_types)

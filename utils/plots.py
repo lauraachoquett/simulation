@@ -1534,6 +1534,7 @@ def plot_lab_metrics(exp_dir, suffix=""):
     suffix="" -> high_res ; suffix="adapt_rot1" -> l'env adapt rot1, etc."""
     data_dir = os.path.join(exp_dir, "lab_data")
     fig_dir  = os.path.join(exp_dir, "fig")
+    os.makedirs(fig_dir, exist_ok=True)   # 1er lab d'un run : le dossier n'existe pas
 
     tag = f"_{suffix}" if suffix else ""
     pattern = rf"chunk_\d+{re.escape(tag)}_summary\.json"        # match EXACT de cette famille
@@ -1651,6 +1652,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     """
     data_dir = os.path.join(exp_dir, "lab_data")
     fig_dir  = os.path.join(exp_dir, "fig")
+    os.makedirs(fig_dir, exist_ok=True)   # 1er lab d'un run : le dossier n'existe pas
     os.makedirs(fig_dir, exist_ok=True)
 
     files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}_pergenome.npz")),
