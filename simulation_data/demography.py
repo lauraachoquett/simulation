@@ -16,10 +16,12 @@ from simulation.utils.utils_sim import classify_outcome
 # mesurent plus la meme chose. = 2 * cfg.agent_view, cf. le commentaire la-bas.
 EAT_WINDOW = 10
 
-# Resolution de la courbe erreur-vs-age de la boucle interne. 80 x 50 = 4000 pas
-# couvre largement une vie ; au-dela tout retombe dans le dernier casier.
+# Resolution de la courbe erreur-vs-age de la boucle interne. 240 x 50 = 12000
+# pas : a 4000 le dernier casier debordait, il empilait tous les agents plus
+# vieux et faisait un pic artificiel en bout de courbe. Il reste un fourre-tout,
+# simplement place la ou plus personne ne vit.
 AGE_BIN = 50
-N_AGE_BINS = 80
+N_AGE_BINS = 240
 
 
 def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
