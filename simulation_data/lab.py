@@ -1102,7 +1102,7 @@ class LabMixin:
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",
                        env_titre="high_res (unpermuted)", resources=None,
                        bras=("memory", "ablated"), entete="MEMOIRE INTACTE vs COUPEE",
-                       label_intact=None, label_bras2="all channels ablated",
+                       label_intact=None, label_bras2=None,
                        titre_fig="Same genomes, with and without within-life memory",
                        fname_fig="lab_memory_ablation_evolution",
                        titre_gain="Gain de la memoire, par genome"):
@@ -1196,6 +1196,13 @@ class LabMixin:
                   if on or self.cfg.ablate_memory]
         ref = label_intact or ("memory intact" if not coupes
                                else f"as evolved ({'+'.join(coupes)} cut)")
+        # Le bras ablate ne coupe que la RECURRENCE : l'interoception et le
+        # feedback restent branches, et sous vpred_oracle l'information de
+        # valeur aussi. "all channels ablated" laissait croire le contraire.
+        if label_bras2 is None:
+            label_bras2 = "recurrence cut"
+            if self.cfg.vpred_oracle:
+                label_bras2 += " (v_pred intact)"
 
         plot_alone_vs_clones(
             exp_dir=exp_dir, tag=tag,
