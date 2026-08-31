@@ -25,7 +25,7 @@ N_AGE_BINS = 240
 # Plafond de securite : un agent qui ne meurt jamais ferait croitre les tableaux
 # sans fin. Au-dela, le dernier casier redevient un fourre-tout -- mais il n'est
 # jamais trace, donc il ne peut pas mentir.
-MAX_AGE_BINS = 4000
+MAX_AGE_BINS = 1000        # 1000 x AGE_BIN = 50 000 pas
 
 # Largeur des cohortes de naissance pour le succes reproducteur.
 COHORTE = 1000
