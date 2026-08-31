@@ -121,7 +121,8 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
     def perte(params, lot):
         obs, v, cible = lot
         lg = logits(params, obs, v)
-        return optax.softmax_cross_entropy_with_integer_labels(lg, cible).mean()
+        exact = (jnp.argmax(lg, -1) == cible).mean()
+        return optax.softmax_cross_entropy_with_integer_labels(lg, cible).mean(), exact
 
     opt = optax.adam(a.lr)
     etat = opt.init(params)
@@ -131,13 +132,18 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
         obs, v, cible = echantillons(cle, a.batch, a.cote, de, bons, mauvais)
         if avec_carte:
             obs = ajoute_carte(obs, v, n_types)
-        l, g = jax.value_and_grad(perte)(params, (obs, v, cible))
+        (l, ex), g = jax.value_and_grad(perte, has_aux=True)(params, (obs, v, cible))
         maj, etat = opt.update(g, etat, params)
-        return optax.apply_updates(params, maj), etat, l
+        return optax.apply_updates(params, maj), etat, l, ex
 
+    # Courbe d'apprentissage : combien de mises a jour pour atteindre quel
+    # niveau. Le lot etant tire neuf a chaque pas, l'exactitude mesuree dessus
+    # n'est pas biaisee -- le reseau ne l'a jamais vu.
+    courbe = []
     for it in range(a.iters):
         cle, ce = jax.random.split(cle)
-        params, etat, l = pas(params, etat, ce)
+        params, etat, l, ex = pas(params, etat, ce)
+        courbe.append(float(ex))
 
     # evaluation sur un lot neuf, plus grand
     cle, ct = jax.random.split(cle)
@@ -149,8 +155,15 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
     # le cas qui compte : du poison devant. Y avancer est l'erreur couteuse.
     poison = cible == 1
     fonce = float((pred[poison] == 3).mean())
+    # premiere mise a jour ou l'exactitude lissee franchit chaque seuil
+    lisse = np.convolve(np.array(courbe), np.ones(20) / 20, mode="valid")
+    franchit = {}
+    for seuil in (0.75, 0.90, 0.95, 0.99):
+        au_dessus = np.flatnonzero(lisse >= seuil)
+        franchit[seuil] = int(au_dessus[0]) + 20 if au_dessus.size else None
     return dict(nom=nom, params=n_par, perte=float(l), exact=exact,
-                fonce=fonce, n=int(poison.sum()))
+                fonce=fonce, n=int(poison.sum()), franchit=franchit,
+                courbe=courbe)
 
 
 def main():
@@ -198,6 +211,15 @@ def main():
               f"{r['exact']:>13.3f}{r['fonce']:>19.3f}")
     print(f"  (hasard et plafond aveugle : exactitude 0.50, fonce sur nefaste "
           f"0.50 ; n={sorties[0]['n']} cas nefastes sur 4096)")
+
+    print(f"\n  mises a jour pour atteindre :  (lot de {a.batch}, "
+          f"donc x{a.batch} exemples etiquetes)")
+    print(f"  {'variante':<10}" + "".join(f"{f'{100*s:.0f}%':>10}"
+                                          for s in (0.75, 0.90, 0.95, 0.99)))
+    for r in sorties:
+        cases = "".join(f"{(r['franchit'][s] if r['franchit'][s] else '-'):>10}"
+                        for s in (0.75, 0.90, 0.95, 0.99))
+        print(f"  {r['nom']:<10}{cases}")
 
     aveugle, concat, carte = (r["exact"] for r in sorties)
     print()
