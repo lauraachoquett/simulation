@@ -58,16 +58,24 @@ from simulation.run import build_model
 
 
 def mesures(outputs, canal_poison):
-    """(B,) x2 : pas-agents vecus, et bouchees de poison par 1000 pas-agents.
+    """(B,) x3 : pas-agents vecus, bouchees de poison et bouchees TOTALES,
+    ces deux dernieres pour 1000 pas-agents.
+
+    Le total sert a lire le poison : sans lui on ne sait pas s'il reste de la
+    marge vers le haut. Un agent qui mange deja tout ce qu'il croise est au
+    plafond du hasard, et lui dire que le poison est bon ne peut plus rien
+    augmenter -- ce qui rendrait le bras inverse ininterpretable.
 
     On somme sur TOUS les emplacements : l'env high_res autorise la
     reproduction, donc la descendance compte comme du succes.
     """
     vivant = np.asarray(outputs.alive)                    # (B, T, N)
+    ate = np.asarray(outputs.ate_res)                     # (B, T, N, n_types)
     pas_vecus = vivant.sum(axis=(1, 2)).astype(float)
-    poison = (np.asarray(outputs.ate_res)[..., canal_poison]
-              * vivant).sum(axis=(1, 2)).astype(float)
-    return pas_vecus, 1000.0 * poison / np.maximum(pas_vecus, 1.0)
+    par_1000 = lambda x: 1000.0 * x / np.maximum(pas_vecus, 1.0)
+    poison = (ate[..., canal_poison] * vivant).sum(axis=(1, 2)).astype(float)
+    total = (ate.sum(axis=-1) * vivant).sum(axis=(1, 2)).astype(float)
+    return pas_vecus, par_1000(poison), par_1000(total)
 
 
 def ligne(nom, v, ref=None):
@@ -140,8 +148,10 @@ def main():
         res[nom] = mesures(out, canal_poison)
         print(f"  [{nom}] termine")
 
-    for j, (titre, unite) in enumerate([("PAS-AGENTS VECUS", "plus = mieux"),
-                                        ("POISON pour 1000 pas", "moins = mieux")]):
+    for j, (titre, unite) in enumerate([
+            ("PAS-AGENTS VECUS", "plus = mieux"),
+            ("POISON pour 1000 pas", "moins = mieux"),
+            ("BOUCHEES TOTALES pour 1000 pas", "plafond du poison si indiscrimine")]):
         print(f"\n--- {titre} ({unite}) ---")
         print(f"  {'bras':<10}{'mediane':>10}  {'[q25, q75]':>20}"
               f"{'Δ vs nul':>12}{'signes':>13}{'p':>9}")
@@ -178,6 +188,12 @@ def main():
     poison_inv = np.median(res["inverse"][1] - res["nul"][1])
     print(f"          poison : {poison_fort:+.1f} avec fort, "
           f"{poison_inv:+.1f} avec inverse (pour 1000 pas)")
+    # marge disponible vers le haut : si le poison represente deja sa part du
+    # hasard, le bras inverse ne peut pas montrer grand-chose
+    part = np.median(res["nul"][1]) / max(np.median(res["nul"][2]), 1e-9)
+    print(f"          au repos le poison fait {100*part:.0f}% des bouchees "
+          f"(hasard = {100/len(cfg.resources):.0f}%), "
+          f"plafond ~{np.median(res['nul'][2]):.0f}/1000")
 
     if abs(d_vrai) >= seuil:
         print("-> la politique lit v_pred. Ce qui manque est l'apprentissage, "
@@ -192,12 +208,21 @@ def main():
               "   Le cablage existe et il est sous-dimensionne -- probleme "
               "d'echelle, pas d'architecture.")
     elif abs(d_fort) >= seuil:
-        print("-> amplifiee, l'information change le comportement, mais celui-ci "
-              "ne suit pas le\n"
-              "   SENS des valeurs (le bras inverse devrait faire manger PLUS de "
-              "poison).\n"
-              "   C'est un choc sur l'entree, pas une lecture. A interpreter "
-              "avec prudence.")
+        print("-> amplifiee, l'information change le comportement, mais inverser "
+              "les valeurs ne\n"
+              "   fait pas rechercher le poison. Deux lectures restent possibles, "
+              "et ce test ne\n"
+              "   les separe pas :\n"
+              "     (a) la tete INHIBE mais ne DIRIGE pas -- supprimer une action "
+              "est simple,\n"
+              "         se diriger vers une case demande le produit vision x "
+              "valeur ;\n"
+              "     (b) une entree dix fois plus grande n'est qu'un choc, et "
+              "l'effet de 'fort'\n"
+              "         ne vient pas d'une lecture.\n"
+              "   Comparer la part de poison au repos avec le plafond ci-dessus : "
+              "sans marge\n"
+              "   vers le haut, le bras inverse ne pouvait rien montrer.")
     else:
         print("-> cette population n'ecoute pas du tout v_pred : meme amplifiee "
               f"x{a.gain:g},\n"
