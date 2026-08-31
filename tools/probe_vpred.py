@@ -62,6 +62,8 @@ def ligne(nom, v, ref=None):
         d = v - ref
         k, m, p = _test_signes(d)
         s += f"{np.median(d):>12.1f}{k:>7}/{m:<5}{p:>9.3f}"
+        if m == 0:
+            s += "   <-- AUCUNE paire ne differe"
     return s
 
 
@@ -125,6 +127,17 @@ def main():
         print(ligne("nul", nul))
         for nom in [n for n, _ in bras] + ["vrai"]:
             print(ligne(nom, res[nom][j], ref=nul))
+
+    # Zero paire discordante n'est pas un resultat nul : c'est le signe que les
+    # deux bras ont tourne le MEME reseau. Un effet reellement nul laisse quand
+    # meme du bruit de trajectoire, donc des paires qui different.
+    if np.array_equal(res["vrai"][0], res["nul"][0]):
+        raise SystemExit(
+            "\nERREUR : les bras 'vrai' et 'nul' donnent des trajectoires\n"
+            "identiques au bit pres sur les " + str(len(tirage)) + " genomes.\n"
+            "Ce n'est pas un effet nul, c'est que le forcage n'atteint pas le\n"
+            "reseau -- un effet vraiment nul laisserait du bruit de trajectoire.\n"
+            "Verifier que rien ne remplace le modele en aval (cf. model_tourne).")
 
     d_vrai = np.median(res["vrai"][0] - res["nul"][0])
     print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents.")

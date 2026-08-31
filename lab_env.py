@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from simulation.data_class import AgentState,SimState,LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
-from simulation.utils.utils_sim import init_inner, model_pour
+from simulation.utils.utils_sim import init_inner, model_tourne, permute_canaux
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -204,13 +204,13 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
-    # APRES la rotation : avec vpred_oracle les valeurs imposees sont figees
-    # dans le modele, et celui recu porte celles de la permutation de la
-    # simulation. Sous rotation elles designeraient les mauvais canaux --
-    # l'agent recevrait une information systematiquement fausse au lieu de
-    # parfaite, et le bras adapt mesurerait l'inverse de ce qu'il annonce.
+    # Les valeurs imposees sont figees dans le modele et designent des CANAUX :
+    # sous rotation il faut les permuter comme eux, sinon l'agent recevrait une
+    # information decalee d'un cran -- systematiquement fausse au lieu de
+    # parfaite. On permute celles du modele recu, sans consulter cfg : ecraser
+    # le modele d'appel casserait tout bras construit a la main (cf. probe_vpred).
     return launch_lab_env(agent_params, key_env, key_sim, cfg,
-                          model_pour(cfg, model))
+                          model_tourne(cfg, model, rot))
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     
@@ -258,8 +258,7 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
 
 def rotate_resources(resources, shift):
     """Rotation cyclique : la ressource du canal k passe au canal (k + shift) % n."""
-    n = len(resources)
-    return tuple(resources[(k - shift) % n] for k in range(n))
+    return permute_canaux(resources, shift)
 
 def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
     states, outputs = [], []

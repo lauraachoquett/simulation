@@ -78,14 +78,39 @@ def build_model(cfg, valeur_forcee=()):
 _MODELES_ORACLE = {}
 
 
+def _modele_force(cfg, valeurs):
+    """Modele a valeurs imposees, mis en cache par valeurs."""
+    if valeurs not in _MODELES_ORACLE:
+        _MODELES_ORACLE[valeurs] = build_model(cfg, valeur_forcee=valeurs)
+    return _MODELES_ORACLE[valeurs]
+
+
 def model_pour(cfg, model_defaut):
     """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
     if not cfg.vpred_oracle:
         return model_defaut
-    cle = tuple(float(r.delta_energy) for r in cfg.resources)
-    if cle not in _MODELES_ORACLE:
-        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=cle)
-    return _MODELES_ORACLE[cle]
+    return _modele_force(cfg, tuple(float(r.delta_energy) for r in cfg.resources))
+
+
+def permute_canaux(t, shift):
+    """Meme permutation que rotate_resources : le canal k prend l'element
+    (k - shift) % n. Sert aux ressources comme aux valeurs imposees."""
+    n = len(t)
+    return tuple(t[(k - shift) % n] for k in range(n))
+
+
+def model_tourne(cfg, model, shift):
+    """Le modele, ses valeurs imposees permutees comme les canaux.
+
+    Ne consulte PAS cfg.vpred_oracle : c'est le modele RECU qui decide. Passer
+    par le flag ecraserait les modeles construits a la main -- c'est ainsi que
+    probe_vpred voyait ses bras "vrai" et "nul" remplaces par le meme modele,
+    et donc des resultats identiques au bit pres.
+    """
+    vf = getattr(model.model, "valeur_forcee", ())
+    if not vf or shift % len(vf) == 0:
+        return model
+    return _modele_force(cfg, permute_canaux(vf, shift))
 
 
 def masque_valeur(model):
