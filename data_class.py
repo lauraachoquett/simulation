@@ -224,6 +224,12 @@ class Config(NamedTuple):
     # n'y arrive pas, ce n'est plus un probleme d'amorcage mais d'architecture.
     # N'a pas besoin de inner_loop : la tete de valeur est court-circuitee.
     vpred_oracle : bool = False
+
+    # Facteur d'echelle sur v_pred avant la tete de politique. A 1 le signal
+    # est ~10x trop faible pour changer l'action : mesure par probe_vpred, ou
+    # multiplier par 10 fait tomber le poison de 17.5 a 0 pour 1000 pas et
+    # gagne 66% de duree de vie. Choix d'unites, pas information ajoutee.
+    vpred_gain : float = 1.0
     # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
     # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
     # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,

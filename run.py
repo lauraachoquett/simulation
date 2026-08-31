@@ -134,6 +134,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if cfg.vpred_gain != 1.0:
+        print(f"[vpred gain] v_pred multiplie par {cfg.vpred_gain:g} avant la tete")
     if cfg.vpred_oracle:
         print("[vpred oracle] v_pred impose aux vraies valeurs : "
               + "  ".join(f"c{i}={LABELS[r.id]} {r.delta_energy:+g}"
@@ -318,6 +320,7 @@ CLI_PARAMS = [
     (("--replay-video-frac",), "replay_video_min_frac",     float),
     (("--inner-lr",),     "inner_lr",                       float),
     (("--inner-window",), "inner_window",                   int),
+    (("--vpred-gain",),   "vpred_gain",                     float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config

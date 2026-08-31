@@ -68,6 +68,7 @@ def build_model(cfg, valeur_forcee=()):
                        if (cfg.inner_loop or cfg.vpred_oracle) else 0),
         # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
         valeur_forcee=tuple(valeur_forcee),
+        value_gain=cfg.vpred_gain,
     )
 
 
@@ -79,10 +80,11 @@ _MODELES_ORACLE = {}
 
 
 def _modele_force(cfg, valeurs):
-    """Modele a valeurs imposees, mis en cache par valeurs."""
-    if valeurs not in _MODELES_ORACLE:
-        _MODELES_ORACLE[valeurs] = build_model(cfg, valeur_forcee=valeurs)
-    return _MODELES_ORACLE[valeurs]
+    """Modele a valeurs imposees, mis en cache par (valeurs, gain)."""
+    cle = (valeurs, cfg.vpred_gain)
+    if cle not in _MODELES_ORACLE:
+        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=valeurs)
+    return _MODELES_ORACLE[cle]
 
 
 def model_pour(cfg, model_defaut):
