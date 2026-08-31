@@ -248,6 +248,14 @@ class Config(NamedTuple):
     # Appliquee a CHAQUE pas, contre une fois par fenetre pour la loss de valeur :
     # le pas doit donc etre bien plus petit. 0.005 x 500 pas ~ 0.5 x 1 fenetre.
     inner_policy_lr : float = 0.005
+    # La loss de politique ne s'applique qu'aux agents dont la DERNIERE erreur de
+    # prediction est sous ce seuil. Sans lui, elle entraine la population des le
+    # pas 1 a suivre une croyance encore aleatoire -- amplifiee par vpred_gain,
+    # ca donne des agents qui foncent avec conviction sur n'importe quoi.
+    # Le critere est sa propre erreur : rien d'exterieur n'entre. Un agent qui
+    # n'a jamais mesure d'erreur (NaN) n'est pas confiant.
+    # 0.25 = une erreur RMS de 0.5 en energie, de quoi separer le poison du reste.
+    inner_policy_seuil : float = 0.25
     # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
     # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
     # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,

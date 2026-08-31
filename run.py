@@ -136,7 +136,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
     if cfg.inner_policy:
         print(f"[loss politique] -somme_a pi(a) v_hat(a), lr={cfg.inner_policy_lr:g}, "
-              "a chaque pas")
+              f"a chaque pas, seulement si l'erreur de prediction < "
+              f"{cfg.inner_policy_seuil:g}")
     if cfg.value_map:
         print("[value map] canal supplementaire : valeur de chaque case, "
               "peinte avant le conv")
@@ -337,6 +338,7 @@ CLI_PARAMS = [
     (("--inner-window",), "inner_window",                   int),
     (("--vpred-gain",),   "vpred_gain",                     float),
     (("--inner-policy-lr",), "inner_policy_lr",             float),
+    (("--inner-policy-seuil",), "inner_policy_seuil",       float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config

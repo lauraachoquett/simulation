@@ -87,7 +87,7 @@ AVANCER = 3
 
 
 def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
-                           vivants, masque):
+                           actifs, masque):
     """Un pas de SGD sur -somme_a pi(a) * v_hat(a), par agent.
 
     v_hat n'est defini que pour "avancer" : les autres actions ne posent l'agent
@@ -120,7 +120,8 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
         return -pi[AVANCER] * v_devant
 
     grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
-    return params_vie - cfg.inner_policy_lr * grad * masque[None] * vivants[:, None]
+    poids = actifs.astype(params_vie.dtype)[:, None]
+    return params_vie - cfg.inner_policy_lr * grad * masque[None] * poids
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -252,12 +253,18 @@ def run_simulation_chunk(state,model,keys, cfg):
                 state_in.last_eaten.astype(jnp.float32)], axis=1)      # (N, d_mem)
 
             # Loss de politique : chaque pas, sur la vue et la croyance courantes.
+            # Reservee aux agents dont la croyance a fait ses preuves. Sinon la
+            # population apprend des le pas 1 a suivre du bruit, que vpred_gain
+            # amplifie -- des agents qui foncent avec conviction sur n'importe
+            # quoi. NaN (jamais mesure) donne faux, donc pas de gradient.
             if cfg.inner_policy:
+                confiant = (inner_maj.perte < cfg.inner_policy_seuil)
                 inner_maj = inner_maj.replace(
                     params_vie=pas_gradient_politique(
                         model, cfg, inner_maj.params_vie,
                         agents.policy_states.lstm_h, agents.policy_states.lstm_c,
-                        state.obs, mem_in, survives_int.astype(jnp.float32),
+                        state.obs, mem_in,
+                        (survives_int > 0) & confiant,
                         masque_politique(model)))
 
             case = step_idx % cfg.inner_window
