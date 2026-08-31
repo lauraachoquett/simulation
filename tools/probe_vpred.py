@@ -8,7 +8,17 @@ la tete de politique recoit :
 
     appris  : la tete de valeur, telle que le run l'a apprise
     vrai    : les delta_energy exacts, imposes
+    fort    : les memes, multiplies par 10
     nul     : des zeros, aucune information
+
+Le bras "fort" existe parce qu'un resultat NUL n'a de valeur que si l'instrument
+sait detecter un effet. Il separe deux causes que "vrai == nul" confond :
+
+    fort == nul   -> la tete n'ecoute pas du tout cette entree, ses poids y sont
+                     nuls. Aucune amplification n'y changera rien.
+    fort != nul   -> elle l'ecoute, mais trop faiblement pour peser sur l'action.
+                     Le cablage existe, il est seulement sous-dimensionne --
+                     conclusion bien plus favorable, et corrigeable.
 
 Lecture :
 
@@ -72,6 +82,8 @@ def main():
     p.add_argument("--exp", required=True, help="dossier d'experience")
     p.add_argument("--chunk", type=int, required=True, help="chunk du checkpoint")
     p.add_argument("-n", type=int, default=64, help="genomes testes (defaut %(default)s)")
+    p.add_argument("--gain", type=float, default=10.0,
+                   help="facteur du bras 'fort' (defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -111,7 +123,8 @@ def main():
     cfg_lab = cfg._replace(log_grid=False, log_obs=False)
 
     res = {}
-    for nom, forcee in bras + (("vrai", vraies),
+    fort = tuple(a.gain * v for v in vraies)
+    for nom, forcee in bras + (("vrai", vraies), ("fort", fort),
                                ("nul", (0.0,) * len(cfg.resources))):
         modele = build_model(cfg, valeur_forcee=forcee)
         _, out = vmap_over_agents_env_lab_high_res(genomes, k_env, k_sims,
@@ -126,13 +139,14 @@ def main():
               f"{'Δ vs nul':>12}{'signes':>13}{'p':>9}")
         nul = res["nul"][j]
         print(ligne("nul", nul))
-        for nom in [n for n, _ in bras] + ["vrai"]:
+        for nom in [n for n, _ in bras] + ["vrai", "fort"]:
             print(ligne(nom, res[nom][j], ref=nul))
 
     # Zero paire discordante n'est pas un resultat nul : c'est le signe que les
     # deux bras ont tourne le MEME reseau. Un effet reellement nul laisse quand
     # meme du bruit de trajectoire, donc des paires qui different.
-    if np.array_equal(res["vrai"][0], res["nul"][0]):
+    if (np.array_equal(res["vrai"][0], res["nul"][0])
+            and np.array_equal(res["fort"][0], res["nul"][0])):
         raise SystemExit(
             "\nERREUR : les bras 'vrai' et 'nul' donnent des trajectoires\n"
             "identiques au bit pres sur les " + str(len(tirage)) + " genomes.\n"
@@ -141,22 +155,28 @@ def main():
             "Verifier que rien ne remplace le modele en aval (cf. model_tourne).")
 
     d_vrai = np.median(res["vrai"][0] - res["nul"][0])
-    print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents.")
+    d_fort = np.median(res["fort"][0] - res["nul"][0])
+    print(f"\nLecture : information parfaite vaut {d_vrai:+.1f} pas-agents, "
+          f"amplifiee x{a.gain:g} elle en vaut {d_fort:+.1f}.")
     if bras:
         d_appris = np.median(res["appris"][0] - res["nul"][0])
         print(f"          l'information apprise en vaut {d_appris:+.1f}.")
-    if abs(d_vrai) < 0.02 * np.median(nul):
-        print("-> cette population ignore v_pred : lui donner l'information "
-              "parfaite ne change rien.\n"
-              "   Cela ne prouve PAS que l'architecture en soit incapable. Si "
-              "v_pred n'a jamais\n"
-              "   ete informatif, l'evolution n'avait aucune raison de lui "
-              "donner du poids.\n"
-              "   Etape suivante : faire evoluer une population avec v_pred "
-              "force aux vraies valeurs.")
+    seuil = 0.02 * np.median(nul)
+    if abs(d_vrai) >= seuil:
+        print("-> la politique lit v_pred. Ce qui manque est l'apprentissage, "
+              "pas le cablage.")
+    elif abs(d_fort) >= seuil:
+        print("-> la politique lit v_pred, mais trop faiblement pour que "
+              "l'information pese\n"
+              "   sur l'action : amplifiee, elle change le comportement. Le "
+              "cablage existe et\n"
+              "   il est sous-dimensionne -- c'est un probleme d'echelle, pas "
+              "d'architecture.")
     else:
-        print("-> la politique sait lire v_pred. Ce qui manque est "
-              "l'apprentissage, pas le cablage.")
+        print("-> cette population n'ecoute pas du tout v_pred : meme amplifiee "
+              f"x{a.gain:g},\n"
+              "   l'information ne change rien. Les poids de la tete vers cette "
+              "entree sont nuls.")
 
 
 if __name__ == "__main__":
