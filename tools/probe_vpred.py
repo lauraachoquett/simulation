@@ -9,6 +9,7 @@ la tete de politique recoit :
     appris  : la tete de valeur, telle que le run l'a apprise
     vrai    : les delta_energy exacts, imposes
     fort    : les memes, multiplies par 10
+    inverse : les memes x -10, donc le poison devient la meilleure case
     nul     : des zeros, aucune information
 
 Le bras "fort" existe parce qu'un resultat NUL n'a de valeur que si l'instrument
@@ -17,8 +18,13 @@ sait detecter un effet. Il separe deux causes que "vrai == nul" confond :
     fort == nul   -> la tete n'ecoute pas du tout cette entree, ses poids y sont
                      nuls. Aucune amplification n'y changera rien.
     fort != nul   -> elle l'ecoute, mais trop faiblement pour peser sur l'action.
-                     Le cablage existe, il est seulement sous-dimensionne --
-                     conclusion bien plus favorable, et corrigeable.
+                     Le cablage existe, il est seulement sous-dimensionne.
+
+Le bras "inverse" tranche une objection sur "fort" : une entree dix fois plus
+grande sur trois dimensions PERTURBE forcement la politique, qu'elle soit lue ou
+non. Ce qui prouve une lecture, c'est que le comportement suive le SENS des
+valeurs. Si en annoncant le poison comme la meilleure ressource on en fait manger
+davantage, alors la tete lit vraiment ce nombre. Sinon "fort" n'etait qu'un choc.
 
 Lecture :
 
@@ -124,7 +130,9 @@ def main():
 
     res = {}
     fort = tuple(a.gain * v for v in vraies)
+    inverse = tuple(-v for v in fort)
     for nom, forcee in bras + (("vrai", vraies), ("fort", fort),
+                               ("inverse", inverse),
                                ("nul", (0.0,) * len(cfg.resources))):
         modele = build_model(cfg, valeur_forcee=forcee)
         _, out = vmap_over_agents_env_lab_high_res(genomes, k_env, k_sims,
@@ -139,7 +147,7 @@ def main():
               f"{'Δ vs nul':>12}{'signes':>13}{'p':>9}")
         nul = res["nul"][j]
         print(ligne("nul", nul))
-        for nom in [n for n, _ in bras] + ["vrai", "fort"]:
+        for nom in [n for n, _ in bras] + ["vrai", "fort", "inverse"]:
             print(ligne(nom, res[nom][j], ref=nul))
 
     # Zero paire discordante n'est pas un resultat nul : c'est le signe que les
@@ -161,17 +169,35 @@ def main():
     if bras:
         d_appris = np.median(res["appris"][0] - res["nul"][0])
         print(f"          l'information apprise en vaut {d_appris:+.1f}.")
-    seuil = 0.02 * np.median(nul)
+    # `nul` sortait de la boucle d'affichage ci-dessus et valait donc le POISON,
+    # pas les pas-agents : le seuil etait 25x trop bas et validait n'importe quoi.
+    seuil = 0.02 * np.median(res["nul"][0])
+    # le poison est la mesure DIRIGEE : c'est elle qui dit si le comportement
+    # suit le sens des valeurs, et pas seulement qu'il a ete perturbe
+    poison_fort = np.median(res["fort"][1] - res["nul"][1])
+    poison_inv = np.median(res["inverse"][1] - res["nul"][1])
+    print(f"          poison : {poison_fort:+.1f} avec fort, "
+          f"{poison_inv:+.1f} avec inverse (pour 1000 pas)")
+
     if abs(d_vrai) >= seuil:
         print("-> la politique lit v_pred. Ce qui manque est l'apprentissage, "
               "pas le cablage.")
-    elif abs(d_fort) >= seuil:
+    elif abs(d_fort) >= seuil and poison_fort < 0 < poison_inv:
         print("-> la politique lit v_pred, mais trop faiblement pour que "
               "l'information pese\n"
-              "   sur l'action : amplifiee, elle change le comportement. Le "
-              "cablage existe et\n"
-              "   il est sous-dimensionne -- c'est un probleme d'echelle, pas "
-              "d'architecture.")
+              "   sur l'action. Amplifiee elle evite le poison, inversee elle "
+              "le recherche :\n"
+              "   le comportement suit le SENS des valeurs, donc la lecture est "
+              "reelle.\n"
+              "   Le cablage existe et il est sous-dimensionne -- probleme "
+              "d'echelle, pas d'architecture.")
+    elif abs(d_fort) >= seuil:
+        print("-> amplifiee, l'information change le comportement, mais celui-ci "
+              "ne suit pas le\n"
+              "   SENS des valeurs (le bras inverse devrait faire manger PLUS de "
+              "poison).\n"
+              "   C'est un choc sur l'entree, pas une lecture. A interpreter "
+              "avec prudence.")
     else:
         print("-> cette population n'ecoute pas du tout v_pred : meme amplifiee "
               f"x{a.gain:g},\n"
