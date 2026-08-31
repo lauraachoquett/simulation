@@ -284,6 +284,20 @@ def run_simulation_chunk(state,model,keys, cfg):
             def maj(inn):
                 vie, perte = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque)
+                if cfg.inner_policy:
+                    # Une ligne par fin de fenetre : c'est la seule occasion ou
+                    # `perte` change, donc ou la liste des agents confiants bouge.
+                    # Sans ca on ne sait pas si la loss de politique agit ou si
+                    # le seuil est trop serre.
+                    en_vie = survives_int > 0
+                    jax.debug.print(
+                        "[politique] pas {p} : {n} agents sur {t} sous le seuil "
+                        "{s} -- erreur mediane {m}, minimale {b}",
+                        p=step_idx, s=cfg.inner_policy_seuil,
+                        n=((perte < cfg.inner_policy_seuil) & en_vie).sum(),
+                        t=en_vie.sum(),
+                        m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
+                        b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)))
                 return inn.replace(params_vie=vie, perte=perte,
                                    carry_h=new_policy_states.lstm_h,
                                    carry_c=new_policy_states.lstm_c)
