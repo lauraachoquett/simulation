@@ -55,7 +55,6 @@ from EcoEvoJax.source.agent import MetaRNN_bcppr
 
 
 def echantillons(cle, n, cote, de, bons, mauvais):
-    n_types = de.shape[0]
     """Une ressource, juste devant. Faut-il avancer ?
 
     La tache est reduite a la seule decision qui nous interesse : la case devant
@@ -68,6 +67,7 @@ def echantillons(cle, n, cote, de, bons, mauvais):
     Et la permutation change a chaque echantillon, donc un reseau qui ne lit pas
     v_pred ne peut pas depasser ce plancher.
     """
+    n_types = de.shape[0]
     c_cls, c_bon, c_mauvais, c_perm = jax.random.split(cle, 4)
     perm = jnp.stack([jax.random.permutation(k, n_types)
                       for k in jax.random.split(c_perm, n)])       # canal -> identite
