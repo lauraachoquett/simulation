@@ -12,6 +12,7 @@ from simulation.data_class import AgentState, InnerState, SimState, ResourceConf
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config, MODEL_VERSIONS
+from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 
 import numpy as np
 from simulation.utils.utils_video import save_chunk_video
@@ -36,6 +37,55 @@ def masque_forget_bias(model):
         cible = len(cles) >= 2 and cles[-2] == "hf" and cles[-1] == "bias"
         morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
     return jnp.concatenate(morceaux)
+
+
+def build_model(cfg, valeur_forcee=()):
+    """Unique point de construction du reseau.
+
+    Les deux branches de launch_simulation_chunked (nouveau run / reprise)
+    l'instanciaient chacune avec ses propres constantes. Elles ont deja diverge
+    une fois (963e465 : resume etait reste a hidden_dim=4 / [8] quand le depart
+    de zero passait a 8 / [32]) et la divergence ne leve pas d'erreur -- les
+    poids repris sont un vecteur plat, une mise en forme differente les
+    reinterprete simplement de travers. Un seul appel rend le cas impossible.
+    """
+    return MetaRnnPolicy_bcppr(
+        input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1),
+                   2 + len(cfg.resources)),
+        hidden_dim=cfg.hidden_dim,
+        output_dim=cfg.output_dim,
+        encoder=cfg.encoder,
+        # listes : MetaRNN_bcppr itere dessus, mais Config doit rester hachable
+        # pour jax.jit(static_argnames=['cfg']) -> tuples cote Config.
+        encoder_layers=list(cfg.encoder_layers),
+        hidden_layers=list(cfg.hidden_layers),
+        memory_mode=cfg.memory_mode,
+        # la tete de valeur n'existe que si la boucle interne tourne : sans ce
+        # garde-fou tous les runs precedents changeraient de nombre de parametres
+        # la tete de valeur existe des que l'un des deux la demande. Sans ce
+        # garde-fou tous les runs precedents changeraient de nombre de parametres
+        predict_value=(len(cfg.resources)
+                       if (cfg.inner_loop or cfg.vpred_oracle) else 0),
+        # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
+        valeur_forcee=tuple(valeur_forcee),
+    )
+
+
+# Les shuffles permutent cfg.resources, donc les valeurs imposees changent avec
+# eux. On garde un modele par jeu de valeurs : il n'y a que len(resources)!
+# permutations, donc au plus 6 compilations sur tout le run, contre une par
+# shuffle si on reconstruisait a chaque fois.
+_MODELES_ORACLE = {}
+
+
+def model_pour(cfg, model_defaut):
+    """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
+    if not cfg.vpred_oracle:
+        return model_defaut
+    cle = tuple(float(r.delta_energy) for r in cfg.resources)
+    if cle not in _MODELES_ORACLE:
+        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=cle)
+    return _MODELES_ORACLE[cle]
 
 
 def masque_valeur(model):

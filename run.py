@@ -20,7 +20,7 @@ from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour
 from simulation.simulation_data.core import simulation_data
 
 import argparse
@@ -68,55 +68,6 @@ def save_script(exp_dir):
 
     
         
-def build_model(cfg, valeur_forcee=()):
-    """Unique point de construction du reseau.
-
-    Les deux branches de launch_simulation_chunked (nouveau run / reprise)
-    l'instanciaient chacune avec ses propres constantes. Elles ont deja diverge
-    une fois (963e465 : resume etait reste a hidden_dim=4 / [8] quand le depart
-    de zero passait a 8 / [32]) et la divergence ne leve pas d'erreur -- les
-    poids repris sont un vecteur plat, une mise en forme differente les
-    reinterprete simplement de travers. Un seul appel rend le cas impossible.
-    """
-    return MetaRnnPolicy_bcppr(
-        input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1),
-                   2 + len(cfg.resources)),
-        hidden_dim=cfg.hidden_dim,
-        output_dim=cfg.output_dim,
-        encoder=cfg.encoder,
-        # listes : MetaRNN_bcppr itere dessus, mais Config doit rester hachable
-        # pour jax.jit(static_argnames=['cfg']) -> tuples cote Config.
-        encoder_layers=list(cfg.encoder_layers),
-        hidden_layers=list(cfg.hidden_layers),
-        memory_mode=cfg.memory_mode,
-        # la tete de valeur n'existe que si la boucle interne tourne : sans ce
-        # garde-fou tous les runs precedents changeraient de nombre de parametres
-        # la tete de valeur existe des que l'un des deux la demande. Sans ce
-        # garde-fou tous les runs precedents changeraient de nombre de parametres
-        predict_value=(len(cfg.resources)
-                       if (cfg.inner_loop or cfg.vpred_oracle) else 0),
-        # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
-        valeur_forcee=tuple(valeur_forcee),
-    )
-
-
-# Les shuffles permutent cfg.resources, donc les valeurs imposees changent avec
-# eux. On garde un modele par jeu de valeurs : il n'y a que len(resources)!
-# permutations, donc au plus 6 compilations sur tout le run, contre une par
-# shuffle si on reconstruisait a chaque fois.
-_MODELES_ORACLE = {}
-
-
-def model_pour(cfg, model_defaut):
-    """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
-    if not cfg.vpred_oracle:
-        return model_defaut
-    cle = tuple(float(r.delta_energy) for r in cfg.resources)
-    if cle not in _MODELES_ORACLE:
-        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=cle)
-    return _MODELES_ORACLE[cle]
-
-
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', subkeys_init=None):
     
     start_time_sim = time.time()

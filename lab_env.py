@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from simulation.data_class import AgentState,SimState,LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
-from simulation.utils.utils_sim import init_inner
+from simulation.utils.utils_sim import init_inner, model_pour
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -204,7 +204,13 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
-    return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
+    # APRES la rotation : avec vpred_oracle les valeurs imposees sont figees
+    # dans le modele, et celui recu porte celles de la permutation de la
+    # simulation. Sous rotation elles designeraient les mauvais canaux --
+    # l'agent recevrait une information systematiquement fausse au lieu de
+    # parfaite, et le bras adapt mesurerait l'inverse de ce qu'il annonce.
+    return launch_lab_env(agent_params, key_env, key_sim, cfg,
+                          model_pour(cfg, model))
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     
