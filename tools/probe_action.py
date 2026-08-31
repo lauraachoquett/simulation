@@ -35,7 +35,8 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import BASE_RESOURCES, LABELS
+from simulation.data_class import BASE_RESOURCES, LABELS, sous_ensemble
+
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...).
 try:
@@ -53,7 +54,8 @@ except TypeError:
 from EcoEvoJax.source.agent import MetaRNN_bcppr
 
 
-def echantillons(cle, n, cote, n_types=3):
+def echantillons(cle, n, cote, de, bons, mauvais):
+    n_types = de.shape[0]
     """Une ressource, juste devant. Faut-il avancer ?
 
     La tache est reduite a la seule decision qui nous interesse : la case devant
@@ -61,31 +63,31 @@ def echantillons(cle, n, cote, n_types=3):
     navigation -- on avait etabli que se DIRIGER vers une case est un autre
     probleme ; ici on teste uniquement la lecture de la valeur.
 
-    Le poison sort une fois sur deux, donc le hasard vaut 0.5. Et la permutation
-    change a chaque echantillon : un reseau qui ne lit pas v_pred ne peut pas
-    depasser ce plancher, la reponse n'etant pas dans l'indice du canal.
+    La classe est tiree d'abord, puis une identite compatible : le hasard vaut
+    donc 0.5 quel que soit le nombre de ressources et la repartition des signes.
+    Et la permutation change a chaque echantillon, donc un reseau qui ne lit pas
+    v_pred ne peut pas depasser ce plancher.
     """
-    c_id, c_autre, c_perm = jax.random.split(cle, 3)
-    de = jnp.array([r.delta_energy for r in BASE_RESOURCES])       # par identite
-    i_poison = LABELS.index("poison")
-
+    c_cls, c_bon, c_mauvais, c_perm = jax.random.split(cle, 4)
     perm = jnp.stack([jax.random.permutation(k, n_types)
                       for k in jax.random.split(c_perm, n)])       # canal -> identite
     v = de[perm]                                                   # (n, n_types)
 
-    autre = jax.random.randint(c_autre, (n,), 0, n_types - 1)
-    autre = jnp.where(autre >= i_poison, autre + 1, autre)         # exclut le poison
-    identite = jnp.where(jax.random.uniform(c_id, (n,)) < 0.5, i_poison, autre)
+    avancer = jax.random.uniform(c_cls, (n,)) < 0.5
+    identite = jnp.where(
+        avancer,
+        bons[jax.random.randint(c_bon, (n,), 0, len(bons))],
+        mauvais[jax.random.randint(c_mauvais, (n,), 0, len(mauvais))])
     canal = jnp.argmax(perm == identite[:, None], axis=1)          # ou il se trouve
 
     c = cote // 2
-    obs = jnp.zeros((n, cote, cote, 5))
+    obs = jnp.zeros((n, cote, cote, n_types + 2))
     obs = obs.at[jnp.arange(n), c + 1, c, canal].set(1.0)
-    cible = jnp.where(de[identite] > 0, 3, 1)                      # avancer / tourner
+    cible = jnp.where(avancer, 3, 1)                               # avancer / tourner
     return obs, v, cible
 
 
-def ajoute_carte(obs, v, n_types=3):
+def ajoute_carte(obs, v, n_types):
     """Canal supplementaire : la valeur de ce qui occupe chaque case.
 
     Ajoute EN DERNIER pour ne pas decaler l'indice du canal des murs.
@@ -94,17 +96,16 @@ def ajoute_carte(obs, v, n_types=3):
     return jnp.concatenate([obs, carte], axis=-1)
 
 
-def entraine(nom, a, cle, avec_carte, aveugle):
-    n_types = 3
-    n_can = 5 + (1 if avec_carte else 0)
+def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
+    n_types = de.shape[0]
     modele = MetaRNN_bcppr(4, out_fn="categorical", hidden_layers=list(a.hidden),
                            encoder_in=False, encoder_layers=[], carry_size=a.carry,
                            memory_mode="separee", predict_value=n_types)
 
     cle, c0 = jax.random.split(cle)
-    obs0, v0, _ = echantillons(c0, 1, a.cote)
+    obs0, v0, _ = echantillons(c0, 1, a.cote, de, bons, mauvais)
     if avec_carte:
-        obs0 = ajoute_carte(obs0, v0)
+        obs0 = ajoute_carte(obs0, v0, n_types)
     z = jnp.zeros(a.carry)
     params = modele.init(jax.random.PRNGKey(a.seed), z, z, obs0[0],
                          jnp.zeros(4), jnp.zeros(1), jnp.ones(1),
@@ -127,9 +128,9 @@ def entraine(nom, a, cle, avec_carte, aveugle):
 
     @jax.jit
     def pas(params, etat, cle):
-        obs, v, cible = echantillons(cle, a.batch, a.cote)
+        obs, v, cible = echantillons(cle, a.batch, a.cote, de, bons, mauvais)
         if avec_carte:
-            obs = ajoute_carte(obs, v)
+            obs = ajoute_carte(obs, v, n_types)
         l, g = jax.value_and_grad(perte)(params, (obs, v, cible))
         maj, etat = opt.update(g, etat, params)
         return optax.apply_updates(params, maj), etat, l
@@ -140,8 +141,8 @@ def entraine(nom, a, cle, avec_carte, aveugle):
 
     # evaluation sur un lot neuf, plus grand
     cle, ct = jax.random.split(cle)
-    obs, v, cible = echantillons(ct, 4096, a.cote)
-    obs_in = ajoute_carte(obs, v) if avec_carte else obs
+    obs, v, cible = echantillons(ct, 4096, a.cote, de, bons, mauvais)
+    obs_in = ajoute_carte(obs, v, n_types) if avec_carte else obs
     pred = jnp.argmax(logits(params, obs_in, v), -1)
     exact = float((pred == cible).mean())
 
@@ -161,32 +162,44 @@ def main():
     p.add_argument("--batch", type=int, default=256)
     p.add_argument("--iters", type=int, default=3000)
     p.add_argument("--lr", type=float, default=3e-3)
+    p.add_argument("--n-res", dest="n_res", type=int, default=len(BASE_RESOURCES),
+                   help="nb de ressources, prises dans BASE_RESOURCES "
+                        "(defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
+    res = sous_ensemble(a.n_res)
+    de = jnp.array([r.delta_energy for r in res])
+    n_types = len(res)
+    bons = np.flatnonzero(np.asarray(de) > 0)
+    mauvais = np.flatnonzero(np.asarray(de) < 0)
+    if not (len(bons) and len(mauvais)):
+        raise SystemExit("Il faut au moins une ressource benefique et une "
+                         "nefaste : sans les deux la decision n'existe pas.")
+    bons, mauvais = jnp.asarray(bons), jnp.asarray(mauvais)
     print(f"tete={a.hidden} carry={a.carry} | {a.iters} iterations, "
-          f"lot={a.batch}\n"
+          f"lot={a.batch} | {n_types} ressources\n"
           "valeurs par identite : "
-          + "  ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in BASE_RESOURCES))
+          + "  ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res))
 
     cle = jax.random.PRNGKey(a.seed)
-    res = []
+    sorties = []
     for nom, carte, aveugle in (("aveugle", False, True),
                                 ("concat", False, False),
                                 ("carte", True, False)):
         cle, ce = jax.random.split(cle)
-        res.append(entraine(nom, a, ce, carte, aveugle))
+        sorties.append(entraine(nom, a, ce, de, bons, mauvais, carte, aveugle))
         print(f"  [{nom}] termine")
 
     print(f"\n  {'variante':<10}{'params':>8}{'perte':>9}{'exactitude':>13}"
-          f"{'fonce sur poison':>19}")
-    for r in res:
+          f"{'fonce sur nefaste':>19}")
+    for r in sorties:
         print(f"  {r['nom']:<10}{r['params']:>8}{r['perte']:>9.4f}"
               f"{r['exact']:>13.3f}{r['fonce']:>19.3f}")
-    print(f"  (hasard et plafond aveugle : exactitude 0.50, fonce sur poison "
-          f"0.50 ; n={res[0]['n']} cas de poison sur 4096)")
+    print(f"  (hasard et plafond aveugle : exactitude 0.50, fonce sur nefaste "
+          f"0.50 ; n={sorties[0]['n']} cas nefastes sur 4096)")
 
-    aveugle, concat, carte = (r["exact"] for r in res)
+    aveugle, concat, carte = (r["exact"] for r in sorties)
     print()
     if concat > aveugle + 0.05:
         print("-> le cablage actuel SAIT se servir de v_pred : le gradient trouve "

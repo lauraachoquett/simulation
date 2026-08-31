@@ -259,7 +259,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx >10 :
                 old_resources = cfg.resources
                 if cfg.shuffle_version == "v1":
-                    # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
+                    # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue.
+                    # BASE_RESOURCES et non cfg.resources : c'est ce que faisait le
+                    # code d'origine, et v1 n'existe que pour rejouer ces runs-la.
+                    # Avec un autre nombre de ressources il rendrait une liste de
+                    # taille differente, qui desaccorderait le reseau en silence.
+                    if len(cfg.resources) != len(BASE_RESOURCES):
+                        raise ValueError(
+                            f"--shuffle v1 suppose les {len(BASE_RESOURCES)} "
+                            f"ressources de BASE_RESOURCES, la config en a "
+                            f"{len(cfg.resources)}. Utiliser --shuffle v2.")
                     new_resources = shuffle_resources_v1(BASE_RESOURCES, subkey)
                 else:
                     key, subkey_shuffle = random.split(key)

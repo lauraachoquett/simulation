@@ -239,6 +239,21 @@ class Config(NamedTuple):
                                       # entre deux pas de gradient
 
 
+def sous_ensemble(n, resources=None):
+    """n ressources, la plus NEFASTE toujours incluse.
+
+    Un simple BASE_RESOURCES[:n] donnerait good + medium a n=2 : deux ressources
+    benefiques, et plus rien a discriminer. Sert aux outils de tools/ pour
+    tourner a un nombre de ressources quelconque.
+    """
+    resources = resources or BASE_RESOURCES
+    if n >= len(resources):
+        return tuple(resources)
+    pire = min(resources, key=lambda r: r.delta_energy)
+    autres = [r for r in resources if r is not pire][:n - 1]
+    return tuple(autres) + (pire,)
+
+
 MODEL_VERSIONS = {
     "v1": dict(memory_mode="jointe",  hidden_dim=4, hidden_layers=(8,)),
     "v2": dict(memory_mode="separee", hidden_dim=8, hidden_layers=(32,)),
