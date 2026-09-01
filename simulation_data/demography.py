@@ -110,11 +110,15 @@ class DemographyMixin:
             compte_chunk = np.bincount(casier[ok], minlength=self.n_age_bins)
             # Influence reelle du gradient sur le comportement, moyennee sur
             # les vivants : les emplacements libres portent un 0 qui la diluerait.
+            # NaN = pas de case devant l'agent, donc rien a mesurer : les
+            # deux politiques coincident par construction et les inclure
+            # diluerait l'effet d'un facteur egal a leur proportion.
             div = np.asarray(outputs.divergence_pol)
-            viv = np.asarray(outputs.alive) > 0
-            div_chunk = np.divide((div * viv).sum(axis=1), viv.sum(axis=1),
+            ok_div = (np.asarray(outputs.alive) > 0) & np.isfinite(div)
+            n_div = ok_div.sum(axis=1)
+            div_chunk = np.divide(np.where(ok_div, div, 0.0).sum(axis=1), n_div,
                                   out=np.full(len(pop_chunk), np.nan),
-                                  where=viv.sum(axis=1) > 0)
+                                  where=n_div > 0)
         else:
             perte_chunk = np.zeros(len(pop_chunk))
             div_chunk = np.full(len(pop_chunk), np.nan)

@@ -2025,7 +2025,10 @@ def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None
     """La retropropagation change-t-elle vraiment le comportement ?
 
     A gauche : la part de l'ecart de comportement imputable a la seule
-    retropropagation sur la TETE. La croyance apprise change deja les actions
+    retropropagation sur la TETE, mesuree UNIQUEMENT sur les pas ou une case
+    occupee est devant l'agent. Ailleurs avancer et rester ont la meme valeur,
+    le gradient est nul et les deux politiques coincident : les inclure diviserait
+    la mesure par la proportion de pas utiles. La croyance apprise change deja les actions
     sans qu'aucun poids de politique n'ait bouge -- v_pred entre dans la tete et
     dans la carte -- donc la comparaison se fait a croyance egale.
     0 = la loss de politique n'a rien change ; 0.5 = la moitie de la masse.
@@ -2044,7 +2047,7 @@ def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None
     g.set_xlabel("Steps"); g.set_ylabel("variation totale")
     g.set_ylim(bottom=0)
     g.set_title("Influence de la loss de POLITIQUE sur les actions\n"
-                "a croyance egale : 0 = elle n a rien change")
+                "a croyance egale, une case devant : 0 = rien change")
     g.grid(alpha=.3)
 
     couleurs = ("#BDBDBD", "#90CAF9", "#4FC3F7", "#E63946")

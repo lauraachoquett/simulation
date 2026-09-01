@@ -174,8 +174,15 @@ def divergences(model, cfg, params_vie, genome, h, c, obs, mem_in, masque_pol):
         # croyance apprise, politique du genome
         mixte = vie * (1.0 - masque_pol) + gen * masque_pol
         p_vie = pi(vie)
+        # Y a-t-il une ressource devant ? Sinon avancer et rester ont la meme
+        # valeur, le gradient est nul et les deux politiques coincident par
+        # construction. Moyenner sur ces pas-la dilue la mesure : sur 5% de pas
+        # utiles, un effet reel de 0.4 se lirait 0.02.
+        n_types = len(cfg.resources)
+        devant = obs[cfg.agent_view + 1, cfg.agent_view, :n_types].sum() > 0
         return (0.5 * jnp.abs(p_vie - pi(gen)).sum(),
-                0.5 * jnp.abs(p_vie - pi(mixte)).sum())
+                0.5 * jnp.abs(p_vie - pi(mixte)).sum(),
+                devant)
 
     return jax.vmap(paires)(params_vie, genome, h, c, obs, mem_in)
 
@@ -350,12 +357,13 @@ def run_simulation_chunk(state,model,keys, cfg):
                 vie, perte = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque)
                 if cfg.inner_policy:
-                    div_tot, div = divergences(
+                    div_tot, div, devant = divergences(
                         model, cfg, vie, agents.params,
                         agents.policy_states.lstm_h, agents.policy_states.lstm_c,
                         state.obs, mem_in, masque_pol)
                 else:
                     div_tot = div = inn.divergence
+                    devant = jnp.zeros_like(div, dtype=bool)
                 if cfg.inner_policy and cfg.log_inner:
                     # Une ligne par fin de fenetre : c'est la seule occasion ou
                     # `perte` change, donc ou la liste des agents confiants bouge.
@@ -377,15 +385,21 @@ def run_simulation_chunk(state,model,keys, cfg):
                     # agents sont concernes, ce qui se lit a tort comme "la tete
                     # ne fait rien".
                     touche = (ecart > 0) & en_vie
+                    # conditionne sur "quelque chose devant" : ailleurs les deux
+                    # politiques coincident par construction
+                    utile = touche & devant
                     jax.debug.print(
-                        "[politique] pas {p} : tete deplacee chez {n} agents sur "
-                        "{v} -- divergence due a la TETE, mediane {d} max {x} ; "
-                        "due a tout {t} ; ecart de poids max {w}",
+                        "[politique] pas {p} : tete deplacee chez {n}/{v} agents, "
+                        "{u} avec une case devant -- divergence TETE {d} "
+                        "(toutes vues {a}), TOTALE {t} ; ecart de poids max {w}",
                         p=step_idx, n=touche.sum(), v=en_vie.sum(),
-                        d=jnp.nanmedian(jnp.where(touche, div, jnp.nan)),
-                        x=jnp.nanmax(jnp.where(touche, div, jnp.nan)),
-                        t=jnp.nanmedian(jnp.where(en_vie, div_tot, jnp.nan)),
+                        u=utile.sum(),
+                        d=jnp.nanmedian(jnp.where(utile, div, jnp.nan)),
+                        a=jnp.nanmedian(jnp.where(touche, div, jnp.nan)),
+                        t=jnp.nanmedian(jnp.where(en_vie & devant, div_tot, jnp.nan)),
                         w=jnp.nanmax(jnp.where(en_vie, ecart, jnp.nan)))
+                # NaN quand rien n'est devant : le trace doit ignorer ces pas
+                div = jnp.where(devant, div, jnp.nan)
                 return inn.replace(params_vie=vie, perte=perte, divergence=div,
                                    carry_h=new_policy_states.lstm_h,
                                    carry_c=new_policy_states.lstm_c)
