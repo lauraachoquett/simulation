@@ -136,6 +136,49 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0
 AVANCER = 3
 
 
+def valeurs_par_action(cfg, obs, v, rien):
+    """(n_actions,) : la meilleure case que chaque action rapproche, escomptee.
+
+    Meme notation que simulation/oracle.py -- valeur de la case moins un cout par
+    pas de distance, plus un pas si elle demande une rotation -- mais avec la
+    CROYANCE de l'agent au lieu des vraies valeurs.
+
+    L'ecart avec la portee "case" est decisif. La moyenne des ressources est
+    negative (-0.067), donc noter la seule case devant fait converger la politique
+    vers l'immobilite : quand cette case est mauvaise, ne pas bouger est le mieux
+    possible. Le MAXIMUM sur le champ de vision, lui, est presque toujours positif
+    -- il y a une dizaine de bonnes cases en vue a tout instant -- donc se diriger
+    vers la meilleure bat rester.
+
+    Une case vide vaut `rien` : s'y rendre ne coute que le metabolisme.
+    """
+    n_types = v.shape[0]
+    cote = obs.shape[0]
+    c = cote // 2
+
+    occupe = (obs[..., :n_types] > 0).any(axis=-1)
+    val = jnp.where(occupe, (obs[..., :n_types] * v).sum(-1), rien)
+
+    lignes = jnp.arange(cote)[:, None]
+    cols = jnp.arange(cote)[None, :]
+    dist = jnp.abs(lignes - c) + jnp.abs(cols - c)
+    # une case hors de l'axe demande une rotation en plus, comme dans l'oracle
+    tourne = (cols != c).astype(val.dtype)
+    score = val - cfg.inner_policy_cout * (dist + tourne)
+    score = score.at[c, c].set(-jnp.inf)          # ne pas se viser soi-meme
+
+    def meilleur(masque):
+        m = jnp.max(jnp.where(masque, score, -jnp.inf))
+        return jnp.where(jnp.isfinite(m), m, rien)     # rien en vue -> rien
+
+    # geometrie de agent_mov : avancer -> ligne +1, action 1 -> colonne +1,
+    # action 2 -> colonne -1. Ordre des actions : rester, tourner+, tourner-, avancer
+    return jnp.stack([jnp.asarray(rien, val.dtype),
+                      meilleur(cols > c),
+                      meilleur(cols < c),
+                      meilleur(lignes > c)])
+
+
 def pas_gradient_politique(model, cfg, inner, h, c, obs, mem_in,
                            actifs, masque):
     params_vie = inner.params_vie
@@ -166,13 +209,17 @@ def pas_gradient_politique(model, cfg, inner, h, c, obs, mem_in,
 
         logits = model.logits_apply(p, h, c, obs, la, rw, en, le)
         pi = jax.nn.softmax(logits / cfg.temperature)
-        # la case devant : ligne +1 dans la vue egocentrique (cf. oracle.py)
+        # "rien" est la valeur d'un pas sans repas : negative, puisque vivre
+        # coute. Les actions qui ne posent l'agent sur aucune case la prennent,
+        # au lieu de 0 -- sinon ne rien faire est un optimum.
+        rien = v[n_types] if cfg.inner_target == "delta" else jnp.float32(0.0)
+
+        if cfg.inner_policy_portee == "vue":
+            return -(pi * valeurs_par_action(cfg, obs, v[:n_types], rien)).sum()
+
+        # portee "case" : ligne +1 dans la vue egocentrique (cf. oracle.py)
         devant = obs[centre + 1, centre, :n_types]
         if cfg.inner_target == "delta":
-            # "rien" est la valeur d'un pas sans repas : negative, puisque vivre
-            # coute. Les actions qui ne posent pas l'agent sur une case la
-            # prennent, au lieu de 0 -- sinon ne rien faire est un optimum.
-            rien = v[n_types]
             v_devant = jnp.where(devant.sum() > 0, (devant * v[:n_types]).sum(), rien)
             return -(pi[AVANCER] * v_devant + (1.0 - pi[AVANCER]) * rien)
         return -pi[AVANCER] * (devant * v[:n_types]).sum()

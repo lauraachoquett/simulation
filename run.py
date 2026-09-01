@@ -135,7 +135,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
     if cfg.inner_policy:
-        print(f"[loss politique] -somme_a pi(a) v_hat(a), lr={cfg.inner_policy_lr:g}, "
+        print(f"[loss politique] portee={cfg.inner_policy_portee} "
+              f"-somme_a pi(a) v_hat(a), lr={cfg.inner_policy_lr:g}, "
               f"a chaque pas, seulement si l'erreur de prediction < "
               f"{cfg.inner_policy_seuil:g}")
     if cfg.value_map:
@@ -350,6 +351,7 @@ CLI_PARAMS = [
     (("--vpred-gain",),   "vpred_gain",                     float),
     (("--inner-policy-lr",), "inner_policy_lr",             float),
     (("--inner-policy-seuil",), "inner_policy_seuil",       float),
+    (("--inner-policy-cout",),  "inner_policy_cout",        float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
@@ -400,6 +402,11 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
+    p.add_argument("--inner-policy-portee", dest="inner_policy_portee",
+                   choices=["case", "vue"], default=cfg.inner_policy_portee,
+                   help="portee de la loss de politique : 'case' = la seule case "
+                        "devant, 'vue' = la meilleure case visible escomptee par "
+                        "la distance (defaut %(default)s)")
     p.add_argument("--inner-optim", dest="inner_optim",
                    choices=["sgd", "adam"], default=cfg.inner_optim,
                    help="optimiseur de la boucle interne (defaut %(default)s). "
@@ -436,6 +443,7 @@ def parse_cli(cfg):
     maj["init_scale"] = args.init_scale
     maj["inner_target"] = args.inner_target
     maj["inner_optim"] = args.inner_optim
+    maj["inner_policy_portee"] = args.inner_policy_portee
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))

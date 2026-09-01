@@ -268,6 +268,21 @@ class Config(NamedTuple):
     # n'a jamais mesure d'erreur (NaN) n'est pas confiant.
     # 0.25 = une erreur RMS de 0.5 en energie, de quoi separer le poison du reste.
     inner_policy_seuil : float = 0.25
+    # Portee de la loss de politique.
+    #   "case" : seule la case DEVANT porte une valeur, les autres actions valent
+    #            "rien". Tourner ne rapporte donc jamais -- et quand la case
+    #            devant est mauvaise, ne pas bouger est le mieux possible.
+    #            La moyenne des ressources etant negative, la politique converge
+    #            vers l'immobilite et la population s'eteint.
+    #   "vue"  : chaque action est notee par la MEILLEURE case qu'elle rapproche,
+    #            escomptee par la distance -- le principe de simulation/oracle.py,
+    #            avec les croyances de l'agent a la place des vraies valeurs.
+    #            Le maximum sur le champ de vision est presque toujours positif la
+    #            ou la moyenne sur une case ne l'est pas : l'immobilite cesse
+    #            d'etre le meilleur choix des qu'une ressource utile est en vue.
+    inner_policy_portee : str = "case"
+    # Escompte par pas de distance, comme cout_distance dans oracle.py.
+    inner_policy_cout : float = 0.05
     # Journalisation du verrou de confiance. Coupee dans les env de lab : ils
     # vmappent le rollout sur des dizaines de genomes, donc le message sortirait
     # autant de fois par fenetre, et sur 2 emplacements il ne dit rien.
