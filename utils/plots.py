@@ -1861,7 +1861,8 @@ def plot_inner_loss(perte, exp_dir, start_step=0, steps=None):
     print(f"Figure saved: {out}")
 
 
-def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
+def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6,
+                           min_mesures=100):
     """Erreur de prediction en fonction de l'AGE de l'agent, par tranche de run.
 
     C'est la figure qui separe les deux effets que la courbe temporelle confond :
@@ -1889,8 +1890,8 @@ def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
         c = C[lo:hi].sum(axis=0)
         y = np.divide(S[lo:hi].sum(axis=0), c, out=np.full_like(c, np.nan),
                       where=c > 0)
-        # un casier vu moins de 30 fois est du bruit, pas une mesure
-        y[c < 30] = np.nan
+        # un casier trop peu vu est du bruit, pas une mesure
+        y[c < min_mesures] = np.nan
         # le dernier casier empile TOUS les ages au-dela de la borne : ce n'est
         # pas une mesure a cet age-la, c'est une queue tronquee
         y[-1] = np.nan
@@ -1910,7 +1911,10 @@ def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6):
     d.set_yscale("log")
     d.set_xlabel("age de l'agent (pas)")
     d.set_ylabel("nb de mesures")
-    d.set_title("Effectif par casier\n(la ou c'est creux, la courbe ne dit rien)")
+    d.axhline(min_mesures, color="0.5", ls=":", lw=1)
+    d.annotate(f"seuil de trace ({min_mesures})", (0.99, 0.05),
+               xycoords="axes fraction", ha="right", fontsize=8, color="0.4")
+    d.set_title("Effectif par casier\n(sous le seuil, la courbe n'est pas tracee)")
     d.grid(alpha=.3, which="both")
 
     fig.tight_layout()
