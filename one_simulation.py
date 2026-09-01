@@ -294,7 +294,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             def maj(inn):
                 vie, perte = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque)
-                if cfg.inner_policy:
+                if cfg.inner_policy and cfg.log_inner:
                     # Une ligne par fin de fenetre : c'est la seule occasion ou
                     # `perte` change, donc ou la liste des agents confiants bouge.
                     # Sans ca on ne sait pas si la loss de politique agit ou si

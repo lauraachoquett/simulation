@@ -192,7 +192,8 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         reproduction_on=True,
         resources_growth=False,
         pre_growth_step=200,
-        log_obs=True,          
+        log_obs=True,
+        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          
     )
     count_by_id = HIGH_RES_COUNTS
     # la plus lente, et non "le poison" : une config sans poison plantait ici
@@ -222,7 +223,8 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         reproduction_on = True,
         resources_growth=False,
         pre_growth_step = 200,
-        log_obs=True,          # idem
+        log_obs=True,
+        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          # idem
     )
     count_by_id =HIGH_RES_COUNTS
     # la plus lente, et non "le poison" : une config sans poison plantait ici
@@ -245,7 +247,8 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
         reproduction_on = False,
         resources_growth=False,
         pre_growth_step = 50,
-        log_obs=True,          # idem
+        log_obs=True,
+        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          # idem
     )
     count_by_id = {"good": 3, "medium": 2, "poison": 10}
     

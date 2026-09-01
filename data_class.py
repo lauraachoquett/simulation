@@ -256,6 +256,10 @@ class Config(NamedTuple):
     # n'a jamais mesure d'erreur (NaN) n'est pas confiant.
     # 0.25 = une erreur RMS de 0.5 en energie, de quoi separer le poison du reste.
     inner_policy_seuil : float = 0.25
+    # Journalisation du verrou de confiance. Coupee dans les env de lab : ils
+    # vmappent le rollout sur des dizaines de genomes, donc le message sortirait
+    # autant de fois par fenetre, et sur 2 emplacements il ne dit rien.
+    log_inner : bool = True
     # SGD nu, pas d'etat d'optimiseur par agent. 0.5 : sur un tampon dense
     # (une bouchee par pas), l'erreur tombe sous 0.01 en ~10 mises a jour depuis
     # un genome initial ; a 0.05 il en faut ~100. Aucune instabilite jusqu'a 2.0,
