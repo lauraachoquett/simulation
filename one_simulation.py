@@ -372,15 +372,19 @@ def run_simulation_chunk(state,model,keys, cfg):
                         b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)))
                     ecart = jnp.linalg.norm((vie - agents.params) * masque_pol[None],
                                             axis=1)
+                    # Mediane PARMI CEUX DONT LA TETE A BOUGE : sur toute la
+                    # population elle bascule a 0 des que moins de la moitie des
+                    # agents sont concernes, ce qui se lit a tort comme "la tete
+                    # ne fait rien".
+                    touche = (ecart > 0) & en_vie
                     jax.debug.print(
-                        "[politique] pas {p} : divergence due a la TETE {d} "
-                        "(max {x}), due a tout {t} ; poids de tete deplaces chez "
-                        "{n} agents, ecart max {w}",
-                        p=step_idx,
-                        d=jnp.nanmedian(jnp.where(en_vie, div, jnp.nan)),
-                        x=jnp.nanmax(jnp.where(en_vie, div, jnp.nan)),
+                        "[politique] pas {p} : tete deplacee chez {n} agents sur "
+                        "{v} -- divergence due a la TETE, mediane {d} max {x} ; "
+                        "due a tout {t} ; ecart de poids max {w}",
+                        p=step_idx, n=touche.sum(), v=en_vie.sum(),
+                        d=jnp.nanmedian(jnp.where(touche, div, jnp.nan)),
+                        x=jnp.nanmax(jnp.where(touche, div, jnp.nan)),
                         t=jnp.nanmedian(jnp.where(en_vie, div_tot, jnp.nan)),
-                        n=((ecart > 0) & en_vie).sum(),
                         w=jnp.nanmax(jnp.where(en_vie, ecart, jnp.nan)))
                 return inn.replace(params_vie=vie, perte=perte, divergence=div,
                                    carry_h=new_policy_states.lstm_h,
