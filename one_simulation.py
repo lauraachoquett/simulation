@@ -379,39 +379,30 @@ def run_simulation_chunk(state,model,keys, cfg):
                     div_tot = div = inn.divergence
                     devant = jnp.zeros_like(div, dtype=bool)
                 if cfg.inner_policy and cfg.log_inner:
-                    # Une ligne par fin de fenetre : c'est la seule occasion ou
-                    # `perte` change, donc ou la liste des agents confiants bouge.
-                    # Sans ca on ne sait pas si la loss de politique agit ou si
-                    # le seuil est trop serre.
+                    # Une seule ligne, et seulement une fois par FENETRE pleine :
+                    # avec inner_every la mise a jour est bien plus frequente, et
+                    # journaliser chacune noierait la sortie.
                     en_vie = survives_int > 0
-                    jax.debug.print(
-                        "[politique] pas {p} : {n} agents sur {t} sous le seuil "
-                        "{s} -- erreur mediane {m}, minimale {b}",
-                        p=step_idx, s=cfg.inner_policy_seuil,
-                        n=((perte < cfg.inner_policy_seuil) & en_vie).sum(),
-                        t=en_vie.sum(),
-                        m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
-                        b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)))
                     ecart = jnp.linalg.norm((vie - agents.params) * masque_pol[None],
                                             axis=1)
-                    # Mediane PARMI CEUX DONT LA TETE A BOUGE : sur toute la
-                    # population elle bascule a 0 des que moins de la moitie des
-                    # agents sont concernes, ce qui se lit a tort comme "la tete
-                    # ne fait rien".
                     touche = (ecart > 0) & en_vie
-                    # conditionne sur "quelque chose devant" : ailleurs les deux
-                    # politiques coincident par construction
                     utile = touche & devant
-                    jax.debug.print(
-                        "[politique] pas {p} : tete deplacee chez {n}/{v} agents, "
-                        "{u} avec une case devant -- divergence TETE {d} "
-                        "(toutes vues {a}), TOTALE {t} ; ecart de poids max {w}",
-                        p=step_idx, n=touche.sum(), v=en_vie.sum(),
-                        u=utile.sum(),
-                        d=jnp.nanmedian(jnp.where(utile, div, jnp.nan)),
-                        a=jnp.nanmedian(jnp.where(touche, div, jnp.nan)),
-                        t=jnp.nanmedian(jnp.where(en_vie & devant, div_tot, jnp.nan)),
-                        w=jnp.nanmax(jnp.where(en_vie, ecart, jnp.nan)))
+                    lax.cond(
+                        step_idx % cfg.inner_window == cfg.inner_window - 1,
+                        lambda _: jax.debug.print(
+                            "[interne] pas {p} | erreur {m} (min {b}) | {n}/{v} "
+                            "confiants | tete touchee chez {c}, divergence {d} "
+                            "| totale {t}",
+                            p=step_idx,
+                            m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
+                            b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)),
+                            n=((perte < cfg.inner_policy_seuil) & en_vie).sum(),
+                            v=en_vie.sum(), c=touche.sum(),
+                            d=jnp.nanmedian(jnp.where(utile, div, jnp.nan)),
+                            t=jnp.nanmedian(jnp.where(en_vie & devant, div_tot,
+                                                      jnp.nan))),
+                        lambda _: None, None)
+
                 # NaN quand rien n'est devant : le trace doit ignorer ces pas
                 div = jnp.where(devant, div, jnp.nan)
                 return inn.replace(
