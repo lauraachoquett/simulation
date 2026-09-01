@@ -42,6 +42,14 @@ class StepLog(NamedTuple):
                            #         vide si inner_loop=False
     
 
+def ecrete(grad, seuil):
+    """Ramene la norme du gradient de chaque agent sous `seuil`."""
+    if not seuil:
+        return grad
+    norme = jnp.linalg.norm(grad, axis=1, keepdims=True)
+    return grad * jnp.minimum(1.0, seuil / (norme + 1e-8))
+
+
 def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
     """Un pas de SGD sur la voie LSTM -> tete de valeur, par agent.
 
@@ -77,7 +85,8 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
     val, grad = jax.vmap(jax.value_and_grad(perte))(
         inner.params_vie, inner.carry_h, inner.carry_c,
         inner.tampon_in, inner.tampon_eaten, inner.tampon_r)
-    maj = inner.params_vie - cfg.inner_lr * grad * masque[None] * vivants[:, None]
+    grad = ecrete(grad * masque[None], cfg.inner_clip)
+    maj = inner.params_vie - cfg.inner_lr * grad * vivants[:, None]
     return maj, val
 
 
@@ -120,8 +129,9 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
         return -pi[AVANCER] * v_devant
 
     grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
+    grad = ecrete(grad * masque[None], cfg.inner_clip)
     poids = actifs.astype(params_vie.dtype)[:, None]
-    return params_vie - cfg.inner_policy_lr * grad * masque[None] * poids
+    return params_vie - cfg.inner_policy_lr * grad * poids
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])

@@ -263,6 +263,11 @@ class Config(NamedTuple):
     inner_lr : float = 0.5
     inner_window : int = 20           # longueur du BPTT tronque, et periode
                                       # entre deux pas de gradient
+    # Ecretage de la norme du gradient, par agent. INDISPENSABLE des que la
+    # fenetre depasse quelques dizaines de pas : la retropropagation a travers
+    # 500 pas de LSTM fait exploser le gradient, les poids partent, et l'erreur
+    # de prediction atteint 1e16 avant que l'agent ne meure. 0 desactive.
+    inner_clip : float = 1.0
 
 
 def sous_ensemble(n, resources=None):

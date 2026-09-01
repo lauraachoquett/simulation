@@ -152,6 +152,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     if cfg.inner_loop:
         n_inner = int(masque_valeur(model).sum())
         print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
+              f"ecretage={cfg.inner_clip} "
               f"-> {n_inner} parametres appris pendant la vie, "
               f"{model.num_params - n_inner} laisses a l'evolution")
     save_config(cfg,subkeys, exp_dir)
@@ -336,6 +337,7 @@ CLI_PARAMS = [
     (("--replay-video-frac",), "replay_video_min_frac",     float),
     (("--inner-lr",),     "inner_lr",                       float),
     (("--inner-window",), "inner_window",                   int),
+    (("--inner-clip",),   "inner_clip",                     float),
     (("--vpred-gain",),   "vpred_gain",                     float),
     (("--inner-policy-lr",), "inner_policy_lr",             float),
     (("--inner-policy-seuil",), "inner_policy_seuil",       float),
