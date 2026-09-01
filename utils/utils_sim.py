@@ -70,6 +70,7 @@ def build_model(cfg, valeur_forcee=()):
         valeur_forcee=tuple(valeur_forcee),
         value_gain=cfg.vpred_gain,
         value_map=cfg.value_map,
+        value_rien=cfg.inner_target == "delta",
     )
 
 
@@ -148,10 +149,12 @@ def init_inner(cfg, params):
     n, k = cfg.n_agents_max, cfg.inner_window
     n_types = len(cfg.resources)
     d_mem = cfg.output_dim + 2 + n_types      # action, reward, energie, last_eaten
+    # une case de plus pour "n'a rien mange", cf. inner_target="delta"
+    n_cibles = n_types + (1 if cfg.inner_target == "delta" else 0)
     return InnerState(
         params_vie=params,
         tampon_in=jnp.zeros((n, k, d_mem)),
-        tampon_eaten=jnp.zeros((n, k, n_types)),
+        tampon_eaten=jnp.zeros((n, k, n_cibles)),
         tampon_r=jnp.zeros((n, k)),
         carry_h=jnp.zeros((n, cfg.hidden_dim)),
         carry_c=jnp.zeros((n, cfg.hidden_dim)),

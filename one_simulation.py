@@ -66,6 +66,8 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
     def perte(theta, h0, c0, t_in, t_eat, t_r):
         p = model.format_one_fn(theta)
 
+        n_types = len(cfg.resources)
+
         def avance(carry, x):
             h, c = carry
             mem_in, eat, r = x
@@ -73,17 +75,21 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
             # v est la prediction faite AVANT que (eat, r) n'entre dans le LSTM :
             # ils n'y arriveront qu'au pas suivant. C'est donc une prediction,
             # pas une recopie de l'entree.
-            return (h, c), ((v - r) ** 2 * eat).sum()
+            e = (v - r) ** 2 * eat
+            # total pour le gradient, part BOUCHEES pour la mesure
+            return (h, c), (e.sum(), e[:n_types].sum())
 
-        _, err = lax.scan(avance, (h0, c0), (t_in, t_eat, t_r))
-        # Moyenne par BOUCHEE : les pas sans repas ne portent pas de cible.
-        # Fenetre sans aucune bouchee -> NaN, et non zero : un zero se lirait
-        # comme "predit parfaitement" sur la courbe. Le gradient, lui, vaut bien
-        # zero des deux facons (la branche NaN est une constante).
-        n = t_eat.sum()
-        return jnp.where(n > 0, err.sum() / jnp.maximum(n, 1.0), jnp.nan)
+        _, (err, err_b) = lax.scan(avance, (h0, c0), (t_in, t_eat, t_r))
+        # Le gradient porte sur TOUTES les cases, y compris "rien" : c'est elle
+        # qui apprend ce que coute un pas sans repas. La mesure rapportee, elle,
+        # ne compte que les bouchees -- "rien" est trivial a predire et ecraserait
+        # l'erreur, rendant le seuil de confiance illisible.
+        n_tot = jnp.maximum(t_eat.sum(), 1.0)
+        n_b = t_eat[:, :n_types].sum()
+        return (err.sum() / n_tot,
+                jnp.where(n_b > 0, err_b.sum() / jnp.maximum(n_b, 1.0), jnp.nan))
 
-    val, grad = jax.vmap(jax.value_and_grad(perte))(
+    (_, val), grad = jax.vmap(jax.value_and_grad(perte, has_aux=True))(
         inner.params_vie, inner.carry_h, inner.carry_c,
         inner.tampon_in, inner.tampon_eaten, inner.tampon_r)
     grad = ecrete(grad * masque[None], cfg.inner_clip)
@@ -126,8 +132,15 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
         logits = model.logits_apply(p, h, c, obs, la, rw, en, le)
         pi = jax.nn.softmax(logits / cfg.temperature)
         # la case devant : ligne +1 dans la vue egocentrique (cf. oracle.py)
-        v_devant = (obs[centre + 1, centre, :n_types] * v).sum()
-        return -pi[AVANCER] * v_devant
+        devant = obs[centre + 1, centre, :n_types]
+        if cfg.inner_target == "delta":
+            # "rien" est la valeur d'un pas sans repas : negative, puisque vivre
+            # coute. Les actions qui ne posent pas l'agent sur une case la
+            # prennent, au lieu de 0 -- sinon ne rien faire est un optimum.
+            rien = v[n_types]
+            v_devant = jnp.where(devant.sum() > 0, (devant * v[:n_types]).sum(), rien)
+            return -(pi[AVANCER] * v_devant + (1.0 - pi[AVANCER]) * rien)
+        return -pi[AVANCER] * (devant * v[:n_types]).sum()
 
     grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
     grad = ecrete(grad * masque[None], cfg.inner_clip)
@@ -311,11 +324,20 @@ def run_simulation_chunk(state,model,keys, cfg):
                         (survives_int > 0) & confiant, masque_pol))
 
             case = step_idx % cfg.inner_window
+            if cfg.inner_target == "delta":
+                # variation REELLE d'energie : elle porte le cout metabolique et
+                # le plafond energy_max, que `rewards` ignore tous les deux
+                cible = new_energy - energies
+                rien = 1.0 - ate_res_step.any(axis=1, keepdims=True)
+                quoi = jnp.concatenate(
+                    [ate_res_step.astype(jnp.float32), rien.astype(jnp.float32)],
+                    axis=1)
+            else:
+                cible, quoi = rewards, ate_res_step.astype(jnp.float32)
             inner_maj = inner_maj.replace(
                 tampon_in=inner_maj.tampon_in.at[:, case].set(mem_in),
-                tampon_eaten=inner_maj.tampon_eaten.at[:, case].set(
-                    ate_res_step.astype(jnp.float32)),
-                tampon_r=inner_maj.tampon_r.at[:, case].set(rewards),
+                tampon_eaten=inner_maj.tampon_eaten.at[:, case].set(quoi),
+                tampon_r=inner_maj.tampon_r.at[:, case].set(cible),
             )
 
             # La fenetre est pleine : un pas de gradient, puis le carry courant

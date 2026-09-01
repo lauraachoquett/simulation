@@ -149,6 +149,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                           for i, r in enumerate(cfg.resources))
               + "\n               la tete de valeur est court-circuitee "
                 "(plafond : l'evolution part d'une information parfaite)")
+    if cfg.inner_loop and cfg.inner_target == "delta":
+        print("[cible] la loss de valeur vise le delta d'energie : le cout "
+              "metabolique et la satiete y sont, une sortie 'rien' est ajoutee")
     if cfg.inner_loop:
         n_inner = int(masque_valeur(model).sum())
         print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
@@ -391,6 +394,11 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
+    p.add_argument("--inner-target", dest="inner_target",
+                   choices=["reward", "delta"], default=cfg.inner_target,
+                   help="cible de la loss de valeur : 'reward' = ce qui est mange, "
+                        "'delta' = la variation d'energie, cout metabolique et "
+                        "satiete compris (defaut %(default)s)")
     p.add_argument("--init", dest="init_scale", choices=["constant", "lecun"],
                    default=cfg.init_scale,
                    help="echelle des poids initiaux (defaut %(default)s)")
@@ -416,6 +424,7 @@ def parse_cli(cfg):
     maj["model_version"] = args.model_version
     maj["shuffle_version"] = args.shuffle_version
     maj["init_scale"] = args.init_scale
+    maj["inner_target"] = args.inner_target
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))

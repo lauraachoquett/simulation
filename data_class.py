@@ -276,6 +276,17 @@ class Config(NamedTuple):
     # 500 pas de LSTM fait exploser le gradient, les poids partent, et l'erreur
     # de prediction atteint 1e16 avant que l'agent ne meure. 0 desactive.
     inner_clip : float = 1.0
+    # Cible de la loss de valeur.
+    #   "reward" : le delta_energy de ce qui est mange. Ne rien manger vaut 0,
+    #              donc rester immobile est un optimum de la loss de politique --
+    #              l'agent l'atteint et meurt de faim (observe : "avancer"
+    #              s'effondre et la population s'eteint).
+    #   "delta"  : la variation reelle d'energie sur le pas. Elle inclut le cout
+    #              metabolique (ne rien faire coute -0.0026) et le plafond
+    #              energy_max (manger a satiete ne rapporte rien). Ajoute une
+    #              sortie "rien" a la tete de valeur. Toujours auto-supervise :
+    #              l'energie est l'etat interne de l'agent.
+    inner_target : str = "reward"
 
 
 def sous_ensemble(n, resources=None):
