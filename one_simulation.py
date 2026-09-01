@@ -44,6 +44,32 @@ class StepLog(NamedTuple):
     divergence_pol: jax.Array  # (N,) -> ecart entre politique apprise et genome
     
 
+def pas_optimiseur(cfg, grad, inner, lr, actifs):
+    """Le pas a retrancher aux poids, et les moments mis a jour.
+
+    "sgd"  : lr * grad, sans etat.
+    "adam" : moments par agent, avec correction de biais. `n_maj` compte les
+             mises a jour DE CET AGENT et non le pas global : les agents ne
+             naissent pas ensemble, et une correction commune donnerait un pas
+             enorme aux nouveau-nes.
+
+    Les deux losses partagent les memes moments, mais leurs masques sont
+    DISJOINTS : aucun poids ne recoit les deux gradients, donc aucun moment ne
+    les melange.
+    """
+    if cfg.inner_optim != "adam":
+        return lr * grad * actifs, inner.m1, inner.m2, inner.n_maj
+
+    b1, b2, eps = cfg.inner_adam_b1, cfg.inner_adam_b2, cfg.inner_adam_eps
+    # un agent inactif garde ses moments intacts, il ne les laisse pas decroitre
+    m1 = jnp.where(actifs > 0, b1 * inner.m1 + (1 - b1) * grad, inner.m1)
+    m2 = jnp.where(actifs > 0, b2 * inner.m2 + (1 - b2) * grad ** 2, inner.m2)
+    t = inner.n_maj + (actifs[:, 0] > 0)
+    c1 = 1 - b1 ** jnp.maximum(t, 1)[:, None]
+    c2 = 1 - b2 ** jnp.maximum(t, 1)[:, None]
+    return lr * (m1 / c1) / (jnp.sqrt(m2 / c2) + eps) * actifs, m1, m2, t
+
+
 def ecrete(grad, seuil):
     """Ramene la norme du gradient de chaque agent sous `seuil`."""
     if not seuil:
@@ -100,8 +126,9 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0
         decale(inner.tampon_in), decale(inner.tampon_eaten),
         decale(inner.tampon_r))
     grad = ecrete(grad * masque[None], cfg.inner_clip)
-    maj = inner.params_vie - cfg.inner_lr * grad * vivants[:, None]
-    return maj, val
+    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_lr,
+                                    vivants[:, None])
+    return inner.params_vie - pas, val, m1, m2, t
 
 
 # Indice de l'action "avancer" : la seule qui deplace sur une case, donc la
@@ -109,8 +136,9 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0
 AVANCER = 3
 
 
-def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
+def pas_gradient_politique(model, cfg, inner, h, c, obs, mem_in,
                            actifs, masque):
+    params_vie = inner.params_vie
     """Un pas de SGD sur -somme_a pi(a) * v_hat(a), par agent.
 
     v_hat n'est defini que pour "avancer" : les autres actions ne posent l'agent
@@ -152,7 +180,11 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
     grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
     grad = ecrete(grad * masque[None], cfg.inner_clip)
     poids = actifs.astype(params_vie.dtype)[:, None]
-    return params_vie - cfg.inner_policy_lr * grad * poids
+    # Les moments sont partages avec la loss de valeur, mais les deux masques
+    # sont DISJOINTS : chaque poids n'est touche que par une seule des deux, donc
+    # aucun moment ne melange les deux gradients.
+    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_policy_lr, poids)
+    return inner.replace(params_vie=params_vie - pas, m1=m1, m2=m2, n_maj=t)
 
 
 def divergences(model, cfg, params_vie, genome, h, c, obs, mem_in, masque_pol):
@@ -330,12 +362,11 @@ def run_simulation_chunk(state,model,keys, cfg):
             masque_pol = masque_politique(model)
             if cfg.inner_policy:
                 confiant = (inner_maj.perte < cfg.inner_policy_seuil)
-                inner_maj = inner_maj.replace(
-                    params_vie=pas_gradient_politique(
-                        model, cfg, inner_maj.params_vie,
-                        agents.policy_states.lstm_h, agents.policy_states.lstm_c,
-                        state.obs, mem_in,
-                        (survives_int > 0) & confiant, masque_pol))
+                inner_maj = pas_gradient_politique(
+                    model, cfg, inner_maj,
+                    agents.policy_states.lstm_h, agents.policy_states.lstm_c,
+                    state.obs, mem_in,
+                    (survives_int > 0) & confiant, masque_pol)
 
             case = step_idx % cfg.inner_window
             if cfg.inner_target == "delta":
@@ -367,7 +398,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             depart = (step_idx + 1) % cfg.inner_window
 
             def maj(inn):
-                vie, perte = pas_gradient_intra_vie(
+                vie, perte, m1, m2, t = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque,
                     ancre=ancre, depart=depart)
                 if cfg.inner_policy:
@@ -407,6 +438,7 @@ def run_simulation_chunk(state,model,keys, cfg):
                 div = jnp.where(devant, div, jnp.nan)
                 return inn.replace(
                     params_vie=vie, perte=perte, divergence=div,
+                    m1=m1, m2=m2, n_maj=t,
                     carry_h=inn.carry_h.at[:, ancre].set(new_policy_states.lstm_h),
                     carry_c=inn.carry_c.at[:, ancre].set(new_policy_states.lstm_c))
 
@@ -521,6 +553,9 @@ def run_simulation_chunk(state,model,keys, cfg):
                     # un zero le ferait compter comme "predit parfaitement" et
                     # tirerait la courbe vers le bas a chaque renouvellement.
                     perte=inner_maj.perte.at[free_indices].set(jnp.nan),
+                    m1=inner_maj.m1.at[free_indices].set(z(inner_maj.m1[0])),
+                    m2=inner_maj.m2.at[free_indices].set(z(inner_maj.m2[0])),
+                    n_maj=inner_maj.n_maj.at[free_indices].set(0.0),
                     divergence=inner_maj.divergence.at[free_indices].set(0.0),
                 )
             else:

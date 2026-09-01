@@ -44,6 +44,10 @@ class InnerState:
                                        # faut donc en garder plusieurs.
     perte: jnp.ndarray                 # (n_agents,) erreur au dernier gradient,
                                        # gardee entre deux maj pour etre tracee
+    m1: jnp.ndarray                    # (n_agents, num_params) moments d'Adam,
+    m2: jnp.ndarray                    # vides si inner_optim="sgd"
+    n_maj: jnp.ndarray                 # (n_agents,) mises a jour deja faites,
+                                       # pour la correction de biais d'Adam
     divergence: jnp.ndarray            # (n_agents,) distance en variation totale
                                        # entre la politique apprise et celle du
                                        # genome, sur la vue courante. 0 = le
@@ -289,6 +293,19 @@ class Config(NamedTuple):
     inner_every : int = 0             # 0 -> inner_window (comportement d'avant)
 
     inner_clip : float = 1.0
+    # Optimiseur de la boucle interne.
+    #   "sgd"  : params -= lr * grad. Aucun etat, donc rien a stocker par agent.
+    #   "adam" : normalise chaque poids par la magnitude recente de son gradient.
+    #            Compte quand les echelles different d'une couche a l'autre -- ici
+    #            le conv recoit son gradient a travers deux couches et un tanh, la
+    #            tete le recoit directement. Avec un pas unique, soit la tete bouge
+    #            trop, soit le conv ne bouge pas. C'est l'optimiseur que
+    #            probe_action utilisait pour atteindre 100%.
+    #            Coute deux moments par agent, soit 3 copies de params_vie.
+    inner_optim : str = "sgd"
+    inner_adam_b1 : float = 0.9
+    inner_adam_b2 : float = 0.999
+    inner_adam_eps : float = 1e-8
     # Cible de la loss de valeur.
     #   "reward" : le delta_energy de ce qui est mange. Ne rien manger vaut 0,
     #              donc rester immobile est un optimum de la loss de politique --

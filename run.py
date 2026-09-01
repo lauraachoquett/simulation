@@ -155,6 +155,10 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     if cfg.inner_loop:
         n_inner = int(masque_valeur(model).sum())
         _every, _anc = periode_inner(cfg)
+        if cfg.inner_optim == "adam":
+            _mo = 2 * cfg.n_agents_max * model.num_params * 4 / 1e6
+            print(f"[optimiseur] adam, {_mo:.0f} Mo de moments pour "
+                  f"{cfg.n_agents_max} agents")
         print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
               f"maj tous les {_every} pas ({_anc} ancres) ecretage={cfg.inner_clip} "
               f"-> {n_inner} parametres appris pendant la vie, "
@@ -396,6 +400,10 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
+    p.add_argument("--inner-optim", dest="inner_optim",
+                   choices=["sgd", "adam"], default=cfg.inner_optim,
+                   help="optimiseur de la boucle interne (defaut %(default)s). "
+                        "adam coute 2 moments par agent")
     p.add_argument("--inner-target", dest="inner_target",
                    choices=["reward", "delta"], default=cfg.inner_target,
                    help="cible de la loss de valeur : 'reward' = ce qui est mange, "
@@ -427,6 +435,7 @@ def parse_cli(cfg):
     maj["shuffle_version"] = args.shuffle_version
     maj["init_scale"] = args.init_scale
     maj["inner_target"] = args.inner_target
+    maj["inner_optim"] = args.inner_optim
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))
