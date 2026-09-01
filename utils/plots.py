@@ -2024,10 +2024,11 @@ ACTIONS = ("rester", "tourner +", "tourner -", "avancer")
 def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None):
     """La retropropagation change-t-elle vraiment le comportement ?
 
-    A gauche : distance en variation totale entre la politique APPRISE et celle
-    du GENOME, sur la meme vue. C'est la mesure directe -- des poids qui bougent
-    ne prouvent rien, seul compte l'effet sur la distribution des actions.
-    0 = le gradient n'a rien change ; 0.5 = la moitie de la masse s'est deplacee.
+    A gauche : la part de l'ecart de comportement imputable a la seule
+    retropropagation sur la TETE. La croyance apprise change deja les actions
+    sans qu'aucun poids de politique n'ait bouge -- v_pred entre dans la tete et
+    dans la carte -- donc la comparaison se fait a croyance egale.
+    0 = la loss de politique n'a rien change ; 0.5 = la moitie de la masse.
 
     A droite : la repartition des actions. Une bande "avancer" qui occupe tout
     signale une politique degeneree, quelle que soit la divergence.
@@ -2042,8 +2043,8 @@ def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None
     g.plot(x[fini], d[fini], color="#6A4C93", lw=1.4)
     g.set_xlabel("Steps"); g.set_ylabel("variation totale")
     g.set_ylim(bottom=0)
-    g.set_title("Influence du gradient sur les actions\n"
-                "0 = la politique apprise est celle du genome")
+    g.set_title("Influence de la loss de POLITIQUE sur les actions\n"
+                "a croyance egale : 0 = elle n a rien change")
     g.grid(alpha=.3)
 
     couleurs = ("#BDBDBD", "#90CAF9", "#4FC3F7", "#E63946")

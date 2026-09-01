@@ -135,23 +135,34 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
     return params_vie - cfg.inner_policy_lr * grad * poids
 
 
-def divergence_politique(model, cfg, params_vie, genome, h, c, obs, mem_in):
-    """Distance en variation totale entre la politique APPRISE et celle du GENOME.
+def divergences(model, cfg, params_vie, genome, h, c, obs, mem_in, masque_pol):
+    """Deux distances en variation totale, sur la meme vue.
 
-    0 = le gradient intra-vie n'a rien change aux actions ; 1 = les deux
-    politiques n'ont plus rien en commun. C'est la seule mesure qui reponde a
-    "la retropropagation influence-t-elle le comportement", plutot qu'a "les
-    poids ont-ils bouge" -- un deplacement de poids peut ne rien changer.
+    `totale`    : politique apprise contre celle du genome. Tout ce que la
+                  boucle interne a change, croyance comprise.
+    `politique` : politique apprise contre la MEME croyance mais les poids de
+                  politique remis a ceux du genome. Isole donc la seule
+                  contribution de la retropropagation sur la tete.
 
-    Calculee aux fins de fenetre seulement : elle coute deux passes avant.
+    La distinction compte : v_pred entre dans la tete et dans la carte, donc une
+    croyance apprise change deja le comportement sans qu'aucun poids de politique
+    n'ait bouge. Confondre les deux fait croire que la loss de politique agit
+    alors qu'elle n'a peut-etre jamais tourne.
+
+    0 = aucun effet, 1 = plus rien en commun. Aux fins de fenetre seulement :
+    trois passes avant.
     """
-    def paires(theta_a, theta_b, h, c, obs, mem_in):
+    def paires(vie, gen, h, c, obs, mem_in):
         la, rw = mem_in[:cfg.output_dim], mem_in[cfg.output_dim:cfg.output_dim + 1]
         en, le = mem_in[cfg.output_dim + 1:cfg.output_dim + 2], mem_in[cfg.output_dim + 2:]
         pi = lambda th: jax.nn.softmax(
             model.logits_apply(model.format_one_fn(th), h, c, obs, la, rw, en, le)
             / cfg.temperature)
-        return 0.5 * jnp.abs(pi(theta_a) - pi(theta_b)).sum()
+        # croyance apprise, politique du genome
+        mixte = vie * (1.0 - masque_pol) + gen * masque_pol
+        p_vie = pi(vie)
+        return (0.5 * jnp.abs(p_vie - pi(gen)).sum(),
+                0.5 * jnp.abs(p_vie - pi(mixte)).sum())
 
     return jax.vmap(paires)(params_vie, genome, h, c, obs, mem_in)
 
@@ -316,11 +327,13 @@ def run_simulation_chunk(state,model,keys, cfg):
             def maj(inn):
                 vie, perte = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque)
-                div = (divergence_politique(
-                           model, cfg, vie, agents.params,
-                           agents.policy_states.lstm_h, agents.policy_states.lstm_c,
-                           state.obs, mem_in)
-                       if cfg.inner_policy else inn.divergence)
+                if cfg.inner_policy:
+                    div_tot, div = divergences(
+                        model, cfg, vie, agents.params,
+                        agents.policy_states.lstm_h, agents.policy_states.lstm_c,
+                        state.obs, mem_in, masque_pol)
+                else:
+                    div_tot = div = inn.divergence
                 if cfg.inner_policy and cfg.log_inner:
                     # Une ligne par fin de fenetre : c'est la seule occasion ou
                     # `perte` change, donc ou la liste des agents confiants bouge.
@@ -335,18 +348,18 @@ def run_simulation_chunk(state,model,keys, cfg):
                         t=en_vie.sum(),
                         m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
                         b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)))
+                    ecart = jnp.linalg.norm((vie - agents.params) * masque_pol[None],
+                                            axis=1)
                     jax.debug.print(
-                        "[politique] pas {p} : influence sur les actions -- "
-                        "divergence mediane {d}, maximale {x} ; deplacement des "
-                        "poids {w}",
+                        "[politique] pas {p} : divergence due a la TETE {d} "
+                        "(max {x}), due a tout {t} ; poids de tete deplaces chez "
+                        "{n} agents, ecart max {w}",
                         p=step_idx,
                         d=jnp.nanmedian(jnp.where(en_vie, div, jnp.nan)),
                         x=jnp.nanmax(jnp.where(en_vie, div, jnp.nan)),
-                        w=jnp.nanmedian(jnp.where(
-                            en_vie,
-                            jnp.linalg.norm((vie - agents.params) * masque_pol[None],
-                                            axis=1),
-                            jnp.nan)))
+                        t=jnp.nanmedian(jnp.where(en_vie, div_tot, jnp.nan)),
+                        n=((ecart > 0) & en_vie).sum(),
+                        w=jnp.nanmax(jnp.where(en_vie, ecart, jnp.nan)))
                 return inn.replace(params_vie=vie, perte=perte, divergence=div,
                                    carry_h=new_policy_states.lstm_h,
                                    carry_c=new_policy_states.lstm_c)
