@@ -36,8 +36,12 @@ class InnerState:
     tampon_in: jnp.ndarray             # (n_agents, K, d_mem) entrees LSTM
     tampon_eaten: jnp.ndarray          # (n_agents, K, n_types) canal goute
     tampon_r: jnp.ndarray              # (n_agents, K) recompense recue
-    carry_h: jnp.ndarray               # (n_agents, hidden) carry au debut
-    carry_c: jnp.ndarray               # de la fenetre, pour un BPTT tronque
+    carry_h: jnp.ndarray               # (n_agents, n_ancres, hidden) carrys
+    carry_c: jnp.ndarray               # jalonnes tous les inner_every pas. Le
+                                       # BPTT repart de celui d'il y a
+                                       # inner_window pas -- avec une fenetre
+                                       # glissante ce point de depart bouge, il
+                                       # faut donc en garder plusieurs.
     perte: jnp.ndarray                 # (n_agents,) erreur au dernier gradient,
                                        # gardee entre deux maj pour etre tracee
     divergence: jnp.ndarray            # (n_agents,) distance en variation totale
@@ -275,6 +279,15 @@ class Config(NamedTuple):
     # fenetre depasse quelques dizaines de pas : la retropropagation a travers
     # 500 pas de LSTM fait exploser le gradient, les poids partent, et l'erreur
     # de prediction atteint 1e16 avant que l'agent ne meure. 0 desactive.
+    # Periode entre deux mises a jour de la valeur. Par defaut egale a la
+    # fenetre : on remplit le tampon, on met a jour, on recommence -- soit 5 mises
+    # a jour sur une vie de 2500 pas, bien trop peu pour apprendre quoi que ce
+    # soit. Plus petite, le tampon devient GLISSANT : on rejoue toujours les
+    # inner_window derniers pas, mais tous les inner_every. A 50 pour une fenetre
+    # de 500, on passe a 50 mises a jour par vie en gardant la portee longue.
+    # Doit diviser inner_window.
+    inner_every : int = 0             # 0 -> inner_window (comportement d'avant)
+
     inner_clip : float = 1.0
     # Cible de la loss de valeur.
     #   "reward" : le delta_energy de ce qui est mange. Ne rien manger vaut 0,

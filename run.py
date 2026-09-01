@@ -20,7 +20,7 @@ from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour, periode_inner
 from simulation.simulation_data.core import simulation_data
 
 import argparse
@@ -154,8 +154,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
               "metabolique et la satiete y sont, une sortie 'rien' est ajoutee")
     if cfg.inner_loop:
         n_inner = int(masque_valeur(model).sum())
+        _every, _anc = periode_inner(cfg)
         print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
-              f"ecretage={cfg.inner_clip} "
+              f"maj tous les {_every} pas ({_anc} ancres) ecretage={cfg.inner_clip} "
               f"-> {n_inner} parametres appris pendant la vie, "
               f"{model.num_params - n_inner} laisses a l'evolution")
     save_config(cfg,subkeys, exp_dir)
@@ -340,6 +341,7 @@ CLI_PARAMS = [
     (("--replay-video-frac",), "replay_video_min_frac",     float),
     (("--inner-lr",),     "inner_lr",                       float),
     (("--inner-window",), "inner_window",                   int),
+    (("--inner-every",),  "inner_every",                    int),
     (("--inner-clip",),   "inner_clip",                     float),
     (("--vpred-gain",),   "vpred_gain",                     float),
     (("--inner-policy-lr",), "inner_policy_lr",             float),

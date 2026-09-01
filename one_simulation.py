@@ -17,7 +17,8 @@ from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.oracle import oracle_actions
-from simulation.utils.utils_sim import masque_valeur, masque_politique
+from simulation.utils.utils_sim import (masque_valeur, masque_politique,
+                                        periode_inner)
 
 from typing import NamedTuple
 import jax
@@ -51,7 +52,7 @@ def ecrete(grad, seuil):
     return grad * jnp.minimum(1.0, seuil / (norme + 1e-8))
 
 
-def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
+def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0):
     """Un pas de SGD sur la voie LSTM -> tete de valeur, par agent.
 
     BPTT tronque sur la fenetre : le carry de depart est celui du DEBUT de
@@ -89,9 +90,15 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque):
         return (err.sum() / n_tot,
                 jnp.where(n_b > 0, err_b.sum() / jnp.maximum(n_b, 1.0), jnp.nan))
 
+    # Fenetre GLISSANTE : la case i du tampon porte le pas dont i = pas % window,
+    # donc le plus ancien des `window` derniers n'est pas en position 0. On
+    # decale pour rejouer dans l'ordre. Le decalage est nul quand inner_every
+    # vaut inner_window, soit le comportement d'avant.
+    decale = lambda t: jnp.roll(t, -depart, axis=1)
     (_, val), grad = jax.vmap(jax.value_and_grad(perte, has_aux=True))(
-        inner.params_vie, inner.carry_h, inner.carry_c,
-        inner.tampon_in, inner.tampon_eaten, inner.tampon_r)
+        inner.params_vie, inner.carry_h[:, ancre], inner.carry_c[:, ancre],
+        decale(inner.tampon_in), decale(inner.tampon_eaten),
+        decale(inner.tampon_r))
     grad = ecrete(grad * masque[None], cfg.inner_clip)
     maj = inner.params_vie - cfg.inner_lr * grad * vivants[:, None]
     return maj, val
@@ -347,15 +354,22 @@ def run_simulation_chunk(state,model,keys, cfg):
                 tampon_r=inner_maj.tampon_r.at[:, case].set(cible),
             )
 
-            # La fenetre est pleine : un pas de gradient, puis le carry courant
-            # devient le point de depart de la fenetre suivante. step_idx est un
-            # scalaire partage par tous les agents, donc lax.cond branche vraiment
-            # au lieu de calculer les deux cotes.
+            # Un pas de gradient tous les `every` pas, sur les `inner_window`
+            # derniers. step_idx est un scalaire partage par tous les agents,
+            # donc lax.cond branche vraiment au lieu de calculer les deux cotes.
+            every, n_ancres = periode_inner(cfg)
             masque = masque_valeur(model)
+            # l'ancre a reutiliser est celle ecrite n_ancres mises a jour plus
+            # tot, soit exactement inner_window pas en arriere ; on l'ecrase
+            # ensuite avec le carry courant -- anneau classique
+            k_maj = step_idx // every
+            ancre = k_maj % n_ancres
+            depart = (step_idx + 1) % cfg.inner_window
 
             def maj(inn):
                 vie, perte = pas_gradient_intra_vie(
-                    model, cfg, inn, survives_int.astype(jnp.float32), masque)
+                    model, cfg, inn, survives_int.astype(jnp.float32), masque,
+                    ancre=ancre, depart=depart)
                 if cfg.inner_policy:
                     div_tot, div, devant = divergences(
                         model, cfg, vie, agents.params,
@@ -400,11 +414,12 @@ def run_simulation_chunk(state,model,keys, cfg):
                         w=jnp.nanmax(jnp.where(en_vie, ecart, jnp.nan)))
                 # NaN quand rien n'est devant : le trace doit ignorer ces pas
                 div = jnp.where(devant, div, jnp.nan)
-                return inn.replace(params_vie=vie, perte=perte, divergence=div,
-                                   carry_h=new_policy_states.lstm_h,
-                                   carry_c=new_policy_states.lstm_c)
+                return inn.replace(
+                    params_vie=vie, perte=perte, divergence=div,
+                    carry_h=inn.carry_h.at[:, ancre].set(new_policy_states.lstm_h),
+                    carry_c=inn.carry_c.at[:, ancre].set(new_policy_states.lstm_c))
 
-            inner_maj = lax.cond(case == cfg.inner_window - 1,
+            inner_maj = lax.cond(step_idx % every == every - 1,
                                  maj, lambda inn: inn, inner_maj)
 
 
@@ -508,7 +523,7 @@ def run_simulation_chunk(state,model,keys, cfg):
                     tampon_r=inner_maj.tampon_r.at[free_indices].set(
                         z(inner_maj.tampon_r[0])),
                     carry_h=inner_maj.carry_h.at[free_indices].set(
-                        z(inner_maj.carry_h[0])),
+                        z(inner_maj.carry_h[0])),      # tout l'anneau d'ancres
                     carry_c=inner_maj.carry_c.at[free_indices].set(
                         z(inner_maj.carry_c[0])),
                     # NaN et non zero : le nouveau-ne n'a pas encore de perte,

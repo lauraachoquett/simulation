@@ -142,11 +142,21 @@ def masque_politique(model):
     return 1.0 - masque_valeur(model)
 
 
+def periode_inner(cfg):
+    """Periode entre deux mises a jour, et nombre d'ancres de carry a garder."""
+    every = cfg.inner_every or cfg.inner_window
+    if cfg.inner_window % every:
+        raise ValueError(f"inner_every ({every}) doit diviser inner_window "
+                         f"({cfg.inner_window}).")
+    return every, cfg.inner_window // every
+
+
 def init_inner(cfg, params):
     """InnerState au depart : la copie de travail part du genome, tampons vides."""
     if not cfg.inner_loop:
         return None
     n, k = cfg.n_agents_max, cfg.inner_window
+    _, n_ancres = periode_inner(cfg)
     n_types = len(cfg.resources)
     d_mem = cfg.output_dim + 2 + n_types      # action, reward, energie, last_eaten
     # une case de plus pour "n'a rien mange", cf. inner_target="delta"
@@ -156,8 +166,8 @@ def init_inner(cfg, params):
         tampon_in=jnp.zeros((n, k, d_mem)),
         tampon_eaten=jnp.zeros((n, k, n_cibles)),
         tampon_r=jnp.zeros((n, k)),
-        carry_h=jnp.zeros((n, cfg.hidden_dim)),
-        carry_c=jnp.zeros((n, cfg.hidden_dim)),
+        carry_h=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
+        carry_c=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
         perte=jnp.full((n,), jnp.nan),   # rien de mesure avant la 1re fenetre
         divergence=jnp.zeros((n,)),
     )
