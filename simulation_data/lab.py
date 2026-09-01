@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 
-from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res, vmap_over_agents_env_lab_high_res_rot,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
@@ -437,12 +437,12 @@ class LabMixin:
             # evoluee. C'est ce que le gradient rapporte, et rien d'autre :
             # l'ablation de la memoire ci-dessus ne repond pas a cette
             # question-la, elle coupe aussi le carry.
-            outputs_adapt_gele = outputs_high_gele = None
+            # Les rotations du bras gele sont calculees UNE A UNE dans la boucle
+            # plus bas, pas empilees ici : garder (B, n_rot, T, N, vue...) en
+            # plus des trois autres rollouts saturait le GPU.
+            cfg_gele = outputs_high_gele = None
             if self.cfg.inner_loop:
                 cfg_gele = cfg_m._replace(inner_loop=False)
-                if rotations:
-                    _, outputs_adapt_gele = vmap_over_agents_env_lab_adapt(
-                        agent_params, key_env, key_sim, model, cfg_gele)
                 _, outputs_high_gele = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_gele)
                 self.compare_memory(outputs_high, outputs_high_gele, exp_dir,
@@ -453,6 +453,7 @@ class LabMixin:
                                     titre_fig="Same genomes, with and without the inner loop",
                                     fname_fig="lab_inner_loop_evolution",
                                     titre_gain="Gain de la boucle interne, par genome")
+                outputs_high_gele = None      # plusieurs Go d'observations
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
@@ -541,9 +542,9 @@ class LabMixin:
                 # C'est ICI que la boucle interne doit payer : sous permutation,
                 # la valeur des canaux a change et seul un apprentissage pendant
                 # la vie peut la retrouver.
-                if outputs_adapt_gele is not None:
-                    out_gele = jax.tree_util.tree_map(lambda x: x[:, j],
-                                                      outputs_adapt_gele)
+                if cfg_gele is not None:
+                    _, out_gele = vmap_over_agents_env_lab_high_res_rot(
+                        agent_params, key_env, key_sim, model, cfg_gele, rot)
                     self.compare_memory(out_rot, out_gele, exp_dir,
                                         suffix=f"_adapt_{name}",
                                         env_titre=f"adapt {name}",
@@ -557,6 +558,7 @@ class LabMixin:
                                         fname_fig="lab_inner_loop_evolution",
                                         titre_gain="Gain de la boucle interne, "
                                                    "par genome")
+                    out_gele = None           # libere avant la rotation suivante
 
                 av_rot = self.available_by_type(
                     jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), n_types)

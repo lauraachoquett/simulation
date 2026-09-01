@@ -296,6 +296,20 @@ def vmap_mutate(params, keys, cfg):
 def vmap_over_agents_env_lab_high_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 
+def vmap_over_agents_env_lab_high_res_rot(list_agents_param, key_env, key_sim,
+                                          model, cfg, rot):
+    """Une SEULE rotation, au lieu de toutes empilees.
+
+    launch_adaptation_env renvoie (B, n_rot, T, ...) et garde tout en memoire
+    pendant qu'on traite les rotations une a une. Avec les observations
+    journalisees c'est plusieurs gigaoctets sur le GPU, et le bras a gradient
+    gele doublait la facture. Ici l'appelant boucle et libere au fur et a mesure.
+    """
+    return vmap(partial(launch_env_high_res, rot=rot),
+                in_axes=(0, None, 0, None, None))(
+        list_agents_param, key_env, key_sim, cfg, model)
+
+
 def vmap_over_agents_env_lab_low_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_low_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 
