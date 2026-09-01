@@ -40,6 +40,7 @@ class StepLog(NamedTuple):
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
     perte_pred: jax.Array  # (N,) -> erreur de prediction de la boucle interne,
                            #         vide si inner_loop=False
+    divergence_pol: jax.Array  # (N,) -> ecart entre politique apprise et genome
     
 
 def ecrete(grad, seuil):
@@ -132,6 +133,27 @@ def pas_gradient_politique(model, cfg, params_vie, h, c, obs, mem_in,
     grad = ecrete(grad * masque[None], cfg.inner_clip)
     poids = actifs.astype(params_vie.dtype)[:, None]
     return params_vie - cfg.inner_policy_lr * grad * poids
+
+
+def divergence_politique(model, cfg, params_vie, genome, h, c, obs, mem_in):
+    """Distance en variation totale entre la politique APPRISE et celle du GENOME.
+
+    0 = le gradient intra-vie n'a rien change aux actions ; 1 = les deux
+    politiques n'ont plus rien en commun. C'est la seule mesure qui reponde a
+    "la retropropagation influence-t-elle le comportement", plutot qu'a "les
+    poids ont-ils bouge" -- un deplacement de poids peut ne rien changer.
+
+    Calculee aux fins de fenetre seulement : elle coute deux passes avant.
+    """
+    def paires(theta_a, theta_b, h, c, obs, mem_in):
+        la, rw = mem_in[:cfg.output_dim], mem_in[cfg.output_dim:cfg.output_dim + 1]
+        en, le = mem_in[cfg.output_dim + 1:cfg.output_dim + 2], mem_in[cfg.output_dim + 2:]
+        pi = lambda th: jax.nn.softmax(
+            model.logits_apply(model.format_one_fn(th), h, c, obs, la, rw, en, le)
+            / cfg.temperature)
+        return 0.5 * jnp.abs(pi(theta_a) - pi(theta_b)).sum()
+
+    return jax.vmap(paires)(params_vie, genome, h, c, obs, mem_in)
 
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -267,6 +289,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             # population apprend des le pas 1 a suivre du bruit, que vpred_gain
             # amplifie -- des agents qui foncent avec conviction sur n'importe
             # quoi. NaN (jamais mesure) donne faux, donc pas de gradient.
+            masque_pol = masque_politique(model)
             if cfg.inner_policy:
                 confiant = (inner_maj.perte < cfg.inner_policy_seuil)
                 inner_maj = inner_maj.replace(
@@ -274,8 +297,7 @@ def run_simulation_chunk(state,model,keys, cfg):
                         model, cfg, inner_maj.params_vie,
                         agents.policy_states.lstm_h, agents.policy_states.lstm_c,
                         state.obs, mem_in,
-                        (survives_int > 0) & confiant,
-                        masque_politique(model)))
+                        (survives_int > 0) & confiant, masque_pol))
 
             case = step_idx % cfg.inner_window
             inner_maj = inner_maj.replace(
@@ -294,6 +316,11 @@ def run_simulation_chunk(state,model,keys, cfg):
             def maj(inn):
                 vie, perte = pas_gradient_intra_vie(
                     model, cfg, inn, survives_int.astype(jnp.float32), masque)
+                div = (divergence_politique(
+                           model, cfg, vie, agents.params,
+                           agents.policy_states.lstm_h, agents.policy_states.lstm_c,
+                           state.obs, mem_in)
+                       if cfg.inner_policy else inn.divergence)
                 if cfg.inner_policy and cfg.log_inner:
                     # Une ligne par fin de fenetre : c'est la seule occasion ou
                     # `perte` change, donc ou la liste des agents confiants bouge.
@@ -308,7 +335,19 @@ def run_simulation_chunk(state,model,keys, cfg):
                         t=en_vie.sum(),
                         m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
                         b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)))
-                return inn.replace(params_vie=vie, perte=perte,
+                    jax.debug.print(
+                        "[politique] pas {p} : influence sur les actions -- "
+                        "divergence mediane {d}, maximale {x} ; deplacement des "
+                        "poids {w}",
+                        p=step_idx,
+                        d=jnp.nanmedian(jnp.where(en_vie, div, jnp.nan)),
+                        x=jnp.nanmax(jnp.where(en_vie, div, jnp.nan)),
+                        w=jnp.nanmedian(jnp.where(
+                            en_vie,
+                            jnp.linalg.norm((vie - agents.params) * masque_pol[None],
+                                            axis=1),
+                            jnp.nan)))
+                return inn.replace(params_vie=vie, perte=perte, divergence=div,
                                    carry_h=new_policy_states.lstm_h,
                                    carry_c=new_policy_states.lstm_c)
 
@@ -423,6 +462,7 @@ def run_simulation_chunk(state,model,keys, cfg):
                     # un zero le ferait compter comme "predit parfaitement" et
                     # tirerait la courbe vers le bas a chaque renouvellement.
                     perte=inner_maj.perte.at[free_indices].set(jnp.nan),
+                    divergence=inner_maj.divergence.at[free_indices].set(0.0),
                 )
             else:
                 final_inner = None
@@ -505,6 +545,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             is_oracle = state.agents.is_oracle,
             perte_pred = (jnp.zeros((0,)) if state.agents.inner is None
                           else state.agents.inner.perte),
+            divergence_pol = (jnp.zeros((0,)) if state.agents.inner is None
+                              else state.agents.inner.divergence),
         )
         
         return new_state, log

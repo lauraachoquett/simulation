@@ -156,6 +156,7 @@ def init_inner(cfg, params):
         carry_h=jnp.zeros((n, cfg.hidden_dim)),
         carry_c=jnp.zeros((n, cfg.hidden_dim)),
         perte=jnp.full((n,), jnp.nan),   # rien de mesure avant la 1re fenetre
+        divergence=jnp.zeros((n,)),
     )
 
 

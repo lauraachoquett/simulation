@@ -40,6 +40,10 @@ class InnerState:
     carry_c: jnp.ndarray               # de la fenetre, pour un BPTT tronque
     perte: jnp.ndarray                 # (n_agents,) erreur au dernier gradient,
                                        # gardee entre deux maj pour etre tracee
+    divergence: jnp.ndarray            # (n_agents,) distance en variation totale
+                                       # entre la politique apprise et celle du
+                                       # genome, sur la vue courante. 0 = le
+                                       # gradient n'a rien change aux actions.
 
 
 @struct.dataclass

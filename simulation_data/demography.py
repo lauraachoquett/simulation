@@ -65,6 +65,8 @@ class DemographyMixin:
         self.mov_history = []
         self.life_history = []
         self.perte_history = []
+        self.divergence_history = []
+        self.actions_history = []
         # succes reproducteur : {(emplacement, born_step) -> nb d'enfants}. La
         # cle est le COUPLE, pas l'emplacement seul : les emplacements sont
         # reutilises a chaque naissance, parent_id ne designe donc pas un agent.
@@ -106,9 +108,23 @@ class DemographyMixin:
             somme_chunk = np.bincount(casier[ok], weights=perte[ok],
                                       minlength=self.n_age_bins)
             compte_chunk = np.bincount(casier[ok], minlength=self.n_age_bins)
+            # Influence reelle du gradient sur le comportement, moyennee sur
+            # les vivants : les emplacements libres portent un 0 qui la diluerait.
+            div = np.asarray(outputs.divergence_pol)
+            viv = np.asarray(outputs.alive) > 0
+            div_chunk = np.divide((div * viv).sum(axis=1), viv.sum(axis=1),
+                                  out=np.full(len(pop_chunk), np.nan),
+                                  where=viv.sum(axis=1) > 0)
         else:
             perte_chunk = np.zeros(len(pop_chunk))
+            div_chunk = np.full(len(pop_chunk), np.nan)
             somme_chunk = compte_chunk = np.zeros(self.n_age_bins)
+
+        # repartition des actions : (T, n_actions), en fraction des agents vivants
+        act = np.asarray(outputs.actions)                      # (T, N, n_actions)
+        viv = (np.asarray(outputs.alive) > 0)[..., None]
+        act_chunk = np.divide((act * viv).sum(axis=1),
+                              np.maximum((act.sum(-1, keepdims=True) * viv).sum(axis=1), 1))
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
@@ -120,6 +136,8 @@ class DemographyMixin:
         self.eaten_seen_history.append(eaten_seen_chunk)
         self._suivre_descendance(outputs)
         self.perte_history.append(perte_chunk)
+        self.divergence_history.append(div_chunk)
+        self.actions_history.append(act_chunk)
         self.age_somme.append(somme_chunk)
         self.age_compte.append(compte_chunk)
         self.mov_history.append(mov_chunk)
@@ -134,6 +152,8 @@ class DemographyMixin:
             n_seen        = seen_chunk,
             n_eaten_seen  = eaten_seen_chunk,
             perte_pred    = perte_chunk,
+            divergence_pol = div_chunk,
+            actions       = act_chunk,
             perte_age_somme  = somme_chunk,
             perte_age_compte = compte_chunk,
             mean_movement = mov_chunk,

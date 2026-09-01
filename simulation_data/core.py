@@ -25,6 +25,7 @@ from simulation.utils.plots import (
     plot_inner_loss,
     plot_inner_loss_by_age,
     plot_offspring_by_cohort,
+    plot_policy_influence,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
@@ -105,6 +106,13 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
                 exp_dir, self.start_step, steps=steps_r)
             plot_inner_loss_by_age(self.age_somme, self.age_compte, exp_dir,
                                    age_bin=AGE_BIN)
+        if self.cfg.inner_policy:
+            plot_policy_influence(
+                block_apply(np.concatenate(self.divergence_history, axis=0),
+                            edges, "nanmean"),
+                block_apply(np.concatenate(self.actions_history, axis=0),
+                            edges, "mean"),
+                exp_dir, self.start_step, steps=steps_r)
         if self.cfg.invasion_start > 0:
             plot_invasion(pop_r, block_apply(oracle_full, edges, 'mean'), exp_dir,
                           self.start_step, steps=steps_r,

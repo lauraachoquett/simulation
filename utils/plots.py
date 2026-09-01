@@ -2018,6 +2018,50 @@ def plot_offspring_by_cohort(par_cohorte, ouvertes, exp_dir, cohorte=1000,
     print(f"Figure saved: {out}")
 
 
+ACTIONS = ("rester", "tourner +", "tourner -", "avancer")
+
+
+def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None):
+    """La retropropagation change-t-elle vraiment le comportement ?
+
+    A gauche : distance en variation totale entre la politique APPRISE et celle
+    du GENOME, sur la meme vue. C'est la mesure directe -- des poids qui bougent
+    ne prouvent rien, seul compte l'effet sur la distribution des actions.
+    0 = le gradient n'a rien change ; 0.5 = la moitie de la masse s'est deplacee.
+
+    A droite : la repartition des actions. Une bande "avancer" qui occupe tout
+    signale une politique degeneree, quelle que soit la divergence.
+    """
+    d = np.asarray(divergence, dtype=float)
+    a = np.asarray(actions, dtype=float)
+    x = (np.asarray(steps) if steps is not None
+         else np.arange(start_step, start_step + len(d)))
+
+    fig, (g, dr) = plt.subplots(1, 2, figsize=(14, 4.5))
+    fini = np.isfinite(d)
+    g.plot(x[fini], d[fini], color="#6A4C93", lw=1.4)
+    g.set_xlabel("Steps"); g.set_ylabel("variation totale")
+    g.set_ylim(bottom=0)
+    g.set_title("Influence du gradient sur les actions\n"
+                "0 = la politique apprise est celle du genome")
+    g.grid(alpha=.3)
+
+    couleurs = ("#BDBDBD", "#90CAF9", "#4FC3F7", "#E63946")
+    noms = ACTIONS[:a.shape[1]] if a.ndim == 2 else ACTIONS
+    dr.stackplot(x, *[a[:, k] for k in range(a.shape[1])],
+                 labels=noms, colors=couleurs[:a.shape[1]], alpha=.85)
+    dr.set_xlabel("Steps"); dr.set_ylabel("fraction des agents")
+    dr.set_ylim(0, 1)
+    dr.set_title("Repartition des actions")
+    dr.legend(loc="upper right", fontsize=8, ncol=2)
+
+    fig.tight_layout()
+    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, "plot_policy_influence.png")
+    fig.savefig(out, dpi=140); plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_metric_pairs(par_genome, exp_dir, chunk, suffix="", titre=""):
     """Chaque metrique du lab en fonction de chaque autre, sur les agents.
 
