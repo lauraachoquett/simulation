@@ -44,30 +44,37 @@ class StepLog(NamedTuple):
     divergence_pol: jax.Array  # (N,) -> ecart entre politique apprise et genome
     
 
-def pas_optimiseur(cfg, grad, inner, lr, actifs):
+def pas_optimiseur(cfg, grad, inner, lr, actifs, masque, voie):
     """Le pas a retrancher aux poids, et les moments mis a jour.
 
     "sgd"  : lr * grad, sans etat.
-    "adam" : moments par agent, avec correction de biais. `n_maj` compte les
-             mises a jour DE CET AGENT et non le pas global : les agents ne
-             naissent pas ensemble, et une correction commune donnerait un pas
-             enorme aux nouveau-nes.
+    "adam" : moments par agent, avec correction de biais.
 
-    Les deux losses partagent les memes moments, mais leurs masques sont
-    DISJOINTS : aucun poids ne recoit les deux gradients, donc aucun moment ne
-    les melange.
+    `masque` doit etre applique au PAS, pas seulement au gradient. Les deux
+    losses partagent le meme tableau de moments : la loss de valeur y ecrit sur
+    son masque, et un pas d'Adam non masque vaut lr * m1/sqrt(m2), donc non nul
+    partout ou m1 l'est -- le pas de politique deplacait ainsi les poids de la
+    voie de valeur. Les moments ne sont mis a jour que sous le masque, pour la
+    meme raison : sans ca chaque loss ferait decroitre les moments de l'autre.
+
+    `voie` (0 = valeur, 1 = politique) selectionne le compteur de mises a jour.
+    Un compteur commun serait faux : la politique tourne a chaque pas, la valeur
+    une fois par fenetre. Et il compte par AGENT, pas en pas globaux -- les
+    agents ne naissent pas ensemble.
     """
     if cfg.inner_optim != "adam":
         return lr * grad * actifs, inner.m1, inner.m2, inner.n_maj
 
     b1, b2, eps = cfg.inner_adam_b1, cfg.inner_adam_b2, cfg.inner_adam_eps
-    # un agent inactif garde ses moments intacts, il ne les laisse pas decroitre
-    m1 = jnp.where(actifs > 0, b1 * inner.m1 + (1 - b1) * grad, inner.m1)
-    m2 = jnp.where(actifs > 0, b2 * inner.m2 + (1 - b2) * grad ** 2, inner.m2)
-    t = inner.n_maj + (actifs[:, 0] > 0)
-    c1 = 1 - b1 ** jnp.maximum(t, 1)[:, None]
-    c2 = 1 - b2 ** jnp.maximum(t, 1)[:, None]
-    return lr * (m1 / c1) / (jnp.sqrt(m2 / c2) + eps) * actifs, m1, m2, t
+    bouge = (actifs > 0) & (masque[None] > 0)
+    m1 = jnp.where(bouge, b1 * inner.m1 + (1 - b1) * grad, inner.m1)
+    m2 = jnp.where(bouge, b2 * inner.m2 + (1 - b2) * grad ** 2, inner.m2)
+    t = inner.n_maj.at[:, voie].add((actifs[:, 0] > 0).astype(inner.n_maj.dtype))
+    tv = jnp.maximum(t[:, voie], 1)[:, None]
+    c1 = 1 - b1 ** tv
+    c2 = 1 - b2 ** tv
+    pas = lr * (m1 / c1) / (jnp.sqrt(m2 / c2) + eps)
+    return pas * bouge, m1, m2, t
 
 
 def ecrete(grad, seuil):
@@ -127,7 +134,7 @@ def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0
         decale(inner.tampon_r))
     grad = ecrete(grad * masque[None], cfg.inner_clip)
     pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_lr,
-                                    vivants[:, None])
+                                    vivants[:, None], masque, 0)
     return inner.params_vie - pas, val, m1, m2, t
 
 
@@ -230,7 +237,8 @@ def pas_gradient_politique(model, cfg, inner, h, c, obs, mem_in,
     # Les moments sont partages avec la loss de valeur, mais les deux masques
     # sont DISJOINTS : chaque poids n'est touche que par une seule des deux, donc
     # aucun moment ne melange les deux gradients.
-    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_policy_lr, poids)
+    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_policy_lr, poids,
+                                    masque, 1)
     return inner.replace(params_vie=params_vie - pas, m1=m1, m2=m2, n_maj=t)
 
 
@@ -606,7 +614,8 @@ def run_simulation_chunk(state,model,keys, cfg):
                     perte=inner_maj.perte.at[free_indices].set(jnp.nan),
                     m1=inner_maj.m1.at[free_indices].set(z(inner_maj.m1[0])),
                     m2=inner_maj.m2.at[free_indices].set(z(inner_maj.m2[0])),
-                    n_maj=inner_maj.n_maj.at[free_indices].set(0.0),
+                    n_maj=inner_maj.n_maj.at[free_indices].set(
+                        z(inner_maj.n_maj[0])),
                     divergence=inner_maj.divergence.at[free_indices].set(0.0),
                 )
             else:

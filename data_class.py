@@ -46,8 +46,11 @@ class InnerState:
                                        # gardee entre deux maj pour etre tracee
     m1: jnp.ndarray                    # (n_agents, num_params) moments d'Adam,
     m2: jnp.ndarray                    # vides si inner_optim="sgd"
-    n_maj: jnp.ndarray                 # (n_agents,) mises a jour deja faites,
-                                       # pour la correction de biais d'Adam
+    n_maj: jnp.ndarray                 # (n_agents, 2) mises a jour deja faites,
+                                       # une colonne par loss : elles ne tournent
+                                       # pas a la meme frequence, une correction
+                                       # de biais commune serait fausse pour les
+                                       # deux
     divergence: jnp.ndarray            # (n_agents,) distance en variation totale
                                        # entre la politique apprise et celle du
                                        # genome, sur la vue courante. 0 = le

@@ -168,7 +168,7 @@ def init_inner(cfg, params):
         tampon_r=jnp.zeros((n, k)),
         m1=jnp.zeros_like(params) if cfg.inner_optim == "adam" else jnp.zeros((n, 0)),
         m2=jnp.zeros_like(params) if cfg.inner_optim == "adam" else jnp.zeros((n, 0)),
-        n_maj=jnp.zeros((n,)),
+        n_maj=jnp.zeros((n, 2)),      # [valeur, politique]
         carry_h=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
         carry_c=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
         perte=jnp.full((n,), jnp.nan),   # rien de mesure avant la 1re fenetre
