@@ -2031,6 +2031,113 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     print(f"Figure saved: {out}")
 
 
+def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
+                         fig_dir=None, titre=""):
+    """Trajectoire de quelques lignees dans le simplex good/medium/poison.
+
+    `chaines` : liste de lignees, chacune une liste de dicts ordonnee de la
+    RACINE vers l'agent vivant, avec les cles
+
+        regime      (3,) mange par IDENTITE, deja reordonne good/medium/poison
+        born        pas de naissance
+        post_shuffle  True si une permutation separe sa naissance de celle de
+                      son parent -- premiere generation d'une nouvelle epoque
+
+    Un ancetre sans genome sauve ou n'ayant rien mange est simplement absent de
+    la liste : le trait l'enjambe, il ne vaut pas zero.
+    """
+    if not chaines:
+        print("Simplex de lignee : aucune chaine exploitable.")
+        return
+
+    # une couleur par lignee, prise dans une palette qualitative : la couleur
+    # identifie la lignee, la TAILLE porte le temps (cf. plus bas)
+    palette = ["#1D3557", "#C1121F", "#2A7F31", "#B07D00", "#6A4C93"]
+
+    fig, ax = plt.subplots(figsize=(8, 7.4))
+    _cadre_simplex(ax)
+
+    n_shuffle_vus = 0
+    for j, chaine in enumerate(chaines):
+        if not chaine:
+            continue
+        col = palette[j % len(palette)]
+        p = np.array([n["regime"] for n in chaine], dtype=float)
+        p = p / p.sum(axis=1, keepdims=True)
+        x, y = _bary(p[:, 0], p[:, 1], p[:, 2])
+
+        ax.plot(x, y, color=col, lw=1.1, alpha=.75, zorder=3)
+
+        # Taille croissante de la racine vers le vivant. La couleur est deja
+        # prise par la lignee ; encoder le temps par la taille evite de la
+        # depenser deux fois et reste lisible en noir et blanc.
+        n = len(chaine)
+        tailles = np.linspace(18, 78, n) if n > 1 else np.array([78.0])
+        apres = np.array([bool(nd["post_shuffle"]) for nd in chaine])
+        n_shuffle_vus += int(apres.sum())
+
+        ordinaire = ~apres
+        ordinaire[-1] = False                      # le vivant a son propre marqueur
+        apres_sans_dernier = apres.copy()
+        apres_sans_dernier[-1] = False
+
+        if ordinaire.any():
+            ax.scatter(x[ordinaire], y[ordinaire], s=tailles[ordinaire], color=col,
+                       edgecolor="white", linewidth=.5, zorder=4)
+        if apres_sans_dernier.any():
+            ax.scatter(x[apres_sans_dernier], y[apres_sans_dernier],
+                       s=tailles[apres_sans_dernier] * 1.5, color=col,
+                       marker="D", edgecolor="white", linewidth=.7, zorder=5)
+        # Losange SOUS l'etoile quand la permutation tombe sur le vivant lui-meme :
+        # sinon l'etoile le masque et le compte du titre ne correspond plus a ce
+        # qui se voit.
+        if apres[-1]:
+            ax.scatter([x[-1]], [y[-1]], s=470, color=col, marker="D",
+                       edgecolor="white", linewidth=.7, zorder=5)
+        ax.scatter([x[-1]], [y[-1]], s=300, color=col, marker="*",
+                   edgecolor="white", linewidth=.8, zorder=6)
+
+    # Composition offerte. Un seul point pour toute la figure : les parametres
+    # de croissance voyagent avec l'identite lors d'une permutation, donc la
+    # disponibilite PAR IDENTITE ne change pas d'une epoque a l'autre.
+    if disponible is not None and np.asarray(disponible).size == 3:
+        d = np.asarray(disponible, dtype=float)
+        if d.sum() > 0:
+            xd, yd = _bary(*(d / d.sum()))
+            ax.scatter([xd], [yd], marker="o", s=190, facecolor="none",
+                       edgecolor="black", linewidth=2.0, zorder=7,
+                       label="available on the grid")
+
+    poignees = [
+        Line2D([], [], color="0.35", marker="o", ls="-", ms=5,
+               label="ancestor (size = generation)"),
+        Line2D([], [], color="0.35", marker="D", ls="none", ms=7,
+               label="first generation after a permutation"),
+        Line2D([], [], color="0.35", marker="*", ls="none", ms=13,
+               label="living agent"),
+    ]
+    poignees += ax.get_legend_handles_labels()[0]
+    # sous le triangle : dans le coin superieur gauche elle recouvrait le
+    # sommet "good", qui est justement la zone la plus frequentee
+    ax.legend(handles=poignees, loc="upper center", frameon=False, fontsize=9,
+              ncol=2, bbox_to_anchor=(.5, -.01))
+
+    gens = [len(c) for c in chaines]
+    sous = (f"{len(chaines)} lineages, {min(gens)}-{max(gens)} generations shown"
+            f"  |  {n_shuffle_vus} permutation(s) crossed")
+    if couverture is not None:
+        sous += f"  |  {100 * couverture:.0f}% of ancestors recovered"
+    ax.set_title(f"Lineage trajectories in diet space — chunk {chunk}"
+                 + (f"  |  {titre}" if titre else "") + f"\n{sous}", fontsize=12)
+
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig", "simplex")
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"lineage_simplex_chunk_{chunk}.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
+
 def plot_energy_expectation(resources, out_path, niveaux=7):
     """Esperance d'energie par item mange, pour chaque composition de regime.
 

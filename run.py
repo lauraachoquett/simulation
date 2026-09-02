@@ -1,5 +1,7 @@
 
 import os
+import glob
+import shutil
 os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false --xla_gpu_autotune_level=0"
 os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
 
@@ -90,6 +92,25 @@ def build_model(cfg):
         hidden_layers=list(cfg.hidden_layers),
         memory_mode=cfg.memory_mode,
     )
+
+
+def purge_params(exp_dir):
+    """Supprime les snapshots de genomes en fin de simulation.
+
+    params/ porte un alive_chunk_*.npz par chunk, soit (n_agents x n_params)
+    flottants a chaque fois : c'est de loin le plus gros poste sur disque d'un
+    run. Il ne sert qu'en cours de route (simplex de lignee, PCA de clade) et
+    les figures, elles, sont deja ecrites.
+
+    Consequence a connaitre : aucune analyse par genome n'est rejouable APRES
+    coup sur ce run.
+    """
+    d = os.path.join(exp_dir, "params")
+    if not os.path.isdir(d):
+        return
+    n = len(glob.glob(os.path.join(d, "*.npz")))
+    shutil.rmtree(d, ignore_errors=True)
+    print(f"params/ supprime ({n} snapshots)")
 
 
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', subkeys_init=None):
@@ -211,11 +232,22 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                     future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
                     pending_futures[future] = chunk_idx
                     
+                purge_params(exp_dir)
                 return state, outputs, exp_dir, current_sim_state,chunks_survived
             
             ## Genealogy and MCRA
             sim_data.update_genealogy(outputs,state,exp_dir)
             sim_data.update_mrca_and_plot(outputs,exp_dir)
+
+            ## TRAJECTOIRE DES LIGNEES DANS LE SIMPLEX ##
+            # Avant le shuffle : la config courante est encore celle sous
+            # laquelle les vivants ont vecu. Meme condition que le shuffle pour
+            # que les deux restent alignes si cycle_period change.
+            if ((chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10
+                    and len(cfg.resources) == 3 and cfg.track_weights):
+                subkey_lab, subkey_lig = random.split(subkey_lab)
+                sim_data.plot_lineage_simplex(state, subkey_env_lab, subkey_lig,
+                                              model, exp_dir)
             
 
             ## TEST AGENTS IN LAB ENV ##
@@ -280,6 +312,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 print(f"  [video] ERREUR chunk {cidx} : {e}")
 
 
+    purge_params(exp_dir)
     sim_data.save_mrca_sim(data_dir)
     delta_sim = time.time()-start_time_sim
     delta_min,delta_sec = sec_to_minutes(delta_sim)

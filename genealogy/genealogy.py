@@ -61,3 +61,24 @@ def collect_clade(root, node_children):
         clade.append(n)
         stack.extend(node_children.get(n, ()))
     return clade
+
+def chaine_ancetres(node, node_parent, max_generations=None):
+    """[node, parent, grand-parent, ...] jusqu'a la racine.
+
+    Generalise find_root, qui ne rend que l'extremite. La garde `seen` est la
+    meme et pour la meme raison : sur une frontiere de chunk le tampon de
+    naissance peut refermer une boucle sur lui-meme.
+
+    max_generations borne la remontee -- une lignee fait couramment plusieurs
+    centaines de generations, illisible sur une figure.
+    """
+    chaine, seen = [node], {node}
+    while node_parent.get(node) is not None:
+        node = node_parent[node]
+        if node in seen:
+            break
+        seen.add(node)
+        chaine.append(node)
+        if max_generations is not None and len(chaine) >= max_generations:
+            break
+    return chaine
