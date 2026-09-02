@@ -25,8 +25,8 @@ lisent pas delta_energy.
 Prend une expérience ou une racine : tous les `lab_data/` situés dessous sont
 traités, quelle que soit la profondeur.
 
-    python -m simulation.tools.fix_adapt_greediness exp/           # simulation
-    python -m simulation.tools.fix_adapt_greediness exp/ --apply   # tous les runs
+    python -m simulation_meta.tools.fix_adapt_greediness exp/           # simulation
+    python -m simulation_meta.tools.fix_adapt_greediness exp/ --apply   # tous les runs
 """
 from __future__ import annotations
 

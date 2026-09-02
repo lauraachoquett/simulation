@@ -11,7 +11,7 @@ import numpy as np
 import json
 import os 
 
-from simulation.utils.plots import (
+from simulation_meta.utils.plots import (
     block_edges, block_apply, block_steps,
     plot_evolution,
     plot_consumption,
@@ -28,7 +28,7 @@ from simulation.utils.plots import (
     plot_policy_influence,
 )
 
-from simulation.utils.utils_sim import load_shuffle_log
+from simulation_meta.utils.utils_sim import load_shuffle_log
 from .demography import DemographyMixin, AGE_BIN, COHORTE
 from .genealogy import GenealogyMixin
 from .weights import WeightsMixin

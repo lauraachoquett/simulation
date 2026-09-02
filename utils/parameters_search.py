@@ -3,8 +3,8 @@ import optuna
 import logging
 import json
 import jax
-from simulation.run import launch_simulation_chunked
-from simulation.utils.utils_sim import outputs_to_numpy
+from simulation_meta.run import launch_simulation_chunked
+from simulation_meta.utils.utils_sim import outputs_to_numpy
 
 def get_next_dir(base_path=".", prefix="try_"):
     """

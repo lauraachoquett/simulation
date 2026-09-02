@@ -1,7 +1,7 @@
 """Le circuit memoire est-il EXPRIMABLE, et atteignable par gradient ?
 
-    python -m simulation.tools.probe_memory --model v2
-    python -m simulation.tools.probe_memory --model v1
+    python -m simulation_meta.tools.probe_memory --model v2
+    python -m simulation_meta.tools.probe_memory --model v1
 
 On isole la question du reste : pas de politique, pas de RL, pas de rollout.
 Le reseau recoit le flux qu'il recoit en simulation -- action precedente,
@@ -29,7 +29,7 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import (BASE_RESOURCES, LABELS,
+from simulation_meta.data_class import (BASE_RESOURCES, LABELS,
                                    MODEL_VERSIONS, sous_ensemble)
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...), le

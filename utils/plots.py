@@ -12,8 +12,8 @@ from matplotlib.lines import Line2D
 import glob 
 import json
 import re 
-from simulation.data_class import COLOR_BY_ID,LABELS
-from simulation.utils.utils_sim import build_id_timeline
+from simulation_meta.data_class import COLOR_BY_ID,LABELS
+from simulation_meta.utils.utils_sim import build_id_timeline
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
 
@@ -2146,7 +2146,7 @@ def _bary(p_good, p_medium, p_poison):
 
 def _teinte_id(nom):
     """Couleur du sommet, alpha ignore (COLOR_BY_ID[1] a 8 chiffres hex)."""
-    from simulation.data_class import LABELS, COLOR_BY_ID
+    from simulation_meta.data_class import LABELS, COLOR_BY_ID
     c = COLOR_BY_ID[LABELS.index(nom)]
     return c[:7] if len(c) == 9 else c
 
@@ -2201,7 +2201,7 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     reordonne par identite, sinon les sommets seraient faux des qu'un shuffle a
     eu lieu.
     """
-    from simulation.data_class import LABELS, COLOR_BY_ID
+    from simulation_meta.data_class import LABELS, COLOR_BY_ID
 
     eaten = np.asarray(eaten, dtype=float)
     if eaten.shape[1] != 3:
@@ -2281,7 +2281,7 @@ def plot_energy_expectation(resources, out_path, niveaux=7):
     la ligne zero separe les regimes rentables des regimes deficitaires. Ne
     depend que de data_class, aucune simulation n'est necessaire.
     """
-    from simulation.data_class import LABELS
+    from simulation_meta.data_class import LABELS
 
     par_id = {r.id: r for r in resources}
     if set(par_id) != {0, 1, 2}:
@@ -2855,7 +2855,7 @@ def plot_generation_rate(steps, gen_depth, gen_depth_std, exp_dir,
 # =====================================================================
 #  NOUVEAU — COURBE DE RÉPONSE ÉNERGÉTIQUE  P(mange | voit, E)
 #  Necessite en tete de plots.py :
-#      from simulation.energy_response import _wilson
+#      from simulation_meta.energy_response import _wilson
 # =====================================================================
 def plot_energy_response(exp_dir, chunk, curves, cfg=None, fname=None):
     """curves : dict {label: (bins, n, k)} — une entree par lab.

@@ -1,6 +1,6 @@
 """Le reseau PEUT-IL apprendre a se servir de v_pred pour choisir son action ?
 
-    python -m simulation.tools.probe_action
+    python -m simulation_meta.tools.probe_action
 
 On sort de l'evolution. Le reseau est entraine par descente de gradient a imiter
 l'oracle : meme vue, meme v_pred, et pour cible l'action que l'oracle prendrait.
@@ -36,7 +36,7 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import BASE_RESOURCES, LABELS, sous_ensemble
+from simulation_meta.data_class import BASE_RESOURCES, LABELS, sous_ensemble
 
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...).

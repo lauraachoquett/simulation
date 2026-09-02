@@ -1,6 +1,6 @@
 """La politique se sert-elle de v_pred ?
 
-    python -m simulation.tools.probe_vpred --exp DIR --chunk 100
+    python -m simulation_meta.tools.probe_vpred --exp DIR --chunk 100
 
 On prend les genomes vivants d'un checkpoint et on les rejoue dans l'env de lab
 sous trois conditions qui ne different QUE par le contenu des trois nombres que
@@ -50,11 +50,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from simulation.data_class import LABELS
-from simulation.lab_env import vmap_over_agents_env_lab_high_res
-from simulation.utils.plots import _test_signes
-from simulation.utils.utils_sim import load_config, load_checkpoint
-from simulation.run import build_model
+from simulation_meta.data_class import LABELS
+from simulation_meta.lab_env import vmap_over_agents_env_lab_high_res
+from simulation_meta.utils.plots import _test_signes
+from simulation_meta.utils.utils_sim import load_config, load_checkpoint
+from simulation_meta.run import build_model
 
 
 def mesures(outputs, canal_poison):

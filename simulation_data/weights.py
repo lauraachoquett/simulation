@@ -26,9 +26,9 @@ import numpy as np
 import jax
 from jax.flatten_util import ravel_pytree
 
-from simulation.genealogy.genealogy import find_root
-from simulation.utils.utils_sim import load_shuffle_log
-from simulation.utils.plots import (plots_metrics_weight_distance,
+from simulation_meta.genealogy.genealogy import find_root
+from simulation_meta.utils.utils_sim import load_shuffle_log
+from simulation_meta.utils.plots import (plots_metrics_weight_distance,
                                     plots_weight_selection)
 
 

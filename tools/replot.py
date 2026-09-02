@@ -7,9 +7,9 @@ les relit et rejoue les mêmes fonctions de tracé sans aucune réduction.
 
 À lancer sur un frontend ou un nœud CPU, la simulation n'a pas à attendre :
 
-    python -m simulation.tools.replot exp/2026-08-13_10-00-00
-    python -m simulation.tools.replot exp/... --n-target 5000   # réduction douce
-    python -m simulation.tools.replot exp/... --out fig_full    # ailleurs que fig/
+    python -m simulation_meta.tools.replot exp/2026-08-13_10-00-00
+    python -m simulation_meta.tools.replot exp/... --n-target 5000   # réduction douce
+    python -m simulation_meta.tools.replot exp/... --out fig_full    # ailleurs que fig/
 
 Hors périmètre : les figures du lab (il faudrait rejouer les rollouts), les
 métriques de poids et le TMRCA, qui dépendent de l'arbre généalogique construit
@@ -25,9 +25,9 @@ import sys
 
 import numpy as np
 
-from simulation.data_class import BASE_RESOURCES
-from simulation.utils.utils_sim import load_config, load_shuffle_log
-from simulation.utils.plots import (
+from simulation_meta.data_class import BASE_RESOURCES
+from simulation_meta.utils.utils_sim import load_config, load_shuffle_log
+from simulation_meta.utils.plots import (
     block_edges, block_apply, block_steps,
     plot_evolution, plot_consumption, plot_prob_eat_given_seen,
     plot_phase_portrait_png, plot_mean_movement,

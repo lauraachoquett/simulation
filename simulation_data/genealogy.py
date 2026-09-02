@@ -12,10 +12,10 @@ quand la population est coalescée.
 import os
 import numpy as np
 
-from simulation.genealogy.genealogy import update_genealogy
-from simulation.genealogy.pca import save_alive_snapshot
-from simulation.genealogy.r0 import plot_r0, r0_by_birth_window
-from simulation.genealogy.mrca import coalescence_point, plot_tmrca_gen
+from simulation_meta.genealogy.genealogy import update_genealogy
+from simulation_meta.genealogy.pca import save_alive_snapshot
+from simulation_meta.genealogy.r0 import plot_r0, r0_by_birth_window
+from simulation_meta.genealogy.mrca import coalescence_point, plot_tmrca_gen
 
 
 class GenealogyMixin:

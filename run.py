@@ -15,13 +15,13 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from jax import random
 import jax
-from simulation.one_simulation import run_simulation_chunk
-from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1
-from simulation.utils.plots import plot_current_config
-from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
+from simulation_meta.one_simulation import run_simulation_chunk
+from simulation_meta.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1
+from simulation_meta.utils.plots import plot_current_config
+from simulation_meta.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax_meta.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour, periode_inner
-from simulation.simulation_data.core import simulation_data
+from simulation_meta.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour, periode_inner
+from simulation_meta.simulation_data.core import simulation_data
 
 import argparse
 import multiprocessing as mp

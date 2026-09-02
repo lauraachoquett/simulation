@@ -5,7 +5,7 @@ import numpy as np
 from jax import random
 from functools import partial
 from jax import jit
-from simulation.data_class import LABELS
+from simulation_meta.data_class import LABELS
 
 def respawn(x, subkey, prob_factor,pop_res_prob):
     conditions = [

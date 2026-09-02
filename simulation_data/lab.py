@@ -23,17 +23,17 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 
-from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res, vmap_over_agents_env_lab_high_res_rot,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
-from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
+from simulation_meta.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res, vmap_over_agents_env_lab_high_res_rot,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation_meta.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
 # plot_prob_eat_ratio : desactive, voir les appels commentes plus bas
-from simulation.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
-from simulation.simulation_data.energy_response import (default_energy_bins,
+from simulation_meta.utils.utils_sim import _video_worker, outputs_to_numpy, load_shuffle_log
+from simulation_meta.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
                                         resource_in_view, _wilson,
                                         ENERGY_EAT_WINDOW)
-from simulation.data_class import LABELS
+from simulation_meta.data_class import LABELS
  
 N_FILM       = 3      # genomes rejoues avec la grille, pour les videos
 def _vmap_rot(params, key_env, cles, cfg, model, rot):

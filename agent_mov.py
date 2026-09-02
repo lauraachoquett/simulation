@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from jax import lax,vmap
-from simulation.data_class import AgentState
+from simulation_meta.data_class import AgentState
 import jax 
 
 def action_depl_theta(action_id):

@@ -8,8 +8,8 @@ de la simulation.
 import os
 import numpy as np
 
-from simulation.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
-from simulation.utils.utils_sim import classify_outcome
+from simulation_meta.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
+from simulation_meta.utils.utils_sim import classify_outcome
 
 # W : pas apres l'observation ou la consommation compte encore. Doit rester egal
 # a ENERGY_EAT_WINDOW (energy_response.py), sinon la sim principale et le lab ne

@@ -13,11 +13,11 @@ from jax import random
 from functools import partial
 
 from EcoEvoJax_meta.source.agent import metaRNNPolicyState_bcppr
-from simulation.update_env import resources_growth
-from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
-from simulation.data_class import SimState
-from simulation.oracle import oracle_actions
-from simulation.utils.utils_sim import (masque_valeur, masque_politique,
+from simulation_meta.update_env import resources_growth
+from simulation_meta.agent_mov import vmap_update_agents_position, get_obs_vector
+from simulation_meta.data_class import SimState
+from simulation_meta.oracle import oracle_actions
+from simulation_meta.utils.utils_sim import (masque_valeur, masque_politique,
                                         periode_inner)
 
 from typing import NamedTuple

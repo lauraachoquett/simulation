@@ -8,7 +8,7 @@ from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from IPython.display import HTML, display, clear_output
 import numpy as np
 import matplotlib.colors as mcolors
-from simulation.data_class import COLOR_BY_ID
+from simulation_meta.data_class import COLOR_BY_ID
 
 def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200, resources=None):
     grids = outputs.grid

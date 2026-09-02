@@ -4,10 +4,10 @@ import jax
 from jax import random,vmap
 import jax.numpy as jnp
 
-from simulation.data_class import AgentState,SimState,LABELS
-from simulation.agent_mov import get_obs_vector
-from simulation.update_env import resources_growth
-from simulation.utils.utils_sim import init_inner, model_tourne, permute_canaux
+from simulation_meta.data_class import AgentState,SimState,LABELS
+from simulation_meta.agent_mov import get_obs_vector
+from simulation_meta.update_env import resources_growth
+from simulation_meta.utils.utils_sim import init_inner, model_tourne, permute_canaux
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -134,10 +134,10 @@ from jax import random
 from functools import partial
 
 from EcoEvoJax_meta.source.agent import metaRNNPolicyState_bcppr
-from simulation.update_env import resources_growth
-from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
-from simulation.data_class import SimState
-from simulation.one_simulation import run_simulation_chunk
+from simulation_meta.update_env import resources_growth
+from simulation_meta.agent_mov import vmap_update_agents_position, get_obs_vector
+from simulation_meta.data_class import SimState
+from simulation_meta.one_simulation import run_simulation_chunk
 
 def rotations_for(resources):
     """Decalages de canaux non triviaux, pour n ressources.

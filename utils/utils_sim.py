@@ -8,14 +8,14 @@ import dataclasses
 from typing import NamedTuple
 
 
-from simulation.data_class import AgentState, InnerState, SimState, ResourceConfig, LABELS
-from simulation.agent_mov import get_obs_vector
-from simulation.update_env import resources_growth
-from simulation.data_class import Config, MODEL_VERSIONS
+from simulation_meta.data_class import AgentState, InnerState, SimState, ResourceConfig, LABELS
+from simulation_meta.agent_mov import get_obs_vector
+from simulation_meta.update_env import resources_growth
+from simulation_meta.data_class import Config, MODEL_VERSIONS
 from EcoEvoJax_meta.source.agent import MetaRnnPolicy_bcppr
 
 import numpy as np
-from simulation.utils.utils_video import save_chunk_video
+from simulation_meta.utils.utils_video import save_chunk_video
 import json
 from datetime import datetime
 import time
