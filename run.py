@@ -167,24 +167,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
-    # Calendrier du simplex de lignee, annonce AVANT le premier tir. Sans cette
-    # ligne, un run trop court ou lance sans --weights ne produit rien et ne dit
-    # rien : c'est une attente muette, pas une information.
-    if not cfg.track_weights:
-        print("[lineage] simplex de lignee desactive (track_weights=False, "
-              "cf. --weights)")
-    else:
-        # plus petit multiple de cycle_period STRICTEMENT superieur a 10, la
-        # borne de la garde. Le "10 //" et non "11 //" : a cycle_period valant
-        # 1 ou 11, le chunk 11 convient deja.
-        premier = cfg.cycle_period * (10 // cfg.cycle_period + 1)
-        dernier = num_chunks_exp - 1            # range(start_chunk, num_chunks_exp)
-        print(f"[lineage] simplex de lignee : premier trace au chunk {premier}, "
-              f"puis tous les {cfg.cycle_period}")
-        if premier > dernier:
-            print(f"          ce run s'arrete au chunk {dernier} : "
-                  f"aucune figure ne sortira")
-
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
@@ -261,11 +243,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # Avant le shuffle : la config courante est encore celle sous
             # laquelle les vivants ont vecu. Meme condition que le shuffle pour
             # que les deux restent alignes si cycle_period change.
-            # La garde ne porte que le CALENDRIER : les preconditions de
-            # configuration descendent dans la methode, qui sait deja dire
-            # pourquoi elle ne trace pas. Les empiler ici rendait l'absence de
-            # figure totalement muette.
-            if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10:
+            if ((chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10
+                    and len(cfg.resources) == 3 and cfg.track_weights):
                 subkey_lab, subkey_lig = random.split(subkey_lab)
                 sim_data.plot_lineage_simplex(state, subkey_env_lab, subkey_lig,
                                               model, exp_dir)

@@ -70,19 +70,12 @@ class GenealogyMixin:
 
         n_types = len(self.cfg.resources)
         if n_types != 3:
-            print(f"[lineage] {n_types} ressources, il en faut 3 pour un simplex")
-            return
-        # Les deux messages nomment le drapeau plutot que le symptome :
-        # track_weights commande save_alive_snapshot, donc l'existence meme des
-        # genomes. C'est la cause dans la quasi-totalite des cas.
-        if not self.cfg.track_weights:
-            print("[lineage] track_weights=False : aucun genome n'est sauve, "
-                  "relancer avec --weights pour obtenir la figure")
+            print(f"Simplex de lignee : {n_types} ressources, il en faut 3.")
             return
         params_dir = os.path.join(exp_dir, "params")
         if not os.path.isdir(params_dir):
-            print("[lineage] pas de dossier params/ : aucun genome a recharger, "
-                  "relancer avec --weights")
+            print("Simplex de lignee : pas de dossier params/ "
+                  "(track_weights est-il a True ?), saute")
             return
 
         survivants = self.compute_survivors(state)
