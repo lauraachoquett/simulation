@@ -408,7 +408,11 @@ def run_simulation_chunk(state,model,keys, cfg):
             # quoi. NaN (jamais mesure) donne faux, donc pas de gradient.
             masque_pol = masque_politique(model)
             if cfg.inner_policy:
-                confiant = (inner_maj.perte < cfg.inner_policy_seuil)
+                # Avec vpred_oracle la croyance est exacte par construction :
+                # le verrou porterait sur l'erreur de la tete de valeur, qui est
+                # court-circuitee et dont la sortie n'est jamais utilisee.
+                confiant = (jnp.ones_like(inner_maj.perte, bool) if cfg.vpred_oracle
+                            else inner_maj.perte < cfg.inner_policy_seuil)
                 inner_maj = pas_gradient_politique(
                     model, cfg, inner_maj,
                     agents.policy_states.lstm_h, agents.policy_states.lstm_c,

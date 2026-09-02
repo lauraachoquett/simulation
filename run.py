@@ -459,8 +459,12 @@ def parse_cli(cfg):
             p.error("--inner-policy demande --inner : la loss de politique vise "
                     "la croyance produite par la boucle interne.")
         if maj.get("vpred_oracle"):
-            p.error("--inner-policy avec --vpred-oracle ne laisse rien emerger : "
-                    "valeur donnee ET politique entrainee, c'est un oracle.")
+            print("[attention] --inner-policy avec --vpred-oracle : la valeur est "
+                  "DONNEE et la politique\n            entrainee a s'en servir. "
+                  "Rien n'emerge -- c'est le PLAFOND de la loss de\n"
+                  "            politique : si elle n'apprend pas l'evitement avec "
+                  "une croyance parfaite,\n            elle ne l'apprendra pas "
+                  "avec une croyance apprise.")
     if maj.get("value_map") and not (maj.get("inner_loop") or maj.get("vpred_oracle")):
         p.error("--value-map demande une tete de valeur : ajouter --inner ou "
                 "--vpred-oracle.")
