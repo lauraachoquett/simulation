@@ -12,7 +12,7 @@ from jax import lax
 from jax import random
 from functools import partial
 
-from EcoEvoJax.source.agent import metaRNNPolicyState_bcppr
+from EcoEvoJax_meta.source.agent import metaRNNPolicyState_bcppr
 from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState

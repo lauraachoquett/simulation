@@ -52,7 +52,7 @@ except TypeError:
     nn.recurrent.LSTMCell = _LSTMCompat
     print("[probe] flax ancien : shim LSTMCell(features=) applique")
 
-from EcoEvoJax.source.agent import MetaRNN_bcppr
+from EcoEvoJax_meta.source.agent import MetaRNN_bcppr
 
 
 def echantillons(cle, n, cote, de, bons, mauvais):

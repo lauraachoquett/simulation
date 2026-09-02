@@ -12,7 +12,7 @@ from simulation.data_class import AgentState, InnerState, SimState, ResourceConf
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config, MODEL_VERSIONS
-from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
+from EcoEvoJax_meta.source.agent import MetaRnnPolicy_bcppr
 
 import numpy as np
 from simulation.utils.utils_video import save_chunk_video
