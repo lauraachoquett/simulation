@@ -481,12 +481,18 @@ def run_simulation_chunk(state,model,keys, cfg):
                         step_idx % cfg.inner_window == cfg.inner_window - 1,
                         lambda _: jax.debug.print(
                             "[interne] pas {p} | erreur {m} (min {b}) | {n}/{v} "
-                            "confiants | tete touchee chez {c}, divergence {d} "
-                            "| totale {t}",
+                            + ("confiants (croyance imposee)" if cfg.vpred_oracle
+                               else "confiants")
+                            + " | tete touchee chez {c}, divergence {d} "
+                              "| totale {t}",
                             p=step_idx,
                             m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
                             b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)),
-                            n=((perte < cfg.inner_policy_seuil) & en_vie).sum(),
+                            # meme condition que le verrou lui-meme : avec
+                            # vpred_oracle la croyance est imposee, donc tous
+                            # les vivants apprennent
+                            n=(en_vie.sum() if cfg.vpred_oracle else
+                               ((perte < cfg.inner_policy_seuil) & en_vie).sum()),
                             v=en_vie.sum(), c=touche.sum(),
                             d=jnp.nanmedian(jnp.where(utile, div, jnp.nan)),
                             t=jnp.nanmedian(jnp.where(en_vie & devant, div_tot,
