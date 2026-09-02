@@ -12,12 +12,12 @@ from simulation.data_class import COLOR_BY_ID
 
 def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200, resources=None):
     grids = outputs.grid
-    # Alpha IGNORE. COLOR_BY_ID[1] vaut "#3933F35E", soit 37% d'opacite : melange
-    # au fond blanc il donne #b6b4fb, invisible a l'ecran. Le medium etant la
-    # ressource qui pousse le plus vite, c'etait la plus abondante qui ne se
-    # voyait pas. Une video de diagnostic doit montrer ce qui est la.
-    colors = np.array([mcolors.to_rgb(COLOR_BY_ID[r.id][:7]) for r in resources],
-                      dtype=np.float32)               # (n_types, 3)
+    rgba = np.array([mcolors.to_rgba(COLOR_BY_ID[r.id]) for r in resources],
+                    dtype=np.float32)                 # (n_types, 4)  R,G,B,A
+
+    rgb, a = rgba[:, :3], rgba[:, 3:4]                # (n_types,3) et (n_types,1)
+    bg = np.array([1.0, 1.0, 1.0], np.float32)        # fond blanc de la vidéo
+    colors = a * rgb + (1 - a) * bg    
     n_types = colors.shape[0]                    # déduit du tableau de couleurs
 
     

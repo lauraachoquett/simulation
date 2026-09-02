@@ -96,9 +96,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     
     start_time_sim = time.time()
 
-    # UNE seule fois, et avant save_config : c'est la config RESOLUE qui part
-    # dans config.json. La branche resume la recharge deja resolue et ne doit
-    # donc pas repasser par la.
     cfg = resolve_model(cfg)
 
     if save_dir == '':
@@ -121,16 +118,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             subkeys.extend(random.split(k_sup, num_chunks_exp - len(subkeys)))
 
         start_chunk = chunk_id
-        # La forme du reseau vient du cfg RECHARGE, pas de celui passe en argument :
-        # les poids du checkpoint ne se remettent en forme que d'une seule facon.
         model = build_model(cfg)
-        # Le seul controle qui attrape VRAIMENT une reprise mal formee. Les poids
-        # d'un agent sont un vecteur plat : une forme differente ne leve pas
-        # d'erreur, elle les reinterprete de travers et le run continue (963e465).
-        # Necessaire aussi parce que les config.json anterieurs a 591269d n'ont
-        # pas la cle memory_mode : ils retombent sur le defaut "separee" alors que
-        # leur checkpoint a ete produit en "jointe". load_config ne peut pas le
-        # deviner ; la comparaison des formes reelles, si.
         n_ckpt = state.agents.params.shape[1]
         if model.num_params != n_ckpt:
             raise ValueError(
@@ -232,7 +220,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
             ## TEST AGENTS IN LAB ENV ##
             phase = (chunk_idx) % cfg.cycle_period
-            if ((chunk_idx) % cfg.pca_save_freq == 0) or (phase in cfg.lab_after_shuffle):
+            if ((chunk_idx) % cfg.lab_evaluation_freq == 0) or (phase in cfg.lab_after_shuffle):
                 subkey_lab,subkey_sim = random.split(subkey_lab)
                 def submit_video(outputs_np, vid_path, *args, label=None):
                     os.makedirs(os.path.dirname(vid_path), exist_ok=True)  # avant submit
@@ -255,7 +243,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 save_checkpoint(state, ckpt_path)
 
             # --- Vidéo (asynchrone) ---
-            if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk or (phase in [1,2,3]) :
+            if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk or (phase in [1]) :
                 vid_path = os.path.join(exp_dir, "videos", f"video_chunk_{chunk_idx}.mp4")
                 outputs_np = video_payload(outputs, stride=cfg.video_stride)
                 future = executor.submit(_video_worker, outputs_np, vid_path, 20, 5, cfg.resources)
@@ -431,16 +419,16 @@ if __name__ == '__main__':
             num_chunks = 1000,
             checkpoint_freq = 50,
             video_freq = 50,
-            pca_save_freq=50,
+            lab_evaluation_freq=500,
 
             ### AGENTS :
             n_agents_max=2000,
-            n_agents_init=20,
+            n_agents_init=50,
             agent_view = 5,
             temperature=1/40,
 
             #Physiologie
-            energy_decay=0.07/8,
+            energy_decay=0.07/7,
             factor_energy_decay_not_moving = 0.3,
             energy_max = 8.0,
 
@@ -457,18 +445,21 @@ if __name__ == '__main__':
             pre_growth_step = 500,
             random_pos_offspring = False,
             dumb_agent = False,
-            letal_wall=False,
-            cycle_period = 200,
+            letal_wall=True,
+            cycle_period = 1000,
             log_obs = False,
 
             ablate_memory = False ,        # coupe les trois canaux ci-dessous
             ablate_recurrence = False ,     # lstm_h / lstm_c
             ablate_interoception = False ,  # energie
             ablate_feedback = False ,
+            lab_memory_ablation = False,
 
-            lab_time_steps = 2000,
+
+            lab_time_steps = 3000,
             
             model_version = "v1", 
+            evolvability_freq = 0,
               
         )
     
@@ -480,6 +471,8 @@ if __name__ == '__main__':
     a = cfg.starting_energy - cfg.energy_decay * cfg.time_above_repr
     b = cfg.min_energy_repr
     assert(  b > a)
+    
+    # Sanity check :
 
     key = random.PRNGKey(args.seed)
     print(jax.devices())
