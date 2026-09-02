@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from simulation.data_class import AgentState,SimState,LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
-from simulation.utils.utils_sim import init_inner, model_tourne, permute_canaux
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -77,8 +76,7 @@ def init_state_lab(key, cfg, model,agent_params):
         is_oracle=jnp.zeros((cfg.n_agents_max,)),
         croyance=jnp.full((cfg.n_agents_max, len(cfg.resources)),
                           cfg.croyance_init),
-        policy_states=policy_states,
-        inner=init_inner(cfg, params),
+        policy_states=policy_states
     )
 
     # 4. Grille d'occupation et observations
@@ -192,27 +190,19 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         reproduction_on=True,
         resources_growth=False,
         pre_growth_step=200,
-        log_obs=True,
-        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          
+        log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
-    # la plus lente, et non "le poison" : une config sans poison plantait ici
-    lente = min(cfg.resources, key=lambda r: r.prob_factor)
+    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40),
-                  prob_factor=lente.prob_factor * HIGH_RES_GROWTH_SCALE,
-                  pop_res_prob=lente.pop_res_prob * HIGH_RES_GROWTH_SCALE)
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+                  prob_factor=poison.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
-    # Les valeurs imposees sont figees dans le modele et designent des CANAUX :
-    # sous rotation il faut les permuter comme eux, sinon l'agent recevrait une
-    # information decalee d'un cran -- systematiquement fausse au lieu de
-    # parfaite. On permute celles du modele recu, sans consulter cfg : ecraser
-    # le modele d'appel casserait tout bras construit a la main (cf. probe_vpred).
-    return launch_lab_env(agent_params, key_env, key_sim, cfg,
-                          model_tourne(cfg, model, rot))
+    return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     
@@ -223,17 +213,15 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         reproduction_on = True,
         resources_growth=False,
         pre_growth_step = 200,
-        log_obs=True,
-        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          # idem
+        log_obs=True,          # idem
     )
     count_by_id =HIGH_RES_COUNTS
-    # la plus lente, et non "le poison" : une config sans poison plantait ici
-    lente = min(cfg.resources, key=lambda r: r.prob_factor)
+    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40),
-                  prob_factor=4*lente.prob_factor * HIGH_RES_GROWTH_SCALE,
-                  pop_res_prob=4*lente.pop_res_prob * HIGH_RES_GROWTH_SCALE)
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+                  prob_factor=4*poison.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=4*poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
@@ -247,14 +235,13 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
         reproduction_on = False,
         resources_growth=False,
         pre_growth_step = 50,
-        log_obs=True,
-        log_inner=False,   # vmappe sur N genomes : le message sortirait N fois          # idem
+        log_obs=True,          # idem
     )
     count_by_id = {"good": 3, "medium": 2, "poison": 10}
     
     
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id.get(LABELS[r.id], 40)) for r in cfg.resources
+        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs    
@@ -263,14 +250,10 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
 
 def rotate_resources(resources, shift):
     """Rotation cyclique : la ressource du canal k passe au canal (k + shift) % n."""
-    return permute_canaux(resources, shift)
+    n = len(resources)
+    return tuple(resources[(k - shift) % n] for k in range(n))
 
 def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
-    # A une seule ressource il n'existe aucune rotation non triviale : la liste
-    # reste vide et le tree_map de fin n'a rien a empiler. On sort avant, les
-    # appelants doivent tester le None.
-    if not rotations_for(cfg.resources):
-        return None, None
     states, outputs = [], []
     for rot in rotations_for(cfg.resources):
         s, o = launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=rot)
@@ -295,20 +278,6 @@ def vmap_mutate(params, keys, cfg):
 
 def vmap_over_agents_env_lab_high_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
-
-def vmap_over_agents_env_lab_high_res_rot(list_agents_param, key_env, key_sim,
-                                          model, cfg, rot):
-    """Une SEULE rotation, au lieu de toutes empilees.
-
-    launch_adaptation_env renvoie (B, n_rot, T, ...) et garde tout en memoire
-    pendant qu'on traite les rotations une a une. Avec les observations
-    journalisees c'est plusieurs gigaoctets sur le GPU, et le bras a gradient
-    gele doublait la facture. Ici l'appelant boucle et libere au fur et a mesure.
-    """
-    return vmap(partial(launch_env_high_res, rot=rot),
-                in_axes=(0, None, 0, None, None))(
-        list_agents_param, key_env, key_sim, cfg, model)
-
 
 def vmap_over_agents_env_lab_low_res(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_low_res,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)

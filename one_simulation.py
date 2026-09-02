@@ -17,8 +17,6 @@ from simulation.update_env import resources_growth
 from simulation.agent_mov import vmap_update_agents_position, get_obs_vector
 from simulation.data_class import SimState
 from simulation.oracle import oracle_actions
-from simulation.utils.utils_sim import (masque_valeur, masque_politique,
-                                        periode_inner)
 
 from typing import NamedTuple
 import jax
@@ -39,247 +37,7 @@ class StepLog(NamedTuple):
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
-    perte_pred: jax.Array  # (N,) -> erreur de prediction de la boucle interne,
-                           #         vide si inner_loop=False
-    divergence_pol: jax.Array  # (N,) -> ecart entre politique apprise et genome
     
-
-def pas_optimiseur(cfg, grad, inner, lr, actifs, masque, voie):
-    """Le pas a retrancher aux poids, et les moments mis a jour.
-
-    "sgd"  : lr * grad, sans etat.
-    "adam" : moments par agent, avec correction de biais.
-
-    `masque` doit etre applique au PAS, pas seulement au gradient. Les deux
-    losses partagent le meme tableau de moments : la loss de valeur y ecrit sur
-    son masque, et un pas d'Adam non masque vaut lr * m1/sqrt(m2), donc non nul
-    partout ou m1 l'est -- le pas de politique deplacait ainsi les poids de la
-    voie de valeur. Les moments ne sont mis a jour que sous le masque, pour la
-    meme raison : sans ca chaque loss ferait decroitre les moments de l'autre.
-
-    `voie` (0 = valeur, 1 = politique) selectionne le compteur de mises a jour.
-    Un compteur commun serait faux : la politique tourne a chaque pas, la valeur
-    une fois par fenetre. Et il compte par AGENT, pas en pas globaux -- les
-    agents ne naissent pas ensemble.
-    """
-    if cfg.inner_optim != "adam":
-        return lr * grad * actifs, inner.m1, inner.m2, inner.n_maj
-
-    b1, b2, eps = cfg.inner_adam_b1, cfg.inner_adam_b2, cfg.inner_adam_eps
-    bouge = (actifs > 0) & (masque[None] > 0)
-    m1 = jnp.where(bouge, b1 * inner.m1 + (1 - b1) * grad, inner.m1)
-    m2 = jnp.where(bouge, b2 * inner.m2 + (1 - b2) * grad ** 2, inner.m2)
-    t = inner.n_maj.at[:, voie].add((actifs[:, 0] > 0).astype(inner.n_maj.dtype))
-    tv = jnp.maximum(t[:, voie], 1)[:, None]
-    c1 = 1 - b1 ** tv
-    c2 = 1 - b2 ** tv
-    pas = lr * (m1 / c1) / (jnp.sqrt(m2 / c2) + eps)
-    return pas * bouge, m1, m2, t
-
-
-def ecrete(grad, seuil):
-    """Ramene la norme du gradient de chaque agent sous `seuil`."""
-    if not seuil:
-        return grad
-    norme = jnp.linalg.norm(grad, axis=1, keepdims=True)
-    return grad * jnp.minimum(1.0, seuil / (norme + 1e-8))
-
-
-def pas_gradient_intra_vie(model, cfg, inner, vivants, masque, ancre=0, depart=0):
-    """Un pas de SGD sur la voie LSTM -> tete de valeur, par agent.
-
-    BPTT tronque sur la fenetre : le carry de depart est celui du DEBUT de
-    fenetre, garde dans InnerState. Sans cette troncature le gradient ne
-    remonterait que d'un pas, et le reseau ne pourrait pas apprendre a RETENIR
-    une bouchee passee -- ce qui est precisement ce qu'on lui demande.
-
-    Le conv et la tete de politique ne sont pas dans le graphe : en mode separee
-    la voie de valeur en est independante, donc la passe arriere ne porte que sur
-    ~600 parametres.
-    """
-    def perte(theta, h0, c0, t_in, t_eat, t_r):
-        p = model.format_one_fn(theta)
-
-        n_types = len(cfg.resources)
-
-        def avance(carry, x):
-            h, c = carry
-            mem_in, eat, r = x
-            h, c, v = model.valeur_apply(p, h, c, mem_in)
-            # v est la prediction faite AVANT que (eat, r) n'entre dans le LSTM :
-            # ils n'y arriveront qu'au pas suivant. C'est donc une prediction,
-            # pas une recopie de l'entree.
-            e = (v - r) ** 2 * eat
-            # total pour le gradient, part BOUCHEES pour la mesure
-            return (h, c), (e.sum(), e[:n_types].sum())
-
-        _, (err, err_b) = lax.scan(avance, (h0, c0), (t_in, t_eat, t_r))
-        # Le gradient porte sur TOUTES les cases, y compris "rien" : c'est elle
-        # qui apprend ce que coute un pas sans repas. La mesure rapportee, elle,
-        # ne compte que les bouchees -- "rien" est trivial a predire et ecraserait
-        # l'erreur, rendant le seuil de confiance illisible.
-        n_tot = jnp.maximum(t_eat.sum(), 1.0)
-        n_b = t_eat[:, :n_types].sum()
-        return (err.sum() / n_tot,
-                jnp.where(n_b > 0, err_b.sum() / jnp.maximum(n_b, 1.0), jnp.nan))
-
-    # Fenetre GLISSANTE : la case i du tampon porte le pas dont i = pas % window,
-    # donc le plus ancien des `window` derniers n'est pas en position 0. On
-    # decale pour rejouer dans l'ordre. Le decalage est nul quand inner_every
-    # vaut inner_window, soit le comportement d'avant.
-    decale = lambda t: jnp.roll(t, -depart, axis=1)
-    (_, val), grad = jax.vmap(jax.value_and_grad(perte, has_aux=True))(
-        inner.params_vie, inner.carry_h[:, ancre], inner.carry_c[:, ancre],
-        decale(inner.tampon_in), decale(inner.tampon_eaten),
-        decale(inner.tampon_r))
-    grad = ecrete(grad * masque[None], cfg.inner_clip)
-    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_lr,
-                                    vivants[:, None], masque, 0)
-    return inner.params_vie - pas, val, m1, m2, t
-
-
-# Indice de l'action "avancer" : la seule qui deplace sur une case, donc la
-# seule dont la valeur immediate soit definie. Cf. agent_mov.action_depl_theta.
-AVANCER = 3
-
-
-def valeurs_par_action(cfg, obs, v, rien):
-    """(n_actions,) : la meilleure case que chaque action rapproche, escomptee.
-
-    Meme notation que simulation/oracle.py -- valeur de la case moins un cout par
-    pas de distance, plus un pas si elle demande une rotation -- mais avec la
-    CROYANCE de l'agent au lieu des vraies valeurs.
-
-    L'ecart avec la portee "case" est decisif. La moyenne des ressources est
-    negative (-0.067), donc noter la seule case devant fait converger la politique
-    vers l'immobilite : quand cette case est mauvaise, ne pas bouger est le mieux
-    possible. Le MAXIMUM sur le champ de vision, lui, est presque toujours positif
-    -- il y a une dizaine de bonnes cases en vue a tout instant -- donc se diriger
-    vers la meilleure bat rester.
-
-    Une case vide vaut `rien` : s'y rendre ne coute que le metabolisme.
-    """
-    n_types = v.shape[0]
-    cote = obs.shape[0]
-    c = cote // 2
-
-    occupe = (obs[..., :n_types] > 0).any(axis=-1)
-    val = jnp.where(occupe, (obs[..., :n_types] * v).sum(-1), rien)
-
-    lignes = jnp.arange(cote)[:, None]
-    cols = jnp.arange(cote)[None, :]
-    dist = jnp.abs(lignes - c) + jnp.abs(cols - c)
-    # une case hors de l'axe demande une rotation en plus, comme dans l'oracle
-    tourne = (cols != c).astype(val.dtype)
-    score = val - cfg.inner_policy_cout * (dist + tourne)
-    score = score.at[c, c].set(-jnp.inf)          # ne pas se viser soi-meme
-
-    def meilleur(masque):
-        m = jnp.max(jnp.where(masque, score, -jnp.inf))
-        return jnp.where(jnp.isfinite(m), m, rien)     # rien en vue -> rien
-
-    # geometrie de agent_mov : avancer -> ligne +1, action 1 -> colonne +1,
-    # action 2 -> colonne -1. Ordre des actions : rester, tourner+, tourner-, avancer
-    return jnp.stack([jnp.asarray(rien, val.dtype),
-                      meilleur(cols > c),
-                      meilleur(cols < c),
-                      meilleur(lignes > c)])
-
-
-def pas_gradient_politique(model, cfg, inner, h, c, obs, mem_in,
-                           actifs, masque):
-    params_vie = inner.params_vie
-    """Un pas de SGD sur -somme_a pi(a) * v_hat(a), par agent.
-
-    v_hat n'est defini que pour "avancer" : les autres actions ne posent l'agent
-    sur aucune case, leur valeur immediate est nulle. La loss se reduit donc a
-    -pi(avancer) * valeur_de_la_case_devant, ce qui pousse a avancer sur ce que
-    l'agent croit bon et a s'en detourner sinon.
-
-    La croyance passe par stop_gradient : c'est une CIBLE. Sans ca le reseau
-    baisserait la loss en gonflant v_pred au lieu de corriger ses actions.
-
-    Calculee au pas courant et non sur la fenetre : elle ne demande aucune
-    assignation de credit dans le temps, et stocker les observations d'une
-    fenetre couterait des gigaoctets.
-    """
-    n_types = len(cfg.resources)
-    centre = cfg.agent_view
-
-    def perte(theta, h, c, obs, mem_in):
-        p = model.format_one_fn(theta)
-        # meme decoupage que l'entree du LSTM, cf. get_actions
-        la, rw = mem_in[:cfg.output_dim], mem_in[cfg.output_dim:cfg.output_dim + 1]
-        en, le = mem_in[cfg.output_dim + 1:cfg.output_dim + 2], mem_in[cfg.output_dim + 2:]
-        _, _, v = model.valeur_apply(jax.lax.stop_gradient(p), h, c, mem_in)
-        v = jax.lax.stop_gradient(v * cfg.vpred_gain)
-
-        logits = model.logits_apply(p, h, c, obs, la, rw, en, le)
-        pi = jax.nn.softmax(logits / cfg.temperature)
-        # "rien" est la valeur d'un pas sans repas : negative, puisque vivre
-        # coute. Les actions qui ne posent l'agent sur aucune case la prennent,
-        # au lieu de 0 -- sinon ne rien faire est un optimum.
-        rien = v[n_types] if cfg.inner_target == "delta" else jnp.float32(0.0)
-
-        if cfg.inner_policy_portee == "vue":
-            return -(pi * valeurs_par_action(cfg, obs, v[:n_types], rien)).sum()
-
-        # portee "case" : ligne +1 dans la vue egocentrique (cf. oracle.py)
-        devant = obs[centre + 1, centre, :n_types]
-        if cfg.inner_target == "delta":
-            v_devant = jnp.where(devant.sum() > 0, (devant * v[:n_types]).sum(), rien)
-            return -(pi[AVANCER] * v_devant + (1.0 - pi[AVANCER]) * rien)
-        return -pi[AVANCER] * (devant * v[:n_types]).sum()
-
-    grad = jax.vmap(jax.grad(perte))(params_vie, h, c, obs, mem_in)
-    grad = ecrete(grad * masque[None], cfg.inner_clip)
-    poids = actifs.astype(params_vie.dtype)[:, None]
-    # Les moments sont partages avec la loss de valeur, mais les deux masques
-    # sont DISJOINTS : chaque poids n'est touche que par une seule des deux, donc
-    # aucun moment ne melange les deux gradients.
-    pas, m1, m2, t = pas_optimiseur(cfg, grad, inner, cfg.inner_policy_lr, poids,
-                                    masque, 1)
-    return inner.replace(params_vie=params_vie - pas, m1=m1, m2=m2, n_maj=t)
-
-
-def divergences(model, cfg, params_vie, genome, h, c, obs, mem_in, masque_pol):
-    """Deux distances en variation totale, sur la meme vue.
-
-    `totale`    : politique apprise contre celle du genome. Tout ce que la
-                  boucle interne a change, croyance comprise.
-    `politique` : politique apprise contre la MEME croyance mais les poids de
-                  politique remis a ceux du genome. Isole donc la seule
-                  contribution de la retropropagation sur la tete.
-
-    La distinction compte : v_pred entre dans la tete et dans la carte, donc une
-    croyance apprise change deja le comportement sans qu'aucun poids de politique
-    n'ait bouge. Confondre les deux fait croire que la loss de politique agit
-    alors qu'elle n'a peut-etre jamais tourne.
-
-    0 = aucun effet, 1 = plus rien en commun. Aux fins de fenetre seulement :
-    trois passes avant.
-    """
-    def paires(vie, gen, h, c, obs, mem_in):
-        la, rw = mem_in[:cfg.output_dim], mem_in[cfg.output_dim:cfg.output_dim + 1]
-        en, le = mem_in[cfg.output_dim + 1:cfg.output_dim + 2], mem_in[cfg.output_dim + 2:]
-        pi = lambda th: jax.nn.softmax(
-            model.logits_apply(model.format_one_fn(th), h, c, obs, la, rw, en, le)
-            / cfg.temperature)
-        # croyance apprise, politique du genome
-        mixte = vie * (1.0 - masque_pol) + gen * masque_pol
-        p_vie = pi(vie)
-        # Y a-t-il une ressource devant ? Sinon avancer et rester ont la meme
-        # valeur, le gradient est nul et les deux politiques coincident par
-        # construction. Moyenner sur ces pas-la dilue la mesure : sur 5% de pas
-        # utiles, un effet reel de 0.4 se lirait 0.02.
-        n_types = len(cfg.resources)
-        devant = obs[cfg.agent_view + 1, cfg.agent_view, :n_types].sum() > 0
-        return (0.5 * jnp.abs(p_vie - pi(gen)).sum(),
-                0.5 * jnp.abs(p_vie - pi(mixte)).sum(),
-                devant)
-
-    return jax.vmap(paires)(params_vie, genome, h, c, obs, mem_in)
-
 
 @partial(jax.jit, static_argnames=['cfg','model'])
 def run_simulation_chunk(state,model,keys, cfg):
@@ -331,13 +89,8 @@ def run_simulation_chunk(state,model,keys, cfg):
                     energy=jnp.full_like(state.agents.energy, cfg.starting_energy)),
             )
 
-        # Avec la boucle interne, la passe avant lit params_vie (poids appris
-        # pendant la vie) ; agents.params reste le genome, intact, et c'est lui
-        # seul qui est transmis a la reproduction.
-        params_avant = (state.agents.params if agents.inner is None
-                        else agents.inner.params_vie)
         actions_logit, new_policy_states = model.get_actions(
-            state_in, params_avant, state.agents.policy_states
+            state_in, state.agents.params, state.agents.policy_states
         )
         if cut_rec:
             # apres l'appel : rien ne passe au pas suivant
@@ -391,124 +144,6 @@ def run_simulation_chunk(state,model,keys, cfg):
         # exactement la reevaluation intra-vie qu'on veut mesurer.
         croyance_maj = jnp.where(ate_res_step, rewards[:, None], agents.croyance)
         saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
-
-        # ------- 2 bis. Boucle interne : predire la valeur de sa bouchee -------
-        # cut_rec remet le carry a zero apres chaque pas : rien ne s'accumule,
-        # donc il n'y a plus rien a predire. On gele la boucle interne au lieu
-        # d'entrainer dans le vide -- sinon le bras ablate du lab differerait de
-        # l'intact par ses POIDS autant que par sa memoire, et la comparaison
-        # appariee ne mesurerait plus ce qu'elle annonce.
-        inner_maj = agents.inner
-        if inner_maj is not None and not cut_rec:
-            # Reconstitue l'entree du LSTM A L'IDENTIQUE de get_actions : la
-            # rejouer autrement ferait apprendre le gradient sur un autre reseau
-            # que celui qui a agi.
-            mem_in = jnp.concatenate([
-                state_in.last_actions,
-                state_in.rewards,
-                jnp.expand_dims(state_in.agents.energy, 1).astype(jnp.float32),
-                state_in.last_eaten.astype(jnp.float32)], axis=1)      # (N, d_mem)
-
-            # Loss de politique : chaque pas, sur la vue et la croyance courantes.
-            # Reservee aux agents dont la croyance a fait ses preuves. Sinon la
-            # population apprend des le pas 1 a suivre du bruit, que vpred_gain
-            # amplifie -- des agents qui foncent avec conviction sur n'importe
-            # quoi. NaN (jamais mesure) donne faux, donc pas de gradient.
-            masque_pol = masque_politique(model)
-            if cfg.inner_policy:
-                # Avec vpred_oracle la croyance est exacte par construction :
-                # le verrou porterait sur l'erreur de la tete de valeur, qui est
-                # court-circuitee et dont la sortie n'est jamais utilisee.
-                confiant = (jnp.ones_like(inner_maj.perte, bool) if cfg.vpred_oracle
-                            else inner_maj.perte < cfg.inner_policy_seuil)
-                inner_maj = pas_gradient_politique(
-                    model, cfg, inner_maj,
-                    agents.policy_states.lstm_h, agents.policy_states.lstm_c,
-                    state.obs, mem_in,
-                    (survives_int > 0) & confiant, masque_pol)
-
-            case = step_idx % cfg.inner_window
-            if cfg.inner_target == "delta":
-                # variation REELLE d'energie : elle porte le cout metabolique et
-                # le plafond energy_max, que `rewards` ignore tous les deux
-                cible = new_energy - energies
-                rien = 1.0 - ate_res_step.any(axis=1, keepdims=True)
-                quoi = jnp.concatenate(
-                    [ate_res_step.astype(jnp.float32), rien.astype(jnp.float32)],
-                    axis=1)
-            else:
-                cible, quoi = rewards, ate_res_step.astype(jnp.float32)
-            inner_maj = inner_maj.replace(
-                tampon_in=inner_maj.tampon_in.at[:, case].set(mem_in),
-                tampon_eaten=inner_maj.tampon_eaten.at[:, case].set(quoi),
-                tampon_r=inner_maj.tampon_r.at[:, case].set(cible),
-            )
-
-            # Un pas de gradient tous les `every` pas, sur les `inner_window`
-            # derniers. step_idx est un scalaire partage par tous les agents,
-            # donc lax.cond branche vraiment au lieu de calculer les deux cotes.
-            every, n_ancres = periode_inner(cfg)
-            masque = masque_valeur(model)
-            # l'ancre a reutiliser est celle ecrite n_ancres mises a jour plus
-            # tot, soit exactement inner_window pas en arriere ; on l'ecrase
-            # ensuite avec le carry courant -- anneau classique
-            k_maj = step_idx // every
-            ancre = k_maj % n_ancres
-            depart = (step_idx + 1) % cfg.inner_window
-
-            def maj(inn):
-                vie, perte, m1, m2, t = pas_gradient_intra_vie(
-                    model, cfg, inn, survives_int.astype(jnp.float32), masque,
-                    ancre=ancre, depart=depart)
-                if cfg.inner_policy:
-                    div_tot, div, devant = divergences(
-                        model, cfg, vie, agents.params,
-                        agents.policy_states.lstm_h, agents.policy_states.lstm_c,
-                        state.obs, mem_in, masque_pol)
-                else:
-                    div_tot = div = inn.divergence
-                    devant = jnp.zeros_like(div, dtype=bool)
-                if cfg.inner_policy and cfg.log_inner:
-                    # Une seule ligne, et seulement une fois par FENETRE pleine :
-                    # avec inner_every la mise a jour est bien plus frequente, et
-                    # journaliser chacune noierait la sortie.
-                    en_vie = survives_int > 0
-                    ecart = jnp.linalg.norm((vie - agents.params) * masque_pol[None],
-                                            axis=1)
-                    touche = (ecart > 0) & en_vie
-                    utile = touche & devant
-                    lax.cond(
-                        step_idx % cfg.inner_window == cfg.inner_window - 1,
-                        lambda _: jax.debug.print(
-                            "[interne] pas {p} | erreur {m} (min {b}) | {n}/{v} "
-                            + ("confiants (croyance imposee)" if cfg.vpred_oracle
-                               else "confiants")
-                            + " | tete touchee chez {c}, divergence {d} "
-                              "| totale {t}",
-                            p=step_idx,
-                            m=jnp.nanmedian(jnp.where(en_vie, perte, jnp.nan)),
-                            b=jnp.nanmin(jnp.where(en_vie, perte, jnp.nan)),
-                            # meme condition que le verrou lui-meme : avec
-                            # vpred_oracle la croyance est imposee, donc tous
-                            # les vivants apprennent
-                            n=(en_vie.sum() if cfg.vpred_oracle else
-                               ((perte < cfg.inner_policy_seuil) & en_vie).sum()),
-                            v=en_vie.sum(), c=touche.sum(),
-                            d=jnp.nanmedian(jnp.where(utile, div, jnp.nan)),
-                            t=jnp.nanmedian(jnp.where(en_vie & devant, div_tot,
-                                                      jnp.nan))),
-                        lambda _: None, None)
-
-                # NaN quand rien n'est devant : le trace doit ignorer ces pas
-                div = jnp.where(devant, div, jnp.nan)
-                return inn.replace(
-                    params_vie=vie, perte=perte, divergence=div,
-                    m1=m1, m2=m2, n_maj=t,
-                    carry_h=inn.carry_h.at[:, ancre].set(new_policy_states.lstm_h),
-                    carry_c=inn.carry_c.at[:, ancre].set(new_policy_states.lstm_c))
-
-            inner_maj = lax.cond(step_idx % every == every - 1,
-                                 maj, lambda inn: inn, inner_maj)
 
 
         # ------- 3. Environment dynamic -------
@@ -595,38 +230,6 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_params = agents.params.at[free_indices].set(
                         agents.params[parent_indices] +mutation*parameters_to_mutate)
             
-            # L'enfant repart de son genome mute : les poids appris par le
-            # parent meurent avec lui. C'est ce qui rend le mecanisme
-            # baldwinien et non lamarckien. Ses tampons sont vides -- il doit
-            # tout reapprendre, c'est la mesure intra-vie.
-            if agents.inner is not None:
-                z = jnp.zeros_like
-                final_inner = inner_maj.replace(
-                    params_vie=inner_maj.params_vie.at[free_indices].set(
-                        final_params[free_indices]),
-                    tampon_in=inner_maj.tampon_in.at[free_indices].set(
-                        z(inner_maj.tampon_in[0])),
-                    tampon_eaten=inner_maj.tampon_eaten.at[free_indices].set(
-                        z(inner_maj.tampon_eaten[0])),
-                    tampon_r=inner_maj.tampon_r.at[free_indices].set(
-                        z(inner_maj.tampon_r[0])),
-                    carry_h=inner_maj.carry_h.at[free_indices].set(
-                        z(inner_maj.carry_h[0])),      # tout l'anneau d'ancres
-                    carry_c=inner_maj.carry_c.at[free_indices].set(
-                        z(inner_maj.carry_c[0])),
-                    # NaN et non zero : le nouveau-ne n'a pas encore de perte,
-                    # un zero le ferait compter comme "predit parfaitement" et
-                    # tirerait la courbe vers le bas a chaque renouvellement.
-                    perte=inner_maj.perte.at[free_indices].set(jnp.nan),
-                    m1=inner_maj.m1.at[free_indices].set(z(inner_maj.m1[0])),
-                    m2=inner_maj.m2.at[free_indices].set(z(inner_maj.m2[0])),
-                    n_maj=inner_maj.n_maj.at[free_indices].set(
-                        z(inner_maj.n_maj[0])),
-                    divergence=inner_maj.divergence.at[free_indices].set(0.0),
-                )
-            else:
-                final_inner = None
-
             final_policy_states =metaRNNPolicyState_bcppr(
                     lstm_h=new_policy_states.lstm_h.at[free_indices].set(jnp.zeros(new_policy_states.lstm_h.shape[1])),
                     lstm_c=new_policy_states.lstm_c.at[free_indices].set(jnp.zeros(new_policy_states.lstm_c.shape[1])),
@@ -645,7 +248,6 @@ def run_simulation_chunk(state,model,keys, cfg):
             final_params = agents.params
             final_is_oracle = agents.is_oracle
             final_croyance = croyance_maj
-            final_inner = inner_maj
             
             
         # Update spatial grid with agents positions
@@ -664,7 +266,6 @@ def run_simulation_chunk(state,model,keys, cfg):
             params = final_params,
             is_oracle = final_is_oracle,
             croyance = final_croyance,
-            inner = final_inner,
         )
         
         n_oracles = (final_is_oracle * final_alive_without_0).sum()
@@ -703,10 +304,6 @@ def run_simulation_chunk(state,model,keys, cfg):
             saw_res = saw_res_step,
             ate_res = ate_res_step,
             is_oracle = state.agents.is_oracle,
-            perte_pred = (jnp.zeros((0,)) if state.agents.inner is None
-                          else state.agents.inner.perte),
-            divergence_pol = (jnp.zeros((0,)) if state.agents.inner is None
-                              else state.agents.inner.divergence),
         )
         
         return new_state, log

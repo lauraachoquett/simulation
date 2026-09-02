@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt  # used by plot_full_genealogy_robust for colorm
 import matplotlib.colors as mcolors
 import numpy as np
 import os
-import warnings
 import jax
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -41,10 +40,7 @@ def block_edges(n, start_step=0, n_target=2000, cut_steps=()):
 
 
 def block_apply(arr, edges, how="mean"):
-    """Agrege arr (n,) ou (n, c) par blocs.
-
-    how = 'mean' (niveaux), 'sum' (comptes), ou 'nanmean' pour les series a
-    trous -- un seul NaN suffirait a effacer tout un bloc avec np.mean.
+    """Agrege arr (n,) ou (n, c) par blocs. how = 'mean' (niveaux) ou 'sum' (comptes).
 
     Les COMPTES doivent etre sommes, jamais moyennes : pour un ratio k/n, moyenner
     les ratios donnerait le meme poids a un bloc ou 3 agents voient et a un ou 300
@@ -56,10 +52,8 @@ def block_apply(arr, edges, how="mean"):
         a = a[:, None]
     if len(edges) < 2:                      # serie vide -> aucun bloc
         return np.array([]) if plat else np.empty((0, a.shape[1]))
-    f = {"mean": np.mean, "sum": np.sum, "nanmean": np.nanmean}[how]
-    with warnings.catch_warnings():         # bloc entierement NaN -> NaN, sans bruit
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
+    f = np.mean if how == "mean" else np.sum
+    out = np.stack([f(a[lo:hi], axis=0) for lo, hi in zip(edges[:-1], edges[1:])])
     return out[:, 0] if plat else out
 
 
@@ -1534,7 +1528,6 @@ def plot_lab_metrics(exp_dir, suffix=""):
     suffix="" -> high_res ; suffix="adapt_rot1" -> l'env adapt rot1, etc."""
     data_dir = os.path.join(exp_dir, "lab_data")
     fig_dir  = os.path.join(exp_dir, "fig")
-    os.makedirs(fig_dir, exist_ok=True)   # 1er lab d'un run : le dossier n'existe pas
 
     tag = f"_{suffix}" if suffix else ""
     pattern = rf"chunk_\d+{re.escape(tag)}_summary\.json"        # match EXACT de cette famille
@@ -1643,8 +1636,7 @@ def _nulle_somme(gain, n_perm=5000, seed=0):
 
 
 def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
-                          metric="age", bins=30, axe_x="avec memoire − sans",
-                          titre="Gain de la memoire, par genome"):
+                          metric="age", bins=30):
     """Distribution, par genome, de (avec memoire - sans memoire).
 
     La mediane et l'IQR effacent les queues : un effet reel sur une poignee de
@@ -1652,7 +1644,6 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     """
     data_dir = os.path.join(exp_dir, "lab_data")
     fig_dir  = os.path.join(exp_dir, "fig")
-    os.makedirs(fig_dir, exist_ok=True)   # 1er lab d'un run : le dossier n'existe pas
     os.makedirs(fig_dir, exist_ok=True)
 
     files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}_pergenome.npz")),
@@ -1690,7 +1681,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
     k, m, p = _test_signes(series[-1])
     ax.set_title(f"chunk {chunks[-1]} — n={v.size}\n"
                  f"signes : {k}/{m} positifs, p={p:.3f}")
-    ax.set_xlabel(f"{metric} : {axe_x}")
+    ax.set_xlabel(f"{metric} : avec memoire − sans")
     ax.set_ylabel("nb de genomes")
 
     # 2) tous les chunks empiles : une queue rare ressort ici
@@ -1701,7 +1692,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
         ax.axvline(0, color="black", lw=1.5)
         pos = float((tout > 0).mean())
         ax.set_title(f"tous chunks — n={tout.size}, {100*pos:.0f}% > 0")
-    ax.set_xlabel(f"{metric} : {axe_x}")
+    ax.set_xlabel(f"{metric} : avec memoire − sans")
 
     # 3) evolution : mediane, IQR, et les extremes
     ax = axes[2]
@@ -1731,7 +1722,7 @@ def plot_memory_gain_hist(exp_dir, tag="memory", suffix="", env_titre="",
 
     for a in axes:
         a.grid(alpha=.3)
-    fig.suptitle(f"{titre} — {metric} — {env_titre}", y=1.02)
+    fig.suptitle(f"Gain de la memoire, par genome — {metric} — {env_titre}", y=1.02)
     fig.tight_layout()
     out = os.path.join(fig_dir, f"lab_memory_gain_hist_{metric}{suffix}.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")
@@ -1828,240 +1819,6 @@ def plot_invasion(pop, oracles, exp_dir, start_step=0, steps=None,
     fig.tight_layout()
     path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
     out = os.path.join(path, "plot_invasion.png")
-    fig.savefig(out, dpi=140); plt.close(fig)
-    print(f"Figure saved: {out}")
-
-
-def plot_inner_loss(perte, exp_dir, start_step=0, steps=None):
-    """Erreur de prediction de la boucle interne, au fil du run.
-
-    Elle ne dit PAS a elle seule qu'il y a effet Baldwin : la boucle interne
-    tourne des le premier pas. Ce qui compte est sa BAISSE au fil des
-    generations -- l'evolution fournirait alors une initialisation depuis
-    laquelle predire coute moins cher.
-    """
-    y = np.asarray(perte, dtype=float)
-    x = (np.asarray(steps) if steps is not None
-         else np.arange(start_step, start_step + len(y)))
-    # les blocs ou personne n'a mange sont des NaN : matplotlib les saute
-    fini = np.isfinite(y)
-
-    fig, ax = plt.subplots(figsize=(11, 4.5))
-    ax.plot(x[fini], y[fini], color="#1D3557", lw=1.4)
-    ax.set_yscale("log")
-    ax.set_xlabel("Steps")
-    ax.set_ylabel("erreur quadratique par bouchee")
-    ax.set_title("Boucle interne — erreur de prediction de la valeur des canaux")
-    ax.grid(alpha=.3, which="both")
-
-    fig.tight_layout()
-    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
-    out = os.path.join(path, "plot_inner_loss.png")
-    fig.savefig(out, dpi=140); plt.close(fig)
-    print(f"Figure saved: {out}")
-
-
-def plot_inner_loss_by_age(sommes, comptes, exp_dir, age_bin=50, n_tranches=6,
-                           min_mesures=100):
-    """Erreur de prediction en fonction de l'AGE de l'agent, par tranche de run.
-
-    C'est la figure qui separe les deux effets que la courbe temporelle confond :
-
-      - une courbe qui DESCEND avec l'age = l'agent apprend pendant sa vie ;
-      - des courbes qui descendent d'une tranche a la suivante = l'evolution
-        fournit une meilleure initialisation, c'est-a-dire l'effet Baldwin.
-
-    Les deux sont necessaires. Une courbe plate mais qui descend entre tranches
-    voudrait dire que les agents naissent mieux equipes sans rien apprendre.
-    """
-    S = np.asarray(sommes, dtype=float)      # (n_chunks, n_bins)
-    C = np.asarray(comptes, dtype=float)
-    if S.size == 0 or C.sum() == 0:
-        print("No inner-loss-by-age data to plot.")
-        return
-
-    bornes = np.linspace(0, len(S), n_tranches + 1).astype(int)
-    bornes = np.unique(bornes)
-    x = (np.arange(S.shape[1]) + 0.5) * age_bin
-    cmap = plt.get_cmap("viridis")
-
-    fig, (g, d) = plt.subplots(1, 2, figsize=(14, 5))
-    for i, (lo, hi) in enumerate(zip(bornes[:-1], bornes[1:])):
-        c = C[lo:hi].sum(axis=0)
-        y = np.divide(S[lo:hi].sum(axis=0), c, out=np.full_like(c, np.nan),
-                      where=c > 0)
-        # un casier trop peu vu est du bruit, pas une mesure
-        y[c < min_mesures] = np.nan
-        # le dernier casier empile TOUS les ages au-dela de la borne : ce n'est
-        # pas une mesure a cet age-la, c'est une queue tronquee
-        y[-1] = np.nan
-        coul = cmap(i / max(len(bornes) - 2, 1))
-        g.plot(x, y, color=coul, lw=1.8,
-               label=f"chunks {lo}-{hi - 1}")
-        d.plot(x, c, color=coul, lw=1.2)
-
-    g.set_yscale("log")
-    g.set_xlabel("age de l'agent (pas)")
-    g.set_ylabel("erreur quadratique par bouchee")
-    g.set_title("Erreur de prediction selon l'age\n"
-                "descend avec l'age = apprentissage intra-vie")
-    g.grid(alpha=.3, which="both")
-    g.legend(fontsize=8, title="tranche du run")
-
-    d.set_yscale("log")
-    d.set_xlabel("age de l'agent (pas)")
-    d.set_ylabel("nb de mesures")
-    d.axhline(min_mesures, color="0.5", ls=":", lw=1)
-    d.annotate(f"seuil de trace ({min_mesures})", (0.99, 0.05),
-               xycoords="axes fraction", ha="right", fontsize=8, color="0.4")
-    d.set_title("Effectif par casier\n(sous le seuil, la courbe n'est pas tracee)")
-    d.grid(alpha=.3, which="both")
-
-    fig.tight_layout()
-    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
-    out = os.path.join(path, "plot_inner_loss_by_age.png")
-    fig.savefig(out, dpi=140); plt.close(fig)
-    print(f"Figure saved: {out}")
-
-
-def _quantiles_hist(h, qs=(0.25, 0.5, 0.75)):
-    """Quantiles d'un histogramme d'entiers (h[k] = nb d'agents ayant k enfants).
-
-    Meme convention que np.percentile par defaut (interpolation lineaire), pour
-    qu'une bande IQR se lise comme partout ailleurs. On passe par l'histogramme
-    et non par les valeurs brutes : garder un million d'entiers par cohorte
-    couterait cher pour un resultat identique.
-    """
-    n = int(h.sum())
-    if n == 0:
-        return [float("nan")] * len(qs)
-    cum = np.cumsum(h)
-    # valeur de la k-ieme statistique d'ordre (rang 0-indexe)
-    au_rang = lambda k: float(np.searchsorted(cum, k, side="right"))
-    out = []
-    for q in qs:
-        r = (n - 1) * q
-        bas, haut = int(np.floor(r)), int(np.ceil(r))
-        v = au_rang(bas)
-        out.append(v + (r - bas) * (au_rang(haut) - v))
-    return out
-
-
-def plot_offspring_by_cohort(par_cohorte, ouvertes, exp_dir, cohorte=1000,
-                             tolerance=0.05):
-    """Nombre d'enfants par agent, selon sa cohorte de naissance.
-
-    A l'equilibre demographique la MOYENNE est epinglee autour de 1 : chaque
-    agent en remplace un. Ce qui porte l'information est la DISPERSION -- c'est
-    elle qui mesure l'intensite de la selection. Un IQR nul veut dire que tous
-    les agents se valent et que seule la derive agit.
-
-    Une cohorte n'est tracee que si la part de ses membres encore vivants est
-    sous `tolerance` : leur descendance n'est pas achevee et paraitrait
-    artificiellement faible. Exiger zero survivant serait trop strict -- un seul
-    agent de longue vie garderait sa cohorte ouverte indefiniment -- mais les
-    survivants sont justement les plus feconds, donc la part restante biaise
-    vers le bas et doit rester petite.
-    """
-    def part_ouverte(c):
-        vivants = ouvertes.get(c, 0)
-        return vivants / max(vivants + int(par_cohorte[c].sum()), 1)
-
-    cles = sorted(c for c in par_cohorte if part_ouverte(c) <= tolerance)
-    if not cles:
-        print("No completed birth cohort to plot yet.")
-        return
-
-    x = np.array(cles, dtype=float) * cohorte + cohorte / 2
-    moy, q1, med, q3, eff = [], [], [], [], []
-    for c in cles:
-        h = par_cohorte[c]
-        n = h.sum()
-        moy.append(float((np.arange(len(h)) * h).sum() / max(n, 1)))
-        a, b, d = _quantiles_hist(h)
-        q1.append(a); med.append(b); q3.append(d); eff.append(int(n))
-    moy, q1, med, q3 = map(np.array, (moy, q1, med, q3))
-
-    fig, (h_ax, b_ax) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
-                                     gridspec_kw={"height_ratios": [2, 1]})
-    # marqueurs : avec peu de cohortes, des lignes seules ne montrent pas ou
-    # sont les points, et une mediane a zero disparait sous l'axe
-    h_ax.fill_between(x, q1, q3, color="#457B9D", alpha=.25, label="IQR")
-    h_ax.plot(x, med, color="#1D3557", lw=1.6, marker="o", ms=4,
-              label="mediane", zorder=3)
-    h_ax.plot(x, moy, color="#E63946", lw=1.6, ls="--", marker="s", ms=4,
-              label="moyenne", zorder=3)
-    h_ax.axhline(1.0, color="0.5", lw=1, ls=":")
-    h_ax.annotate("remplacement (1)", (x[0], 1.0), xytext=(4, 4),
-                  textcoords="offset points", fontsize=8, color="0.4")
-    h_ax.set_ylabel("enfants par agent")
-    h_ax.set_ylim(bottom=0)
-    h_ax.grid(alpha=.3); h_ax.legend(loc="best")
-    h_ax.set_title("Succes reproducteur par cohorte de naissance\n"
-                   "la dispersion mesure l'intensite de la selection")
-
-    b_ax.plot(x, eff, color="0.35", lw=1.2, marker="o", ms=3)
-    b_ax.set_ylabel("agents dans la cohorte")
-    b_ax.set_xlabel("pas de naissance")
-    b_ax.grid(alpha=.3)
-    ecartees = len(par_cohorte) - len(cles)
-    if ecartees:
-        b_ax.annotate(f"{ecartees} cohorte(s) trop recente(s), non tracee(s) "
-                      f"(plus de {100*tolerance:.0f}% de survivants)",
-                      (0.99, 0.05), xycoords="axes fraction", ha="right",
-                      fontsize=8, color="0.4")
-
-    fig.tight_layout()
-    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
-    out = os.path.join(path, "plot_offspring_by_cohort.png")
-    fig.savefig(out, dpi=140); plt.close(fig)
-    print(f"Figure saved: {out}")
-
-
-ACTIONS = ("rester", "tourner +", "tourner -", "avancer")
-
-
-def plot_policy_influence(divergence, actions, exp_dir, start_step=0, steps=None):
-    """La retropropagation change-t-elle vraiment le comportement ?
-
-    A gauche : la part de l'ecart de comportement imputable a la seule
-    retropropagation sur la TETE, mesuree UNIQUEMENT sur les pas ou une case
-    occupee est devant l'agent. Ailleurs avancer et rester ont la meme valeur,
-    le gradient est nul et les deux politiques coincident : les inclure diviserait
-    la mesure par la proportion de pas utiles. La croyance apprise change deja les actions
-    sans qu'aucun poids de politique n'ait bouge -- v_pred entre dans la tete et
-    dans la carte -- donc la comparaison se fait a croyance egale.
-    0 = la loss de politique n'a rien change ; 0.5 = la moitie de la masse.
-
-    A droite : la repartition des actions. Une bande "avancer" qui occupe tout
-    signale une politique degeneree, quelle que soit la divergence.
-    """
-    d = np.asarray(divergence, dtype=float)
-    a = np.asarray(actions, dtype=float)
-    x = (np.asarray(steps) if steps is not None
-         else np.arange(start_step, start_step + len(d)))
-
-    fig, (g, dr) = plt.subplots(1, 2, figsize=(14, 4.5))
-    fini = np.isfinite(d)
-    g.plot(x[fini], d[fini], color="#6A4C93", lw=1.4)
-    g.set_xlabel("Steps"); g.set_ylabel("variation totale")
-    g.set_ylim(bottom=0)
-    g.set_title("Influence de la loss de POLITIQUE sur les actions\n"
-                "a croyance egale, une case devant : 0 = rien change")
-    g.grid(alpha=.3)
-
-    couleurs = ("#BDBDBD", "#90CAF9", "#4FC3F7", "#E63946")
-    noms = ACTIONS[:a.shape[1]] if a.ndim == 2 else ACTIONS
-    dr.stackplot(x, *[a[:, k] for k in range(a.shape[1])],
-                 labels=noms, colors=couleurs[:a.shape[1]], alpha=.85)
-    dr.set_xlabel("Steps"); dr.set_ylabel("fraction des agents")
-    dr.set_ylim(0, 1)
-    dr.set_title("Repartition des actions")
-    dr.legend(loc="upper right", fontsize=8, ncol=2)
-
-    fig.tight_layout()
-    path = os.path.join(exp_dir, "fig"); os.makedirs(path, exist_ok=True)
-    out = os.path.join(path, "plot_policy_influence.png")
     fig.savefig(out, dpi=140); plt.close(fig)
     print(f"Figure saved: {out}")
 

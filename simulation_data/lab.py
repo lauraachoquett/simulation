@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 
-from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res, vmap_over_agents_env_lab_high_res_rot,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
@@ -133,10 +133,8 @@ def rotation_name(resources, rot):
     if rot == 0:
         return "baseline"
     rotated = rotate_resources(resources, rot)
-    # On nomme la condition par la ressource la plus NEFASTE, pas par "le
-    # poison" : une config qui n'en contient pas plantait ici.
-    pire = min(range(len(rotated)), key=lambda k: rotated[k].delta_energy)
-    return f"{LABELS[resources[pire].id]}_to_{LABELS[rotated[pire].id]}"
+    poison_ch = next(k for k, r in enumerate(rotated) if LABELS[r.id] == "poison")
+    return f"{LABELS[resources[poison_ch].id]}_to_poison"
 
 
 def config_caption(resources, rotated, steps_in_place=None):
@@ -408,14 +406,8 @@ class LabMixin:
                             label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
-            # A une ressource il n'y a aucune permutation a tester : tous les
-            # rollouts adapt sont sautes, et la boucle sur rotations_for plus bas
-            # ne tourne pas non plus.
-            rotations = rotations_for(self.cfg.resources)
-            final_state = outputs_adapt = None
-            if rotations:
-                final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
-                    agent_params, key_env, key_sim, model, cfg_m)
+            final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
+                agent_params, key_env, key_sim, model, cfg_m)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
             # Le MEME rollout, memes genomes, memes cles, memoire coupee. C'est
@@ -425,40 +417,16 @@ class LabMixin:
             outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
                 cfg_abl = cfg_m._replace(ablate_recurrence=True)   # grille non journalisee aussi
-                if rotations:
-                    _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
-                        agent_params, key_env, key_sim, model, cfg_abl)
+                _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
+                    agent_params, key_env, key_sim, model, cfg_abl)
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
                 self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
-            # Bras propre a la boucle interne : MEME reseau, MEME genome, memes
-            # cles -- seul le gradient est coupe, donc v_pred reste a sa valeur
-            # evoluee. C'est ce que le gradient rapporte, et rien d'autre :
-            # l'ablation de la memoire ci-dessus ne repond pas a cette
-            # question-la, elle coupe aussi le carry.
-            # Les rotations du bras gele sont calculees UNE A UNE dans la boucle
-            # plus bas, pas empilees ici : garder (B, n_rot, T, N, vue...) en
-            # plus des trois autres rollouts saturait le GPU.
-            cfg_gele = outputs_high_gele = None
-            if self.cfg.inner_loop:
-                cfg_gele = cfg_m._replace(inner_loop=False)
-                _, outputs_high_gele = vmap_over_agents_env_lab_high_res(
-                    agent_params, key_env, key_sim, model, cfg_gele)
-                self.compare_memory(outputs_high, outputs_high_gele, exp_dir,
-                                    bras=("inner", "gele"),
-                                    entete="GRADIENT INTRA-VIE vs POIDS GELES",
-                                    label_intact="gradient on",
-                                    label_bras2="weights frozen for life",
-                                    titre_fig="Same genomes, with and without the inner loop",
-                                    fname_fig="lab_inner_loop_evolution",
-                                    titre_gain="Gain de la boucle interne, par genome")
-                outputs_high_gele = None      # plusieurs Go d'observations
-
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
-            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt) if rotations else None
+            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
 
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]
@@ -499,7 +467,7 @@ class LabMixin:
                     outputs_high, self.cfg.resources, label=LABELS[r.id])
                 base_par_type[r.id] = (bn_i, bk_i)
 
-            for j, rot in enumerate(rotations):          # j = position sur l'axe, rot = vraie rotation
+            for j, rot in enumerate(rotations_for(self.cfg.resources)):          # j = position sur l'axe, rot = vraie rotation
                 out_rot = jax.tree_util.tree_map(lambda x: x[:, j], outputs_adapt)   # slice par j
 
                 # On indexe TOUT par la condition experimentale, pas par l'indice de
@@ -530,35 +498,15 @@ class LabMixin:
                                         suffix=f"_adapt_{name}",
                                         env_titre=f"adapt {name}",
                                         resources=resources_rot)
-                    # Rejeu des meilleurs genomes dans l'env PERMUTE. Depend de
-                    # gain_rot, donc doit rester DANS ce bloc : l'en sortir le
-                    # laisserait non defini quand lab_memory_ablation est faux.
+                    # selection ET rejeu dans l'env PERMUTE : c'est la que la
+                    # memoire est censee servir, pas dans celui pour lequel le
+                    # genome a deja ete selectionne.
                     if self.cfg.replay_top_n > 0:
                         subkey_sim, k_rej = random.split(subkey_sim)
                         self.replay_top_gain(agent_params, gain_rot, key_env, k_rej,
                                              model, exp_dir, submit_video=submit_video,
                                              rot=rot, name=f"adapt_{name}",
                                              resources=resources_rot)
-                # C'est ICI que la boucle interne doit payer : sous permutation,
-                # la valeur des canaux a change et seul un apprentissage pendant
-                # la vie peut la retrouver.
-                if cfg_gele is not None:
-                    _, out_gele = vmap_over_agents_env_lab_high_res_rot(
-                        agent_params, key_env, key_sim, model, cfg_gele, rot)
-                    self.compare_memory(out_rot, out_gele, exp_dir,
-                                        suffix=f"_adapt_{name}",
-                                        env_titre=f"adapt {name}",
-                                        resources=resources_rot,
-                                        bras=("inner", "gele"),
-                                        entete="GRADIENT INTRA-VIE vs POIDS GELES",
-                                        label_intact="gradient on",
-                                        label_bras2="weights frozen for life",
-                                        titre_fig="Same genomes, with and without "
-                                                  "the inner loop",
-                                        fname_fig="lab_inner_loop_evolution",
-                                        titre_gain="Gain de la boucle interne, "
-                                                   "par genome")
-                    out_gele = None           # libere avant la rotation suivante
 
                 av_rot = self.available_by_type(
                     jax.tree_util.tree_map(lambda x: x[:, j], vid_adapt), n_types)
@@ -1114,17 +1062,8 @@ class LabMixin:
         return table
 
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",
-                       env_titre="high_res (unpermuted)", resources=None,
-                       bras=("memory", "ablated"), entete="MEMOIRE INTACTE vs COUPEE",
-                       label_intact=None, label_bras2=None,
-                       titre_fig="Same genomes, with and without within-life memory",
-                       fname_fig="lab_memory_ablation_evolution",
-                       titre_gain="Gain de la memoire, par genome"):
-        """Compare, PAR GENOME, deux bras qui ne different que par un facteur.
-
-        `bras` nomme les deux cotes : ("memory", "ablated") pour la memoire,
-        ("inner", "gele") pour la boucle interne. Il sert de prefixe aux cles du
-        npz et de tag de fichier, donc chaque comparaison a sa propre serie.
+                       env_titre="high_res (unpermuted)", resources=None):
+        """Compare, PAR GENOME, l'agent avec et sans memoire intra-vie.
 
         `suffix` indexe la famille de fichiers, donc une comparaison par
         environnement : "" pour l'env non permute, "_adapt_<condition>" pour
@@ -1167,29 +1106,30 @@ class LabMixin:
             mask  = ~(np.isnan(f[k]) | np.isnan(a[k]))
             delta = a[k][mask] - f[k][mask]          # ablate - intact
             row = {"n": int(mask.sum())}
-            row.update(_dispersion(f[k][mask], bras[0], empty=float("nan")))
-            row.update(_dispersion(a[k][mask], bras[1], empty=float("nan")))
+            row.update(_dispersion(f[k][mask], "memory",   empty=float("nan")))
+            row.update(_dispersion(a[k][mask], "ablated",  empty=float("nan")))
             row.update(_dispersion(delta,      "delta",    empty=float("nan")))
             table[k] = row
             # signe inverse du tableau : positif = la memoire AIDE
             par_genome[f"gain_{k}"] = f[k][mask] - a[k][mask]
             if k == "age":
                 gain_brut = f[k] - a[k]        # non masque : indices = agent_params
-            par_genome[f"{bras[0]}_{k}"] = f[k][mask]
-            par_genome[f"{bras[1]}_{k}"] = a[k][mask]
+            par_genome[f"memory_{k}"]  = f[k][mask]
+            par_genome[f"ablated_{k}"] = a[k][mask]
 
-        print(f"\n--- Lab chunk {self.chunk_idx} | {entete} | {env_titre} ---")
-        print(f"  {'metric':<22}{bras[0]:>10}{bras[1]:>10}{'Δ median':>11}{'Δ IQR':>20}")
+        print(f"\n--- Lab chunk {self.chunk_idx} | MEMOIRE INTACTE vs COUPEE"
+              f" | {env_titre} ---")
+        print(f"  {'metric':<22}{'memory':>10}{'ablated':>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
-            print(f"  {labels[k]:<22}{r[bras[0] + '_p50']:>10.3f}{r[bras[1] + '_p50']:>10.3f}"
+            print(f"  {labels[k]:<22}{r['memory_p50']:>10.3f}{r['ablated_p50']:>10.3f}"
                   f"{r['delta_p50']:>11.3f}"
                   f"{'[' + format(r['delta_p25'], '.3f') + ', ' + format(r['delta_p75'], '.3f') + ']':>20}")
 
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        tag = f"{bras[0]}{suffix}"
+        tag = f"memory{suffix}"
         with open(os.path.join(data_dir,
                                f"chunk_{self.chunk_idx}_{tag}.json"), "w") as fh:
             json.dump(payload, fh, indent=2)
@@ -1208,25 +1148,15 @@ class LabMixin:
                                   ("interoception", self.cfg.ablate_interoception),
                                   ("feedback", self.cfg.ablate_feedback))
                   if on or self.cfg.ablate_memory]
-        ref = label_intact or ("memory intact" if not coupes
-                               else f"as evolved ({'+'.join(coupes)} cut)")
-        # Le bras ablate ne coupe que la RECURRENCE : l'interoception et le
-        # feedback restent branches, et sous vpred_oracle l'information de
-        # valeur aussi. "all channels ablated" laissait croire le contraire.
-        if label_bras2 is None:
-            label_bras2 = "recurrence cut"
-            if self.cfg.vpred_oracle:
-                label_bras2 += " (v_pred intact)"
+        ref = "memory intact" if not coupes else f"as evolved ({'+'.join(coupes)} cut)"
 
         plot_alone_vs_clones(
             exp_dir=exp_dir, tag=tag,
-            prefixes=bras,
-            labels=(ref, label_bras2),
-            titre=f"{titre_fig} — {env_titre}",
-            fname=f"{fname_fig}{suffix}.png")
-        plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix,
-                              env_titre=env_titre,
-                              axe_x=f"{ref} − {label_bras2}", titre=titre_gain)
+            prefixes=("memory", "ablated"),
+            labels=(ref, "all channels ablated"),
+            titre=f"Same genomes, with and without within-life memory — {env_titre}",
+            fname=f"lab_memory_ablation_evolution{suffix}.png")
+        plot_memory_gain_hist(exp_dir=exp_dir, tag=tag, suffix=suffix, env_titre=env_titre)
         return table, gain_brut
     
     def plot_energy_response_labs(self, out_high, out_low, out_clones, exp_dir):

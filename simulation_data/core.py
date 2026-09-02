@@ -22,14 +22,10 @@ from simulation.utils.plots import (
     plot_lifetime_vs_step,
     plot_life_expectancy,
     plot_invasion,
-    plot_inner_loss,
-    plot_inner_loss_by_age,
-    plot_offspring_by_cohort,
-    plot_policy_influence,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
-from .demography import DemographyMixin, AGE_BIN, COHORTE
+from .demography import DemographyMixin
 from .genealogy import GenealogyMixin
 from .weights import WeightsMixin
 from .lab import LabMixin
@@ -98,21 +94,6 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
         plot_phase_portrait_png(
             pop_r, res_r, exp_dir, self.cfg, self.start_step, steps=steps_r,
         )
-        plot_offspring_by_cohort(self.enfants_par_cohorte,
-                                 self.cohortes_ouvertes(), exp_dir, COHORTE)
-        if self.cfg.inner_loop:
-            plot_inner_loss(
-                block_apply(np.concatenate(self.perte_history, axis=0), edges, "nanmean"),
-                exp_dir, self.start_step, steps=steps_r)
-            plot_inner_loss_by_age(self.age_somme, self.age_compte, exp_dir,
-                                   age_bin=AGE_BIN)
-        if self.cfg.inner_policy:
-            plot_policy_influence(
-                block_apply(np.concatenate(self.divergence_history, axis=0),
-                            edges, "nanmean"),
-                block_apply(np.concatenate(self.actions_history, axis=0),
-                            edges, "mean"),
-                exp_dir, self.start_step, steps=steps_r)
         if self.cfg.invasion_start > 0:
             plot_invasion(pop_r, block_apply(oracle_full, edges, 'mean'), exp_dir,
                           self.start_step, steps=steps_r,

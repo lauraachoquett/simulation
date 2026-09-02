@@ -8,11 +8,10 @@ import dataclasses
 from typing import NamedTuple
 
 
-from simulation.data_class import AgentState, InnerState, SimState, ResourceConfig, LABELS
+from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config, MODEL_VERSIONS
-from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 
 import numpy as np
 from simulation.utils.utils_video import save_chunk_video
@@ -37,159 +36,6 @@ def masque_forget_bias(model):
         cible = len(cles) >= 2 and cles[-2] == "hf" and cles[-1] == "bias"
         morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
     return jnp.concatenate(morceaux)
-
-
-def build_model(cfg, valeur_forcee=()):
-    """Unique point de construction du reseau.
-
-    Les deux branches de launch_simulation_chunked (nouveau run / reprise)
-    l'instanciaient chacune avec ses propres constantes. Elles ont deja diverge
-    une fois (963e465 : resume etait reste a hidden_dim=4 / [8] quand le depart
-    de zero passait a 8 / [32]) et la divergence ne leve pas d'erreur -- les
-    poids repris sont un vecteur plat, une mise en forme differente les
-    reinterprete simplement de travers. Un seul appel rend le cas impossible.
-    """
-    return MetaRnnPolicy_bcppr(
-        input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1),
-                   2 + len(cfg.resources)),
-        hidden_dim=cfg.hidden_dim,
-        output_dim=cfg.output_dim,
-        encoder=cfg.encoder,
-        # listes : MetaRNN_bcppr itere dessus, mais Config doit rester hachable
-        # pour jax.jit(static_argnames=['cfg']) -> tuples cote Config.
-        encoder_layers=list(cfg.encoder_layers),
-        hidden_layers=list(cfg.hidden_layers),
-        memory_mode=cfg.memory_mode,
-        # la tete de valeur n'existe que si la boucle interne tourne : sans ce
-        # garde-fou tous les runs precedents changeraient de nombre de parametres
-        # la tete de valeur existe des que l'un des deux la demande. Sans ce
-        # garde-fou tous les runs precedents changeraient de nombre de parametres
-        predict_value=(len(cfg.resources)
-                       if (cfg.inner_loop or cfg.vpred_oracle) else 0),
-        # non vide -> la tete de valeur est court-circuitee (cf. probe_vpred)
-        valeur_forcee=tuple(valeur_forcee),
-        value_gain=cfg.vpred_gain,
-        value_map=cfg.value_map,
-        value_rien=cfg.inner_target == "delta",
-    )
-
-
-# Les shuffles permutent cfg.resources, donc les valeurs imposees changent avec
-# eux. On garde un modele par jeu de valeurs : il n'y a que len(resources)!
-# permutations, donc au plus 6 compilations sur tout le run, contre une par
-# shuffle si on reconstruisait a chaque fois.
-_MODELES_ORACLE = {}
-
-
-def _modele_force(cfg, valeurs):
-    """Modele a valeurs imposees, mis en cache par (valeurs, gain)."""
-    cle = (valeurs, cfg.vpred_gain)
-    if cle not in _MODELES_ORACLE:
-        _MODELES_ORACLE[cle] = build_model(cfg, valeur_forcee=valeurs)
-    return _MODELES_ORACLE[cle]
-
-
-def valeurs_vraies(cfg):
-    """Les valeurs a imposer a v_pred, dans l'ordre des canaux.
-
-    Avec inner_target="delta" la tete porte une sortie de plus -- ce que vaut un
-    pas sans repas. Sans elle, valeur_forcee serait plus courte que la sortie et
-    l'entree de la tete de politique perdrait une dimension en silence.
-    """
-    v = [float(r.delta_energy) for r in cfg.resources]
-    if cfg.inner_target == "delta":
-        v.append(-float(cfg.energy_decay))     # le cout metabolique d'un pas
-    return tuple(v)
-
-
-def model_pour(cfg, model_defaut):
-    """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
-    if not cfg.vpred_oracle:
-        return model_defaut
-    return _modele_force(cfg, valeurs_vraies(cfg))
-
-
-def permute_canaux(t, shift):
-    """Meme permutation que rotate_resources : le canal k prend l'element
-    (k - shift) % n. Sert aux ressources comme aux valeurs imposees."""
-    n = len(t)
-    return tuple(t[(k - shift) % n] for k in range(n))
-
-
-def model_tourne(cfg, model, shift):
-    """Le modele, ses valeurs imposees permutees comme les canaux.
-
-    Ne consulte PAS cfg.vpred_oracle : c'est le modele RECU qui decide. Passer
-    par le flag ecraserait les modeles construits a la main -- c'est ainsi que
-    probe_vpred voyait ses bras "vrai" et "nul" remplaces par le meme modele,
-    et donc des resultats identiques au bit pres.
-    """
-    vf = getattr(model.model, "valeur_forcee", ())
-    n = len(cfg.resources)
-    if not vf or shift % max(n, 1) == 0:
-        return model
-    # seules les cases de RESSOURCE suivent la rotation ; une eventuelle case
-    # "rien" (inner_target="delta") ne designe aucun canal et reste en place
-    return _modele_force(cfg, permute_canaux(vf[:n], shift) + tuple(vf[n:]))
-
-
-def masque_valeur(model):
-    """(num_params,) : 1 sur le LSTM et la tete de valeur, 0 ailleurs.
-
-    Ce sont les seuls poids que le gradient intra-vie modifie -- le conv et la
-    tete de politique restent la part evoluee. Meme lecture par chemin que
-    masque_forget_bias, donc rien a tenir a jour si l'architecture bouge.
-    """
-    morceaux = []
-    for chemin, feuille in jax.tree_util.tree_flatten_with_path(model.params)[0]:
-        cles = [str(k.key) for k in chemin if hasattr(k, "key")]
-        cible = len(cles) >= 2 and cles[1] in ("_lstm", "_valeur")
-        morceaux.append(jnp.full(feuille.size, 1.0 if cible else 0.0))
-    return jnp.concatenate(morceaux)
-
-
-def masque_politique(model):
-    """(num_params,) : 1 sur le conv et la tete, 0 sur le LSTM et la valeur.
-
-    Complementaire de masque_valeur. La tete de valeur DOIT en etre exclue :
-    sinon la loss de politique la deformerait pour justifier les actions plutot
-    que de corriger les actions -- l'agent apprendrait a croire ce qui l'arrange.
-    """
-    return 1.0 - masque_valeur(model)
-
-
-def periode_inner(cfg):
-    """Periode entre deux mises a jour, et nombre d'ancres de carry a garder."""
-    every = cfg.inner_every or cfg.inner_window
-    if cfg.inner_window % every:
-        raise ValueError(f"inner_every ({every}) doit diviser inner_window "
-                         f"({cfg.inner_window}).")
-    return every, cfg.inner_window // every
-
-
-def init_inner(cfg, params):
-    """InnerState au depart : la copie de travail part du genome, tampons vides."""
-    if not cfg.inner_loop:
-        return None
-    n, k = cfg.n_agents_max, cfg.inner_window
-    _, n_ancres = periode_inner(cfg)
-    n_types = len(cfg.resources)
-    d_mem = cfg.output_dim + 2 + n_types      # action, reward, energie, last_eaten
-    # une case de plus pour "n'a rien mange", cf. inner_target="delta"
-    n_cibles = n_types + (1 if cfg.inner_target == "delta" else 0)
-    return InnerState(
-        params_vie=params,
-        tampon_in=jnp.zeros((n, k, d_mem)),
-        tampon_eaten=jnp.zeros((n, k, n_cibles)),
-        tampon_r=jnp.zeros((n, k)),
-        m1=jnp.zeros_like(params) if cfg.inner_optim == "adam" else jnp.zeros((n, 0)),
-        m2=jnp.zeros_like(params) if cfg.inner_optim == "adam" else jnp.zeros((n, 0)),
-        n_maj=jnp.zeros((n, 2)),      # [valeur, politique]
-        carry_h=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
-        carry_c=jnp.zeros((n, n_ancres, cfg.hidden_dim)),
-        perte=jnp.full((n,), jnp.nan),   # rien de mesure avant la 1re fenetre
-        divergence=jnp.zeros((n,)),
-    )
 
 
 def stds_fan_in(model):
@@ -269,8 +115,7 @@ def init_state(key, cfg, model):
         is_oracle=jnp.zeros((cfg.n_agents_max,)),
         croyance=jnp.full((cfg.n_agents_max, len(cfg.resources)),
                           cfg.croyance_init),
-        policy_states=policy_states,
-        inner=init_inner(cfg, params),
+        policy_states=policy_states
     )
 
 

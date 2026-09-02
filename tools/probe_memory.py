@@ -29,8 +29,7 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import (BASE_RESOURCES, LABELS,
-                                   MODEL_VERSIONS, sous_ensemble)
+from simulation.data_class import BASE_RESOURCES, LABELS, MODEL_VERSIONS
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...), le
 # cluster (>= 0.7) si. On ne touche a rien quand la signature l'accepte.
@@ -69,22 +68,15 @@ class Sonde(nn.Module):
         return h, c, self.lecture(h)
 
 
-def episodes(cle, n_ep, T, de_par_id, n_types=3, cote=11, n_canaux=None):
+def episodes(cle, n_ep, T, de_par_id, n_types=3, cote=11, n_canaux=5):
     """Un lot d'episodes. Par episode : une permutation canal -> identite tiree
-    au hasard, donc la cible change d'un episode a l'autre.
-
-    La cible est le canal portant la ressource la plus NEFASTE, designee par son
-    delta_energy et non par son nom : le nombre de ressources est libre, et rien
-    ne garantit qu'il y ait un "poison" dans la liste.
-    """
-    if n_canaux is None:
-        n_canaux = n_types + 2        # ressources + agents + murs
+    au hasard, donc la cible change d'un episode a l'autre."""
     c_perm, c_eat, c_act, c_obs = jax.random.split(cle, 4)
 
     # canal k porte l'identite perm[k]
     perm = jnp.stack([jax.random.permutation(k, n_types)
                       for k in jax.random.split(c_perm, n_ep)])       # (E, 3)
-    cible = jnp.argmax(perm == jnp.argmin(de_par_id), axis=1)         # (E,)
+    cible = jnp.argmax(perm == LABELS.index("poison"), axis=1)        # (E,)
 
     # a chaque pas : rien mange (0) ou le canal 1..3
     tire = jax.random.randint(c_eat, (n_ep, T), 0, n_types + 1)
@@ -132,9 +124,6 @@ def main():
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--chauffe", type=int, default=5,
                    help="pas ignores dans la loss : avant, rien n'est deductible")
-    p.add_argument("--n-res", dest="n_res", type=int, default=len(BASE_RESOURCES),
-                   help="nb de ressources, prises dans BASE_RESOURCES "
-                        "(defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -145,23 +134,16 @@ def main():
     if a.carry is None:
         a.carry = spec["hidden_dim"]
     tete = tuple(a.hidden) if a.hidden is not None else tuple(spec["hidden_layers"])
-    res = sous_ensemble(a.n_res)
-    if len(res) < 2:
-        raise SystemExit("Il faut au moins 2 ressources : avec une seule il n'y "
-                         "a rien a distinguer.")
-    de_par_id = jnp.array([r.delta_energy for r in res])
-    n_types = len(res)
-    print(f"modele {a.model} ({mode})  carry={a.carry}  tete={list(tete)}  "
-          f"{n_types} ressources\n"
+    de_par_id = jnp.array([next(r.delta_energy for r in BASE_RESOURCES if r.id == i)
+                           for i in range(3)])
+    print(f"modele {a.model} ({mode})  carry={a.carry}  tete={list(tete)}\n"
           f"delta_energy par identite : "
-          + "  ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
-          + f"   (cible = la plus nefaste, hasard = {1/n_types:.3f})")
+          + "  ".join(f"{LABELS[i]} {float(de_par_id[i]):+g}" for i in range(3)))
 
-    sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete,
-                  n_types=n_types)
+    sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete)
     cle = jax.random.PRNGKey(a.seed)
     cle, c0 = jax.random.split(cle)
-    lot0 = episodes(c0, 2, a.steps, de_par_id, n_types)
+    lot0 = episodes(c0, 2, a.steps, de_par_id)
     params = sonde.init(jax.random.PRNGKey(a.seed + 1),
                         jnp.zeros(a.carry), jnp.zeros(a.carry),
                         lot0[0][0, 0], lot0[1][0, 0], lot0[2][0, 0],
@@ -183,13 +165,12 @@ def main():
 
     @jax.jit
     def etape(params, etat, cle):
-        lot = episodes(cle, a.batch, a.steps, de_par_id, n_types)
+        lot = episodes(cle, a.batch, a.steps, de_par_id)
         (l, acc), g = jax.value_and_grad(perte, has_aux=True)(params, lot)
         maj, etat = opt.update(g, etat, params)
         return optax.apply_updates(params, maj), etat, l, acc
 
-    print(f"\n{'iter':>6}{'loss':>9}{'exactitude':>12}"
-          f"   (hasard = {1/n_types:.3f})")
+    print(f"\n{'iter':>6}{'loss':>9}{'exactitude':>12}   (hasard = 0.333)")
     for it in range(a.iters + 1):
         cle, ce = jax.random.split(cle)
         params, etat, l, acc = etape(params, etat, ce)
@@ -198,7 +179,7 @@ def main():
 
     # exactitude en fonction du nombre de pas ecoules dans l'episode
     cle, ct = jax.random.split(cle)
-    lot = episodes(ct, 1024, a.steps, de_par_id, n_types)
+    lot = episodes(ct, 1024, a.steps, de_par_id)
     logits = deroule(appliquer, params, lot, a.carry)
     exact = (jnp.argmax(logits, -1) == lot[5][:, None])
     print("\nexactitude par pas de l'episode :")

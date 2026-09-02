@@ -20,7 +20,7 @@ from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, masque_valeur, build_model, model_pour, periode_inner
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
 
 import argparse
@@ -68,6 +68,30 @@ def save_script(exp_dir):
 
     
         
+def build_model(cfg):
+    """Unique point de construction du reseau.
+
+    Les deux branches de launch_simulation_chunked (nouveau run / reprise)
+    l'instanciaient chacune avec ses propres constantes. Elles ont deja diverge
+    une fois (963e465 : resume etait reste a hidden_dim=4 / [8] quand le depart
+    de zero passait a 8 / [32]) et la divergence ne leve pas d'erreur -- les
+    poids repris sont un vecteur plat, une mise en forme differente les
+    reinterprete simplement de travers. Un seul appel rend le cas impossible.
+    """
+    return MetaRnnPolicy_bcppr(
+        input_dim=((cfg.agent_view * 2 + 1), (cfg.agent_view * 2 + 1),
+                   2 + len(cfg.resources)),
+        hidden_dim=cfg.hidden_dim,
+        output_dim=cfg.output_dim,
+        encoder=cfg.encoder,
+        # listes : MetaRNN_bcppr itere dessus, mais Config doit rester hachable
+        # pour jax.jit(static_argnames=['cfg']) -> tuples cote Config.
+        encoder_layers=list(cfg.encoder_layers),
+        hidden_layers=list(cfg.hidden_layers),
+        memory_mode=cfg.memory_mode,
+    )
+
+
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', subkeys_init=None):
     
     start_time_sim = time.time()
@@ -134,36 +158,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
-    if cfg.inner_policy:
-        print(f"[loss politique] portee={cfg.inner_policy_portee} "
-              f"-somme_a pi(a) v_hat(a), lr={cfg.inner_policy_lr:g}, "
-              f"a chaque pas, seulement si l'erreur de prediction < "
-              f"{cfg.inner_policy_seuil:g}")
-    if cfg.value_map:
-        print("[value map] canal supplementaire : valeur de chaque case, "
-              "peinte avant le conv")
-    if cfg.vpred_gain != 1.0:
-        print(f"[vpred gain] v_pred multiplie par {cfg.vpred_gain:g} avant la tete")
-    if cfg.vpred_oracle:
-        print("[vpred oracle] v_pred impose aux vraies valeurs : "
-              + "  ".join(f"c{i}={LABELS[r.id]} {r.delta_energy:+g}"
-                          for i, r in enumerate(cfg.resources))
-              + "\n               la tete de valeur est court-circuitee "
-                "(plafond : l'evolution part d'une information parfaite)")
-    if cfg.inner_loop and cfg.inner_target == "delta":
-        print("[cible] la loss de valeur vise le delta d'energie : le cout "
-              "metabolique et la satiete y sont, une sortie 'rien' est ajoutee")
-    if cfg.inner_loop:
-        n_inner = int(masque_valeur(model).sum())
-        _every, _anc = periode_inner(cfg)
-        if cfg.inner_optim == "adam":
-            _mo = 2 * cfg.n_agents_max * model.num_params * 4 / 1e6
-            print(f"[optimiseur] adam, {_mo:.0f} Mo de moments pour "
-                  f"{cfg.n_agents_max} agents")
-        print(f"[boucle interne] lr={cfg.inner_lr} fenetre={cfg.inner_window} "
-              f"maj tous les {_every} pas ({_anc} ancres) ecretage={cfg.inner_clip} "
-              f"-> {n_inner} parametres appris pendant la vie, "
-              f"{model.num_params - n_inner} laisses a l'evolution")
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
@@ -205,10 +199,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             keys_chunk = jax.random.split(subkey, cfg.chunk_size)
             
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} START  @ {time.strftime('%H:%M:%S')}")
-            # avec vpred_oracle, le modele porte les valeurs de la permutation
-            # en cours ; sans, model_pour renvoie `model` inchange
-            state, outputs = run_simulation_chunk(state, model_pour(cfg, model),
-                                                  keys_chunk, cfg)
+            state, outputs = run_simulation_chunk(state, model, keys_chunk, cfg)
             print(f"[sim   | PID {os.getpid()}] chunk {chunk_idx} DONE   @ {time.strftime('%H:%M:%S')}")
             
   
@@ -248,14 +239,13 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                     fut = executor.submit(_video_worker, outputs_np, vid_path, *args)
                     pending_futures[fut] = label if label is not None else vid_path
                     return fut
-                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model_pour(cfg, model),exp_dir = exp_dir,n=50,submit_video=submit_video)
+                sim_data.launch_env(state = state,key_env = subkey_env_lab,subkey_sim = subkey_sim,model = model,exp_dir = exp_dir,n=50,submit_video=submit_video)
 
             ## EVALUABILITE ##
             if cfg.evolvability_freq > 0 and int(state.step) % cfg.evolvability_freq == 0:
                 subkey_lab, subkey_evo = random.split(subkey_lab)
                 sim_data.launch_evolvability(state=state, key_env=subkey_env_lab,
-                                             subkey_sim=subkey_evo,
-                                             model=model_pour(cfg, model),
+                                             subkey_sim=subkey_evo, model=model,
                                              exp_dir=exp_dir)
 
             chunks_survived+=1
@@ -276,16 +266,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx >10 :
                 old_resources = cfg.resources
                 if cfg.shuffle_version == "v1":
-                    # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue.
-                    # BASE_RESOURCES et non cfg.resources : c'est ce que faisait le
-                    # code d'origine, et v1 n'existe que pour rejouer ces runs-la.
-                    # Avec un autre nombre de ressources il rendrait une liste de
-                    # taille differente, qui desaccorderait le reseau en silence.
-                    if len(cfg.resources) != len(BASE_RESOURCES):
-                        raise ValueError(
-                            f"--shuffle v1 suppose les {len(BASE_RESOURCES)} "
-                            f"ressources de BASE_RESOURCES, la config en a "
-                            f"{len(cfg.resources)}. Utiliser --shuffle v2.")
+                    # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
                     new_resources = shuffle_resources_v1(BASE_RESOURCES, subkey)
                 else:
                     key, subkey_shuffle = random.split(key)
@@ -344,14 +325,6 @@ CLI_PARAMS = [
     (("--replay-n",),     "replay_top_n",                   int),
     (("--replay-keys",),  "replay_keys",                    int),
     (("--replay-video-frac",), "replay_video_min_frac",     float),
-    (("--inner-lr",),     "inner_lr",                       float),
-    (("--inner-window",), "inner_window",                   int),
-    (("--inner-every",),  "inner_every",                    int),
-    (("--inner-clip",),   "inner_clip",                     float),
-    (("--vpred-gain",),   "vpred_gain",                     float),
-    (("--inner-policy-lr",), "inner_policy_lr",             float),
-    (("--inner-policy-seuil",), "inner_policy_seuil",       float),
-    (("--inner-policy-cout",),  "inner_policy_cout",        float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
@@ -362,10 +335,6 @@ CLI_FLAGS = [
     (("--randpos",), "random_pos_offspring"),
     (("--mem-ablation",), "lab_memory_ablation"),
     (("--weights",), "track_weights"),
-    (("--inner",),   "inner_loop"),
-    (("--vpred-oracle",), "vpred_oracle"),
-    (("--value-map",),   "value_map"),
-    (("--inner-policy",), "inner_policy"),
 ]
 
 
@@ -402,20 +371,6 @@ def parse_cli(cfg):
     for flags, champ in CLI_FLAGS:
         p.add_argument(*flags, dest=champ, action=argparse.BooleanOptionalAction,
                        default=getattr(cfg, champ), help=f"{champ} (defaut %(default)s)")
-    p.add_argument("--inner-policy-portee", dest="inner_policy_portee",
-                   choices=["case", "vue"], default=cfg.inner_policy_portee,
-                   help="portee de la loss de politique : 'case' = la seule case "
-                        "devant, 'vue' = la meilleure case visible escomptee par "
-                        "la distance (defaut %(default)s)")
-    p.add_argument("--inner-optim", dest="inner_optim",
-                   choices=["sgd", "adam"], default=cfg.inner_optim,
-                   help="optimiseur de la boucle interne (defaut %(default)s). "
-                        "adam coute 2 moments par agent")
-    p.add_argument("--inner-target", dest="inner_target",
-                   choices=["reward", "delta"], default=cfg.inner_target,
-                   help="cible de la loss de valeur : 'reward' = ce qui est mange, "
-                        "'delta' = la variation d'energie, cout metabolique et "
-                        "satiete compris (defaut %(default)s)")
     p.add_argument("--init", dest="init_scale", choices=["constant", "lecun"],
                    default=cfg.init_scale,
                    help="echelle des poids initiaux (defaut %(default)s)")
@@ -441,9 +396,6 @@ def parse_cli(cfg):
     maj["model_version"] = args.model_version
     maj["shuffle_version"] = args.shuffle_version
     maj["init_scale"] = args.init_scale
-    maj["inner_target"] = args.inner_target
-    maj["inner_optim"] = args.inner_optim
-    maj["inner_policy_portee"] = args.inner_policy_portee
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))
@@ -452,32 +404,6 @@ def parse_cli(cfg):
                 + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items()))
     for lettre in lettres:
         maj[ABLATIONS[lettre]] = True
-
-    # apres les ablations : -x m les pose ici, les tester plus haut les raterait
-    if maj.get("inner_policy"):
-        if not maj.get("inner_loop"):
-            p.error("--inner-policy demande --inner : la loss de politique vise "
-                    "la croyance produite par la boucle interne.")
-        if maj.get("vpred_oracle"):
-            print("[attention] --inner-policy avec --vpred-oracle : la valeur est "
-                  "DONNEE et la politique\n            entrainee a s'en servir. "
-                  "Rien n'emerge -- c'est le PLAFOND de la loss de\n"
-                  "            politique : si elle n'apprend pas l'evitement avec "
-                  "une croyance parfaite,\n            elle ne l'apprendra pas "
-                  "avec une croyance apprise.")
-    if maj.get("value_map") and not (maj.get("inner_loop") or maj.get("vpred_oracle")):
-        p.error("--value-map demande une tete de valeur : ajouter --inner ou "
-                "--vpred-oracle.")
-    if maj.get("vpred_oracle") and maj["model_version"] != "v2":
-        p.error("--vpred-oracle demande -m v2 : la tete de valeur n'existe "
-                "qu'en memoire separee.")
-    if maj.get("inner_loop"):
-        if maj["model_version"] != "v2":
-            p.error("--inner demande -m v2 : en v1 le LSTM ne recoit pas "
-                    "last_eaten, il n'y a rien a predire.")
-        if maj.get("ablate_memory") or maj.get("ablate_recurrence"):
-            p.error("--inner et l'ablation de la recurrence s'annulent : le "
-                    "carry est remis a zero a chaque pas, rien ne s'accumule.")
 
     # Une graine posee a la main l'emporte sur les graines chargees par --from,
     # sinon elle ne changerait que l'etat initial et pas les cles de chunk.
