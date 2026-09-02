@@ -55,11 +55,21 @@ from EcoEvoJax_meta.source.agent import MetaRNN_bcppr
 
 
 class Sonde(nn.Module):
-    """Le reseau de la simulation, plus une lecture lineaire du carry."""
+    """Le reseau de la simulation, plus une lecture lineaire du carry.
+
+    Deux supervisions possibles, meme circuit et presque meme nombre de
+    parametres -- seule la loss change :
+
+      classe : une classification a n_types classes, "quel canal est le pire".
+      valeur : la loss REELLE de la simulation, (v[k] - r)^2 sur le seul canal
+               mange, plus la case "rien". La tete a alors la meme forme que
+               ton _valeur (n_types + 1 sorties).
+    """
     memory_mode: str
     carry_size: int = 8
     hidden_layers: tuple = (32,)
     n_types: int = 3
+    perte: str = "valeur"
 
     def setup(self):
         self.coeur = MetaRNN_bcppr(output_size=4, out_fn="categorical",
@@ -67,7 +77,8 @@ class Sonde(nn.Module):
                                    encoder_in=False,
                                    encoder_layers=[], carry_size=self.carry_size,
                                    memory_mode=self.memory_mode)
-        self.lecture = nn.Dense(self.n_types)
+        self.lecture = nn.Dense(self.n_types
+                                + int(self.perte == "valeur"))
 
     def __call__(self, h, c, obs, last_action, reward, energy, last_eaten):
         h, c, _ = self.coeur(h, c, obs, last_action, reward, energy, last_eaten)
@@ -119,8 +130,12 @@ def deroule(appliquer, params, lot, carry_size):
             params, h, c, obs[:, t], la[:, t], rw[:, t], en[:, t], le[:, t])
         return (h, c), logits
 
-    _, logits = jax.lax.scan(pas, (h, c), jnp.arange(T))
-    return jnp.swapaxes(logits, 0, 1)                                 # (E,T,3)
+    _, sortie = jax.lax.scan(pas, (h, c), jnp.arange(T))
+    return jnp.swapaxes(sortie, 0, 1)                        # (E,T,n_sorties)
+
+
+SUPERVISION = {"valeur": "value regression  (v[k] - r)^2",
+               "classe": "cross-entropy on the worst channel"}
 
 
 def trace(a, iters, bouchees, n_types, res, tete):
@@ -158,9 +173,9 @@ def trace(a, iters, bouchees, n_types, res, tete):
     cablage = "separate memory" if a.model == "v2" else "memory joined to vision"
     noms = "   ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
     ax.set_title(f"probe_memory — {a.model} ({cablage}), carry {a.carry}, "
-                 f"head {list(tete)}\n{noms}")
+                 f"head {list(tete)}\n{SUPERVISION[a.perte]}   —   {noms}")
     fig.tight_layout()
-    sortie = os.path.join(a.fig_dir, f"probe_memory_{a.model}.png")
+    sortie = os.path.join(a.fig_dir, f"probe_memory_{a.model}_{a.perte}.png")
     fig.savefig(sortie, dpi=140)
     plt.close(fig)
     print(f"\nFigure saved: {sortie}")
@@ -189,6 +204,10 @@ def main():
                    help="derniere courbe de la figure (defaut %(default)s)")
     p.add_argument("--fig-dir", dest="fig_dir", default="fig",
                    help="dossier de sortie de la figure (defaut %(default)s)")
+    p.add_argument("--perte", choices=["valeur", "classe"], default="valeur",
+                   help="valeur = la loss de la simulation, (v[k]-r)^2 sur le "
+                        "canal mange ; classe = entropie croisee sur 'quel "
+                        "canal est le pire' (defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -212,6 +231,7 @@ def main():
           + f"   (cible = la plus nefaste, hasard = {1/n_types:.3f})")
 
     sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete,
+                  perte=a.perte,
                   n_types=n_types)
     cle = jax.random.PRNGKey(a.seed)
     cle, c0 = jax.random.split(cle)
@@ -227,13 +247,38 @@ def main():
     etat = opt.init(params)
     appliquer = lambda pr, h, c, o, la, rw, en, le: sonde.apply(pr, h, c, o, la, rw, en, le)
 
+    def predit(sortie):
+        """(E,T) : le canal que le reseau designe comme le plus nefaste.
+
+        En "valeur" c'est l'argmin de la valeur predite -- le pire canal est
+        celui dont on attend le moins. En "classe" c'est l'argmax du logit.
+        Les colonnes au-dela de n_types ("rien") ne designent aucun canal et
+        sont exclues.
+        """
+        v = sortie[..., :n_types]
+        return jnp.argmin(v, -1) if a.perte == "valeur" else jnp.argmax(v, -1)
+
     def perte(params, lot):
-        logits = deroule(appliquer, params, lot, a.carry)
+        sortie = deroule(appliquer, params, lot, a.carry)
         cible = lot[5]
-        lp = jax.nn.log_softmax(logits[:, a.chauffe:])
-        vrai = jnp.take_along_axis(lp, cible[:, None, None], axis=-1)[..., 0]
-        exact = (jnp.argmax(logits[:, a.chauffe:], -1) == cible[:, None])
-        return -vrai.mean(), exact.mean()
+        exact = (predit(sortie)[:, a.chauffe:] == cible[:, None]).mean()
+
+        if a.perte == "classe":
+            lp = jax.nn.log_softmax(sortie[:, a.chauffe:])
+            vrai = jnp.take_along_axis(lp, cible[:, None, None], axis=-1)[..., 0]
+            return -vrai.mean(), exact
+
+        # Loss de la simulation, cf. one_simulation.pas_gradient_intra_vie :
+        # (v[k] - r)^2 sur la SEULE case mangee, plus la case "rien". La cible
+        # est la bouchee du pas SUIVANT : v[t] est produit apres que mange[t]
+        # soit entre dans le LSTM, la superviser sur mange[t] serait recopier
+        # l'entree. Sur t+1 c'est une vraie prediction, comme en simulation.
+        mange = lot[4]                                          # (E,T,n_types)
+        rien = 1.0 - mange.sum(-1, keepdims=True)
+        eat = jnp.concatenate([mange, rien], -1)[:, 1:]         # (E,T-1,n+1)
+        r = lot[2][:, 1:]                                       # (E,T-1,1)
+        e = (sortie[:, :-1] - r) ** 2 * eat
+        return e.sum(-1)[:, a.chauffe:].mean(), exact
 
     @jax.jit
     def etape(params, etat, cle):
@@ -250,8 +295,8 @@ def main():
         PAS ecoules ne dit rien -- un pas sans repas n'apporte aucune information.
         """
         lot = episodes(cle, n_ep, a.steps, de_par_id, n_types)
-        logits = deroule(appliquer, params, lot, a.carry)
-        juste = np.asarray(jnp.argmax(logits, -1) == lot[5][:, None])   # (E,T)
+        sortie = deroule(appliquer, params, lot, a.carry)
+        juste = np.asarray(predit(sortie) == lot[5][:, None])           # (E,T)
         # Bouchees CONNUES au moment de la prediction. Le cumul est inclusif :
         # deroule passe reward[t] et mange[t] au pas t, donc la bouchee du pas
         # courant est deja une entree du reseau. L'exclure decalait la courbe
@@ -282,8 +327,8 @@ def main():
     # exactitude en fonction du nombre de pas ecoules dans l'episode
     cle, ct = jax.random.split(cle)
     lot = episodes(ct, 1024, a.steps, de_par_id, n_types)
-    logits = deroule(appliquer, params, lot, a.carry)
-    exact = (jnp.argmax(logits, -1) == lot[5][:, None])
+    sortie = deroule(appliquer, params, lot, a.carry)
+    exact = (predit(sortie) == lot[5][:, None])
     print("\nexactitude par pas de l'episode :")
     for t in range(0, a.steps, max(1, a.steps // 10)):
         print(f"  pas {t:>3} : {float(exact[:, t].mean()):.3f}")

@@ -40,13 +40,53 @@ Mémoriser « le canal 2 est dangereux » ne sert donc à rien — c'est vrai un
 trois. La seule source d'information est ce que l'agent a goûté depuis le début de
 l'épisode.
 
-Une tête linéaire lit le carry du LSTM et sort une classe parmi les *n* canaux. Le
-reste du réseau est celui de la simulation, à sa taille réelle. Adam, entropie
-croisée, cible tirée à neuf à chaque lot.
+Une tête linéaire lit le carry du LSTM. Le reste du réseau est celui de la
+simulation, à sa taille réelle, et le lot est retiré à neuf à chaque itération —
+les données sont infinies, le sur-apprentissage impossible.
+
+### Les deux supervisions — `--perte`
+
+`--perte valeur` (défaut) est **la loss réelle de la simulation**, reprise de
+`one_simulation.pas_gradient_intra_vie` : `(v[k] − r)²` sur la **seule** case
+mangée, plus la case « rien ». La tête a donc la même forme que ton `_valeur`
+(*n*+1 sorties) et le canal désigné est `argmin(v)` — le pire est celui dont on
+attend le moins.
+
+La temporalité est celle de la simulation : `v[t]` est supervisé sur la bouchée
+du pas **t+1**. Superviser sur `mange[t]` serait recopier une entrée, puisque
+`deroule` passe `reward[t]` et `mange[t]` au pas *t*.
+
+`--perte classe` est la variante facile, gardée pour comparaison : entropie
+croisée à *n* classes sur « quel canal est le pire », les *n* canaux supervisés
+d'un coup.
+
+| | tête | supervision par pas | 0.99 atteint en |
+|---|---|---|---|
+| `valeur` | *n*+1 sorties, `argmin` | 1 canal, régression | ~160 itérations |
+| `classe` | *n* sorties, `argmax` | *n* canaux, classification | ~150 itérations |
+
+**La supervision plus dure ne coûte presque rien.** C'est ce qui autorise à
+transporter le résultat vers la simulation : le circuit mesuré ici est bien
+celui que ta boucle intra-vie entraîne, pas une version facilitée.
+
+### Ce qui est réellement entraîné
+
+La tête `lecture` est **ajoutée** — elle n'existe pas dans ton réseau. Le gradient
+mesuré ne va nulle part ailleurs qu'au LSTM :
+
+| | LSTM | conv1/conv2 | tête de politique |
+|---|---|---|---|
+| **v2** | 9.44 | 0 | 0 |
+| **v1** | 21.85 | 15.45 / 20.03 | 0 |
+
+En v2 ce sont **576 + 27 = 603 paramètres** qui bougent : exactement le compte de
+ton `masque_valeur` en simulation, parce que `lecture` a la forme de `_valeur`.
+En v1 le gradient atteint aussi les convs, puisque le LSTM mange leur sortie :
+v1 a donc *plus* de chemin entraînable que v2, et échoue quand même.
 
 ### La figure
 
-`fig/probe_memory_<modele>.png` — exactitude en fonction du **nombre de bouchées
+`fig/probe_memory_<modele>_<perte>.png` — exactitude en fonction du **nombre de bouchées
 déjà prises dans l'épisode**, une couleur par avancement de l'entraînement
 (barre de couleur : mises à jour de gradient).
 
@@ -86,8 +126,9 @@ Aucun réglage de mutation ni d'architecture n'y changerait quoi que ce soit.
 | `--n-res N` | nombre de ressources, la plus néfaste toujours incluse |
 | `--steps` | longueur d'un épisode (défaut 40) |
 | `--chauffe` | pas ignorés dans la loss — avant, rien n'est déductible |
+| `--perte valeur\|classe` | régression de valeur (défaut) ou classification |
 | `--eval-tous` | période d'évaluation pour la figure |
-| `--max-bouchees` | dernière courbe tracée |
+| `--max-bouchees` | dernier point tracé |
 
 ---
 
