@@ -22,9 +22,13 @@ La comparaison v1 / v2 est le second interet : en v1 le LSTM ne recoit PAS
 last_eaten, donc il ne sait pas ce qui a produit la recompense.
 """
 import argparse
+import os
 
 import jax
 import jax.numpy as jnp
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
 from flax import linen as nn
@@ -118,6 +122,40 @@ def deroule(appliquer, params, lot, carry_size):
     return jnp.swapaxes(logits, 0, 1)                                 # (E,T,3)
 
 
+def trace(a, iters, bouchees, n_types, res, tete):
+    """Exactitude en fonction des mises a jour, une couleur par nb de bouchees.
+
+    Les deux axes de la question : combien d'entrainement pour que le circuit
+    existe (abscisse), et combien de bouchees pour qu'il tranche (couleur).
+    """
+    os.makedirs(a.fig_dir, exist_ok=True)
+    hasard = 1.0 / n_types
+    cmap = plt.get_cmap("viridis")
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    for b in range(bouchees.shape[1]):
+        y = bouchees[:, b]
+        if not np.isfinite(y).any():
+            continue
+        ax.plot(iters, y, lw=1.8, color=cmap(b / max(bouchees.shape[1] - 1, 1)),
+                label=f"{b} bouchee" + ("s" if b != 1 else ""))
+    ax.axhline(hasard, color="0.45", ls=":", lw=1.2)
+    ax.annotate(f"hasard ({hasard:.2f})", (iters[0], hasard), xytext=(4, 5),
+                textcoords="offset points", ha="left", fontsize=9, color="0.4")
+    ax.set_xlabel("mises a jour de gradient")
+    ax.set_ylabel("exactitude : quel canal est le plus nefaste ?")
+    ax.set_ylim(0, 1.02)
+    ax.grid(alpha=.3)
+    ax.legend(loc="lower right", fontsize=9, title="dans l'episode")
+    noms = " ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
+    ax.set_title(f"probe_memory — modele {a.model}, carry {a.carry}, tete {list(tete)}"
+                 f"\n{noms}")
+    fig.tight_layout()
+    sortie = os.path.join(a.fig_dir, f"probe_memory_{a.model}.png")
+    fig.savefig(sortie, dpi=140)
+    plt.close(fig)
+    print(f"\nFigure saved: {sortie}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("-m", "--model", choices=["v1", "v2"], default="v2",
@@ -135,6 +173,12 @@ def main():
     p.add_argument("--n-res", dest="n_res", type=int, default=len(BASE_RESOURCES),
                    help="nb de ressources, prises dans BASE_RESOURCES "
                         "(defaut %(default)s)")
+    p.add_argument("--eval-tous", dest="eval_tous", type=int, default=25,
+                   help="periode d'evaluation pour la figure (defaut %(default)s)")
+    p.add_argument("--max-bouchees", dest="max_bouchees", type=int, default=8,
+                   help="derniere courbe de la figure (defaut %(default)s)")
+    p.add_argument("--fig-dir", dest="fig_dir", default="fig",
+                   help="dossier de sortie de la figure (defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -188,13 +232,39 @@ def main():
         maj, etat = opt.update(g, etat, params)
         return optax.apply_updates(params, maj), etat, l, acc
 
+    def exactitude_par_bouchees(params, cle, n_ep=512):
+        """(n_bouchees,) : exactitude selon le nombre de bouchees deja prises.
+
+        C'est la variable qui compte : le reseau ne peut identifier le canal
+        nefaste qu'apres l'avoir goute, ou avoir goute les autres. Le nombre de
+        PAS ecoules ne dit rien -- un pas sans repas n'apporte aucune information.
+        """
+        lot = episodes(cle, n_ep, a.steps, de_par_id, n_types)
+        logits = deroule(appliquer, params, lot, a.carry)
+        juste = np.asarray(jnp.argmax(logits, -1) == lot[5][:, None])   # (E,T)
+        # bouchees deja PRISES a l'instant ou la prediction est faite : celle du
+        # pas courant n'est pas encore entree dans le LSTM
+        mange = np.asarray(lot[4]).sum(-1)                              # (E,T)
+        prises = np.cumsum(mange, axis=1) - mange
+        out = np.full(a.max_bouchees + 1, np.nan)
+        for b in range(a.max_bouchees + 1):
+            m = prises == b
+            if m.sum() >= 50:
+                out[b] = juste[m].mean()
+        return out
+
     print(f"\n{'iter':>6}{'loss':>9}{'exactitude':>12}"
           f"   (hasard = {1/n_types:.3f})")
+    courbe_iters, courbe_bouchees = [], []
     for it in range(a.iters + 1):
         cle, ce = jax.random.split(cle)
         params, etat, l, acc = etape(params, etat, ce)
         if it % max(1, a.iters // 10) == 0:
             print(f"{it:>6}{float(l):>9.4f}{float(acc):>12.3f}")
+        if it % a.eval_tous == 0:
+            cle, cv = jax.random.split(cle)
+            courbe_iters.append(it)
+            courbe_bouchees.append(exactitude_par_bouchees(params, cv))
 
     # exactitude en fonction du nombre de pas ecoules dans l'episode
     cle, ct = jax.random.split(cle)
@@ -205,6 +275,9 @@ def main():
     for t in range(0, a.steps, max(1, a.steps // 10)):
         print(f"  pas {t:>3} : {float(exact[:, t].mean()):.3f}")
     print(f"  pas {a.steps-1:>3} : {float(exact[:, -1].mean()):.3f}")
+
+    trace(a, np.array(courbe_iters), np.array(courbe_bouchees), n_types,
+          res, tete)
 
 
 if __name__ == "__main__":

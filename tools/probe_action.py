@@ -29,9 +29,13 @@ Variantes comparees :
              C'est le MEME code que la simulation, pas une imitation.
 """
 import argparse
+import os
 
 import jax
 import jax.numpy as jnp
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import optax
 from flax import linen as nn
@@ -154,6 +158,47 @@ def entraine(nom, a, cle, de, bons, mauvais, avec_carte, aveugle):
                 courbe=courbe)
 
 
+def trace(a, sorties, res):
+    """Exactitude en fonction des mises a jour, une courbe par variante.
+
+    C'est le resultat central : la variante `aveugle` plafonne au hasard, les
+    deux autres atteignent 1.0 -- l'architecture SAIT exploiter v_pred. Ce qui
+    les separe est la vitesse, et c'est ce que l'ecart des courbes montre.
+    """
+    os.makedirs(a.fig_dir, exist_ok=True)
+    couleurs = {"aveugle": "#8D99A6", "concat": "#1D3557", "carte": "#2A7F31"}
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    for r in sorties:
+        # lisse sur 20 iterations : le lot est neuf a chaque pas, donc la courbe
+        # brute est bruitee sans que le reseau ait change
+        y = np.convolve(np.array(r["courbe"]), np.ones(20) / 20, mode="valid")
+        x = np.arange(len(y)) + 20
+        ax.plot(x, y, lw=1.9, color=couleurs.get(r["nom"], "0.4"), label=r["nom"])
+        f = r["franchit"].get(0.99)
+        if f:
+            ax.plot([f], [0.99], "o", ms=6, color=couleurs.get(r["nom"], "0.4"))
+            ax.annotate(f"99 % en {f}", (f, 0.99), xytext=(8, -12),
+                        textcoords="offset points", fontsize=9,
+                        color=couleurs.get(r["nom"], "0.4"))
+    ax.axhline(0.5, color="0.45", ls=":", lw=1.2)
+    ax.annotate("hasard (0.50)", (len(sorties[0]["courbe"]), 0.5), xytext=(-4, 5),
+                textcoords="offset points", ha="right", fontsize=9, color="0.4")
+    ax.set_xscale("log")
+    ax.set_xlabel("mises a jour de gradient (echelle log)")
+    ax.set_ylabel("exactitude : avancer ou tourner ?")
+    ax.set_ylim(0.4, 1.02)
+    ax.grid(alpha=.3, which="both")
+    ax.legend(loc="lower right", fontsize=9, title="v_pred donne a la tete")
+    noms = " ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
+    ax.set_title(f"probe_action — tete {list(a.hidden)}, carry {a.carry}, "
+                 f"lot {a.batch}\n{noms}")
+    fig.tight_layout()
+    sortie = os.path.join(a.fig_dir, "probe_action.png")
+    fig.savefig(sortie, dpi=140)
+    plt.close(fig)
+    print(f"\nFigure saved: {sortie}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--hidden", type=int, nargs="+", default=[8],
@@ -166,6 +211,8 @@ def main():
     p.add_argument("--n-res", dest="n_res", type=int, default=len(BASE_RESOURCES),
                    help="nb de ressources, prises dans BASE_RESOURCES "
                         "(defaut %(default)s)")
+    p.add_argument("--fig-dir", dest="fig_dir", default="fig",
+                   help="dossier de sortie de la figure (defaut %(default)s)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
 
@@ -226,6 +273,8 @@ def main():
         print("-> ni l'un ni l'autre ne bat le plancher aveugle. Revoir la tache "
               "ou les\n"
               "   reglages d'entrainement avant de conclure sur l'architecture.")
+
+    trace(a, sorties, res)
 
 
 if __name__ == "__main__":

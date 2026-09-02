@@ -221,6 +221,9 @@ si elle sert déjà.
 
 Réutilisables indépendamment de cette question.
 
+Les deux tests par gradient sont documentés en détail dans
+[`tools/PROBES.md`](tools/PROBES.md), avec leurs figures.
+
 | outil | question tranchée |
 |---|---|
 | `tools/probe_memory.py` | le réseau peut-il **apprendre** la valeur des canaux ? |
