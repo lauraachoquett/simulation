@@ -38,18 +38,25 @@ croisée, cible tirée à neuf à chaque lot.
 
 ### La figure
 
-`fig/probe_memory_<modele>.png` — exactitude en fonction du nombre de mises à jour
-de gradient, **une couleur par nombre de bouchées déjà prises dans l'épisode**.
+`fig/probe_memory_<modele>.png` — exactitude en fonction du **nombre de bouchées
+déjà prises dans l'épisode**, une couleur par avancement de l'entraînement
+(barre de couleur : mises à jour de gradient).
 
-Les deux axes de la question :
+L'abscisse est la quantité de **preuves** dont le réseau dispose au moment où on
+l'interroge, et la seule variable qui puisse porter l'information : c'est le
+nombre de bouchées qui compte, pas le nombre de pas — un pas sans repas
+n'apporte rien. La couleur montre le circuit se former : plate au hasard à zéro
+mise à jour, la courbe se redresse et gagne sa forme à mesure que l'entraînement
+avance.
 
-- **l'abscisse** dit combien d'entraînement il faut pour que le circuit existe ;
-- **la couleur** dit combien de bouchées il faut, une fois le circuit là, pour
-  trancher.
+Le point **0 bouchée** est le témoin. Sans avoir rien goûté aucune information
+n'est disponible, et il doit rester au hasard (1/*n*) **quel que soit
+l'entraînement** — toutes les courbes s'y rejoignent. S'il montait, l'exercice
+fuirait la réponse quelque part et le reste de la figure ne vaudrait rien.
 
-La courbe « 0 bouchée » est le témoin : sans avoir rien goûté, aucune information
-n'est disponible et elle doit rester au hasard (1/*n*). C'est le nombre de bouchées
-qui compte, pas le nombre de pas — un pas sans repas n'apporte rien.
+Le comptage est **inclusif** : `deroule` passe `reward[t]` et `mange[t]` au pas
+*t*, donc la bouchée du pas courant est déjà une entrée du réseau. L'exclure
+décalait la courbe d'un rang et posait « 0 bouchée » à 0.58, au-dessus du hasard.
 
 ### Ce qu'il établit
 

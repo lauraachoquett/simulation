@@ -167,31 +167,34 @@ def trace(a, sorties, res):
     """
     os.makedirs(a.fig_dir, exist_ok=True)
     couleurs = {"aveugle": "#8D99A6", "concat": "#1D3557", "carte": "#2A7F31"}
+    etiquettes = {"aveugle": "blind (zeros)", "concat": "concatenated",
+                  "carte": "value map"}
     fig, ax = plt.subplots(figsize=(9, 5.2))
     for r in sorties:
         # lisse sur 20 iterations : le lot est neuf a chaque pas, donc la courbe
         # brute est bruitee sans que le reseau ait change
         y = np.convolve(np.array(r["courbe"]), np.ones(20) / 20, mode="valid")
         x = np.arange(len(y)) + 20
-        ax.plot(x, y, lw=1.9, color=couleurs.get(r["nom"], "0.4"), label=r["nom"])
+        ax.plot(x, y, lw=1.9, color=couleurs.get(r["nom"], "0.4"),
+                label=etiquettes.get(r["nom"], r["nom"]))
         f = r["franchit"].get(0.99)
         if f:
             ax.plot([f], [0.99], "o", ms=6, color=couleurs.get(r["nom"], "0.4"))
-            ax.annotate(f"99 % en {f}", (f, 0.99), xytext=(8, -12),
+            ax.annotate(f"99% at {f}", (f, 0.99), xytext=(8, -12),
                         textcoords="offset points", fontsize=9,
                         color=couleurs.get(r["nom"], "0.4"))
     ax.axhline(0.5, color="0.45", ls=":", lw=1.2)
-    ax.annotate("hasard (0.50)", (len(sorties[0]["courbe"]), 0.5), xytext=(-4, 5),
+    ax.annotate("chance (0.50)", (len(sorties[0]["courbe"]), 0.5), xytext=(-4, 5),
                 textcoords="offset points", ha="right", fontsize=9, color="0.4")
     ax.set_xscale("log")
-    ax.set_xlabel("mises a jour de gradient (echelle log)")
-    ax.set_ylabel("exactitude : avancer ou tourner ?")
+    ax.set_xlabel("Gradient updates (log scale)")
+    ax.set_ylabel("Accuracy — advance or turn")
     ax.set_ylim(0.4, 1.02)
     ax.grid(alpha=.3, which="both")
-    ax.legend(loc="lower right", fontsize=9, title="v_pred donne a la tete")
-    noms = " ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
-    ax.set_title(f"probe_action — tete {list(a.hidden)}, carry {a.carry}, "
-                 f"lot {a.batch}\n{noms}")
+    ax.legend(loc="lower right", fontsize=9, title="v_pred given to the head")
+    noms = "   ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
+    ax.set_title(f"probe_action — head {list(a.hidden)}, carry {a.carry}, "
+                 f"batch {a.batch}\n{noms}")
     fig.tight_layout()
     sortie = os.path.join(a.fig_dir, "probe_action.png")
     fig.savefig(sortie, dpi=140)

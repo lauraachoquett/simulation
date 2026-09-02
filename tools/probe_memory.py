@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
@@ -123,32 +124,41 @@ def deroule(appliquer, params, lot, carry_size):
 
 
 def trace(a, iters, bouchees, n_types, res, tete):
-    """Exactitude en fonction des mises a jour, une couleur par nb de bouchees.
+    """Exactitude en fonction du nombre de bouchees, une couleur par entrainement.
 
-    Les deux axes de la question : combien d'entrainement pour que le circuit
-    existe (abscisse), et combien de bouchees pour qu'il tranche (couleur).
+    Les bouchees en abscisse : c'est la quantite de PREUVES dont le reseau
+    dispose, et la seule variable qui puisse porter l'information. La couleur
+    donne l'avancement de l'entrainement -- on voit la courbe se redresser a
+    mesure que le circuit se forme, au lieu de neuf courbes superposees.
     """
     os.makedirs(a.fig_dir, exist_ok=True)
     hasard = 1.0 / n_types
+    b = np.arange(bouchees.shape[1])
+    norm = mcolors.Normalize(vmin=iters.min(), vmax=iters.max())
     cmap = plt.get_cmap("viridis")
+
     fig, ax = plt.subplots(figsize=(9, 5.2))
-    for b in range(bouchees.shape[1]):
-        y = bouchees[:, b]
-        if not np.isfinite(y).any():
-            continue
-        ax.plot(iters, y, lw=1.8, color=cmap(b / max(bouchees.shape[1] - 1, 1)),
-                label=f"{b} bouchee" + ("s" if b != 1 else ""))
+    for k, it in enumerate(iters):
+        y = bouchees[k]
+        ok = np.isfinite(y)
+        ax.plot(b[ok], y[ok], lw=1.8, marker="o", ms=3.5, color=cmap(norm(it)))
     ax.axhline(hasard, color="0.45", ls=":", lw=1.2)
-    ax.annotate(f"hasard ({hasard:.2f})", (iters[0], hasard), xytext=(4, 5),
-                textcoords="offset points", ha="left", fontsize=9, color="0.4")
-    ax.set_xlabel("mises a jour de gradient")
-    ax.set_ylabel("exactitude : quel canal est le plus nefaste ?")
+    ax.annotate(f"chance ({hasard:.2f})", (b[-1], hasard), xytext=(-4, 6),
+                textcoords="offset points", ha="right", fontsize=9, color="0.4")
+    ax.set_xlabel("Bites experienced when the prediction is made")
+    ax.set_ylabel("Accuracy")
+    ax.set_xticks(b)
     ax.set_ylim(0, 1.02)
     ax.grid(alpha=.3)
-    ax.legend(loc="lower right", fontsize=9, title="dans l'episode")
-    noms = " ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
-    ax.set_title(f"probe_memory — modele {a.model}, carry {a.carry}, tete {list(tete)}"
-                 f"\n{noms}")
+
+    barre = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax,
+                         pad=.02)
+    barre.set_label("Gradient updates")
+
+    cablage = "separate memory" if a.model == "v2" else "memory joined to vision"
+    noms = "   ".join(f"{LABELS[r.id]} {r.delta_energy:+g}" for r in res)
+    ax.set_title(f"probe_memory — {a.model} ({cablage}), carry {a.carry}, "
+                 f"head {list(tete)}\n{noms}")
     fig.tight_layout()
     sortie = os.path.join(a.fig_dir, f"probe_memory_{a.model}.png")
     fig.savefig(sortie, dpi=140)
@@ -242,10 +252,13 @@ def main():
         lot = episodes(cle, n_ep, a.steps, de_par_id, n_types)
         logits = deroule(appliquer, params, lot, a.carry)
         juste = np.asarray(jnp.argmax(logits, -1) == lot[5][:, None])   # (E,T)
-        # bouchees deja PRISES a l'instant ou la prediction est faite : celle du
-        # pas courant n'est pas encore entree dans le LSTM
+        # Bouchees CONNUES au moment de la prediction. Le cumul est inclusif :
+        # deroule passe reward[t] et mange[t] au pas t, donc la bouchee du pas
+        # courant est deja une entree du reseau. L'exclure decalait la courbe
+        # d'un rang -- "0 bouchee" se retrouvait au-dessus du hasard, ce qui est
+        # impossible sans information.
         mange = np.asarray(lot[4]).sum(-1)                              # (E,T)
-        prises = np.cumsum(mange, axis=1) - mange
+        prises = np.cumsum(mange, axis=1)
         out = np.full(a.max_bouchees + 1, np.nan)
         for b in range(a.max_bouchees + 1):
             m = prises == b
