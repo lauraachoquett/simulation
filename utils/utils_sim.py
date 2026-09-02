@@ -89,11 +89,24 @@ def _modele_force(cfg, valeurs):
     return _MODELES_ORACLE[cle]
 
 
+def valeurs_vraies(cfg):
+    """Les valeurs a imposer a v_pred, dans l'ordre des canaux.
+
+    Avec inner_target="delta" la tete porte une sortie de plus -- ce que vaut un
+    pas sans repas. Sans elle, valeur_forcee serait plus courte que la sortie et
+    l'entree de la tete de politique perdrait une dimension en silence.
+    """
+    v = [float(r.delta_energy) for r in cfg.resources]
+    if cfg.inner_target == "delta":
+        v.append(-float(cfg.energy_decay))     # le cout metabolique d'un pas
+    return tuple(v)
+
+
 def model_pour(cfg, model_defaut):
     """Le modele a utiliser pour cette config. Identite hors vpred_oracle."""
     if not cfg.vpred_oracle:
         return model_defaut
-    return _modele_force(cfg, tuple(float(r.delta_energy) for r in cfg.resources))
+    return _modele_force(cfg, valeurs_vraies(cfg))
 
 
 def permute_canaux(t, shift):
@@ -112,9 +125,12 @@ def model_tourne(cfg, model, shift):
     et donc des resultats identiques au bit pres.
     """
     vf = getattr(model.model, "valeur_forcee", ())
-    if not vf or shift % len(vf) == 0:
+    n = len(cfg.resources)
+    if not vf or shift % max(n, 1) == 0:
         return model
-    return _modele_force(cfg, permute_canaux(vf, shift))
+    # seules les cases de RESSOURCE suivent la rotation ; une eventuelle case
+    # "rien" (inner_target="delta") ne designe aucun canal et reste en place
+    return _modele_force(cfg, permute_canaux(vf[:n], shift) + tuple(vf[n:]))
 
 
 def masque_valeur(model):
