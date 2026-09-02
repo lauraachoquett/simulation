@@ -26,6 +26,14 @@ Le réseau reçoit exactement le flux qu'il reçoit en simulation — action pr�
 récompense, énergie, ce qu'il vient de manger, et la vision — et on lui demande une
 seule chose : **quel canal porte la ressource la plus néfaste ?**
 
+La lecture se fait sur **le carry du LSTM seul** (`self.lecture(h)`), et la vision
+n'est ici que du bruit uniforme, indépendant de la permutation. En **v2** le LSTM
+ne la reçoit d'ailleurs pas du tout — `mem_in = [last_action, reward, energy,
+last_eaten]` — elle passe par le conv, dont la sortie est jetée ; elle n'est
+fournie que parce que la signature de `MetaRNN_bcppr` l'exige. En **v1** le LSTM
+reçoit la vision encodée mais pas `last_eaten` : il hérite donc du bruit sans
+l'information.
+
 Le point qui fait tout : **la permutation canal → identité est retirée à chaque
 épisode**. Le canal 2 porte le poison dans un épisode, le good dans le suivant.
 Mémoriser « le canal 2 est dangereux » ne sert donc à rien — c'est vrai une fois sur
