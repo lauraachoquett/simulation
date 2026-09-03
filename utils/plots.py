@@ -2045,34 +2045,42 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
 
     Un ancetre sans genome sauve ou n'ayant rien mange est simplement absent de
     la liste : le trait l'enjambe, il ne vaut pas zero.
+
+    La couleur porte la PROFONDEUR GENEALOGIQUE, comptee a rebours depuis
+    l'agent vivant : 0 = le vivant, k = son k-ieme ancetre. Compter depuis le
+    vivant et non depuis la racine est ce qui rend les lignees comparables --
+    elles n'ont pas la meme longueur, donc leurs racines ne sont pas
+    contemporaines, alors que leurs generations 0 le sont toutes.
     """
     if not chaines:
         print("Simplex de lignee : aucune chaine exploitable.")
         return
 
-    # une couleur par lignee, prise dans une palette qualitative : la couleur
-    # identifie la lignee, la TAILLE porte le temps (cf. plus bas)
-    palette = ["#1D3557", "#C1121F", "#2A7F31", "#B07D00", "#6A4C93"]
-
-    fig, ax = plt.subplots(figsize=(8, 7.4))
+    fig, ax = plt.subplots(figsize=(8.6, 7.4))
     _cadre_simplex(ax)
 
+    # echelle commune a toutes les lignees, sinon deux profondeurs egales
+    # prendraient deux couleurs differentes
+    profond_max = max(len(c) for c in chaines) - 1
+    norm = mcolors.Normalize(vmin=0, vmax=max(profond_max, 1))
+    cmap = plt.get_cmap("viridis_r")        # inverse : le vivant est le plus clair
+
     n_shuffle_vus = 0
-    for j, chaine in enumerate(chaines):
+    for chaine in chaines:
         if not chaine:
             continue
-        col = palette[j % len(palette)]
         p = np.array([n["regime"] for n in chaine], dtype=float)
         p = p / p.sum(axis=1, keepdims=True)
         x, y = _bary(p[:, 0], p[:, 1], p[:, 2])
 
-        ax.plot(x, y, color=col, lw=1.1, alpha=.75, zorder=3)
-
-        # Taille croissante de la racine vers le vivant. La couleur est deja
-        # prise par la lignee ; encoder le temps par la taille evite de la
-        # depenser deux fois et reste lisible en noir et blanc.
         n = len(chaine)
-        tailles = np.linspace(18, 78, n) if n > 1 else np.array([78.0])
+        prof = np.arange(n - 1, -1, -1)     # racine = n-1, vivant = 0
+        cols = cmap(norm(prof))
+
+        # trait gris : la couleur est prise par la profondeur, le trait ne sert
+        # plus qu'a dire quels points appartiennent a la meme lignee
+        ax.plot(x, y, color="0.55", lw=1.0, alpha=.6, zorder=3)
+
         apres = np.array([bool(nd["post_shuffle"]) for nd in chaine])
         n_shuffle_vus += int(apres.sum())
 
@@ -2082,20 +2090,24 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
         apres_sans_dernier[-1] = False
 
         if ordinaire.any():
-            ax.scatter(x[ordinaire], y[ordinaire], s=tailles[ordinaire], color=col,
+            ax.scatter(x[ordinaire], y[ordinaire], s=62, color=cols[ordinaire],
                        edgecolor="white", linewidth=.5, zorder=4)
         if apres_sans_dernier.any():
-            ax.scatter(x[apres_sans_dernier], y[apres_sans_dernier],
-                       s=tailles[apres_sans_dernier] * 1.5, color=col,
+            ax.scatter(x[apres_sans_dernier], y[apres_sans_dernier], s=105,
+                       color=cols[apres_sans_dernier],
                        marker="D", edgecolor="white", linewidth=.7, zorder=5)
         # Losange SOUS l'etoile quand la permutation tombe sur le vivant lui-meme :
         # sinon l'etoile le masque et le compte du titre ne correspond plus a ce
         # qui se voit.
         if apres[-1]:
-            ax.scatter([x[-1]], [y[-1]], s=470, color=col, marker="D",
+            ax.scatter([x[-1]], [y[-1]], s=470, color=[cols[-1]], marker="D",
                        edgecolor="white", linewidth=.7, zorder=5)
-        ax.scatter([x[-1]], [y[-1]], s=300, color=col, marker="*",
-                   edgecolor="white", linewidth=.8, zorder=6)
+        ax.scatter([x[-1]], [y[-1]], s=300, color=[cols[-1]], marker="*",
+                   edgecolor="0.2", linewidth=.8, zorder=6)
+
+    barre = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax,
+                         shrink=.62, pad=.02)
+    barre.set_label("Generations back from the living agent", fontsize=10)
 
     # Composition offerte. Un seul point pour toute la figure : les parametres
     # de croissance voyagent avec l'identite lors d'une permutation, donc la
@@ -2110,7 +2122,7 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
 
     poignees = [
         Line2D([], [], color="0.35", marker="o", ls="-", ms=5,
-               label="ancestor (size = generation)"),
+               label="ancestor (colour = generation)"),
         Line2D([], [], color="0.35", marker="D", ls="none", ms=7,
                label="first generation after a permutation"),
         Line2D([], [], color="0.35", marker="*", ls="none", ms=13,
