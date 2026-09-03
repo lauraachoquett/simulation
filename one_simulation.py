@@ -158,7 +158,8 @@ def run_simulation_chunk(state,model,keys, cfg):
 
         # Resources spread via convolution
         if cfg.resources_growth : 
-            grid_resources,_ = resources_growth((grid_resources,key_env),cfg,step=step_idx)
+            crowd_brake = (n_types!=1)
+            grid_resources,_ = resources_growth((grid_resources,key_env),cfg,step=step_idx, crowd_brake = crowd_brake)
             grid_resources = jnp.where(grid_walls==1,0,grid_resources)
 
 

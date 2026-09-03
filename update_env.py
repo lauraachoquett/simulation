@@ -59,14 +59,8 @@ def resources_growth(carry, cfg, crowd_brake=True, step=None):
     # crowd_brake est statique, d'ou le if Python autour.
     if crowd_brake:
         count = grid_resources.sum(axis=(1, 2))                         # (n_types,)
-        # `step` est tracee -> tout passe par jnp.where. `commence` est un
-        # scalaire booleen, diffuse sur les n_types.
         commence = step >= cfg.crowd_start
         trop = (count > cfg.crowd_limit) & commence
-        # Par defaut le frein ramene a la croissance du POISON : c'est la
-        # ressource la plus lente, et la suivre evite de dupliquer sa valeur
-        # dans Config au risque de les desynchroniser. Lu par identite, donc
-        # insensible aux permutations de canaux.
         poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
         frein_pf = cfg.crowd_prob_factor
         frein_pr = cfg.crowd_pop_res_prob

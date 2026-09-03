@@ -53,7 +53,7 @@ class GenealogyMixin:
             plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen, exp_dir)
 
     def plot_lineage_simplex(self, state, key_env, subkey_sim, model, exp_dir,
-                             n_lignees=4, max_generations=80):
+                             n_lignees=1, max_generations=80):
         """Trajectoire de quelques lignees dans le simplex des ressources.
 
         On tire des vivants au hasard, on remonte leurs ancetres, et on

@@ -49,8 +49,8 @@ class ResourceConfig:
 
 BASE_RESOURCES = (
     ResourceConfig(init_number_of_resources=30, prob_factor= 0.0866, pop_res_prob=5e-5, delta_energy=1.0,  id=0),
-    ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
-    ResourceConfig(init_number_of_resources=15,   prob_factor=0.0866, pop_res_prob=2e-5, delta_energy=-1.3, id=2),
+    # ResourceConfig(init_number_of_resources=20, prob_factor=0.13,  pop_res_prob=5e-5, delta_energy=0.3,  id=1),
+    # ResourceConfig(init_number_of_resources=15,   prob_factor=0.0866, pop_res_prob=2e-5, delta_energy=-1.3, id=2),
 )
 
 
@@ -125,11 +125,11 @@ class Config(NamedTuple):
 
     cycle_period : int = 200
 
-    crowd_start : int = 100_000
+    crowd_start : int = 1000000
 
     lab_after_shuffle : tuple = (10, 20)
 
-    crowd_limit : int = 3000
+    crowd_limit : int = 5000
     # None -> les taux du poison, lus sur cfg.resources. Un nombre les force,
     # ce qui garde lisibles les config.json anterieurs.
     crowd_prob_factor : float = None
@@ -158,7 +158,7 @@ class Config(NamedTuple):
 
     track_weights : bool = False
 
-    lstm_forget_bias : float = 2.0
+    lstm_forget_bias : float = None
 
     init_scale : str = "constant"
 
