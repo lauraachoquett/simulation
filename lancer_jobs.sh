@@ -67,6 +67,7 @@ mkdir -p "$SORTIES"
 
 soumis=0
 sautes=0
+precedent=""      # jobid du precedent : chaine les jobs, un seul tourne a la fois
 
 for cycle in "${CYCLES[@]}"; do
   for graine in "${GRAINES[@]}"; do
@@ -97,7 +98,13 @@ exec python -m $MODULE $(printf "%q " "${COMMUNES[@]}") -c $cycle -s $graine
 EOF
     chmod +x "$dir/job.sh"
 
+    # -a <jobid> : ne demarrer qu'apres la fin du precedent. Les 9 jobs sont
+    # soumis maintenant, mais s'executent en serie et non en parallele.
+    dep=()
+    [[ -n "$precedent" ]] && dep=(-a "$precedent")
+
     cmd=(oarsub
+         ${dep[@]+"${dep[@]}"}
          -l "$RESSOURCES,walltime=$WALLTIME"
          -n "$nom"
          -O "$dir/oar.%jobid%.out"
@@ -107,8 +114,12 @@ EOF
 
     if [[ $DRY -eq 1 ]]; then
       printf '%q ' "${cmd[@]}"; echo
+      precedent="<jobid-$nom>"
     else
-      "${cmd[@]}"
+      sortie=$("${cmd[@]}")
+      echo "$sortie"
+      precedent=$(sed -n 's/^OAR_JOB_ID=\([0-9]*\).*/\1/p' <<<"$sortie" | tail -1)
+      [[ -n "$precedent" ]] || { echo "jobid illisible, chaine rompue" >&2; exit 1; }
     fi
     soumis=$((soumis + 1))
 
