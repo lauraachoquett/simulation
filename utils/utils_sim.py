@@ -238,10 +238,30 @@ def _video_worker(outputs_np, vid_path, fps, scale, resources):
 
 
 def create_exp_file(dir):
+    """Cree un dossier d'experience NEUF, jamais partage.
+
+    L'horodatage est a la seconde : deux runs demarres dans la meme seconde
+    recevaient le meme dossier, et `exist_ok=True` les y laissait cohabiter en
+    silence. Ils ecrasaient alors mutuellement config.json, data/chunk_*.npz et
+    checkpoints/, et empilaient leurs lignes dans resource_shuffles.jsonl --
+    qui s'ouvre en "a". C'est arrive des qu'un ordonnanceur a lance plusieurs
+    jobs d'un coup sur un home partage.
+
+    On tente donc l'exclusivite (exist_ok=False) et on suffixe tant que le nom
+    est pris. Le premier run garde le nom sans suffixe : les dossiers existants
+    ne changent pas de forme.
+    """
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
     exp_dir = os.path.join(dir, timestamp)
-    os.makedirs(exp_dir, exist_ok=True)
+    n = 1
+    while True:
+        try:
+            os.makedirs(exp_dir, exist_ok=False)
+            break
+        except FileExistsError:
+            n += 1
+            exp_dir = os.path.join(dir, f"{timestamp}_{n}")
     os.makedirs(os.path.join(exp_dir, "checkpoints"), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "videos"), exist_ok=True)
     os.makedirs(os.path.join(exp_dir, "videos","high"), exist_ok=True)
