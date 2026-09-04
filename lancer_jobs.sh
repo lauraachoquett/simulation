@@ -22,7 +22,11 @@ CONDA_ENV="ecoevojax"
 MODULE="simulation.run"               # ou simulation_meta.run pour la branche meta
 SORTIES="$HOME/runs"                  # un sous-dossier par combinaison
 
-WALLTIME="24:00:00"
+# ~1h30 pour 1000 chunks, donc ~4h30 pour 3000 : 6h laissent un tiers de marge.
+# Court exprès : OAR remplit les trous entre grosses reservations (backfilling),
+# et un job qui demande 24h ne rentre dans aucun creneau de 6h. Surdimensionner
+# le walltime retarde le passage sans rien apporter.
+WALLTIME="06:00:00"
 RESSOURCES="host=1/gpu=1"
 QUEUE=()                              # ex: (-q production) ; vide = file par defaut
 # NB : l'expansion ${QUEUE[@]+...} plus bas est ce qui permet a ce tableau
