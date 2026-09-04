@@ -28,8 +28,16 @@ QUEUE=()                              # ex: (-q production) ; vide = file par de
 # NB : l'expansion ${QUEUE[@]+...} plus bas est ce qui permet a ce tableau
 # d'etre vide sous `set -u`, y compris en bash 3.2.
 
-# Options identiques pour tous les runs. -c et -s sont ajoutes par la boucle.
-COMMUNES=(-m v2 --init lecun -t 0.3 -p 0.3 -n 1000)
+# Run de reference : --from en reprend la config ET les graines, puis les flags
+# ci-dessous s'appliquent par dessus. CHEMIN ABSOLU obligatoire -- load_config
+# ouvre "<dir>/config.json" relatif au repertoire courant, et chaque job tourne
+# depuis le sien.
+CONFIG_REF="$DEPOT/simulation/exp/2026-09-03/2026-09-03_11-55-10"
+
+# Options identiques pour tous les runs. -c et -s sont ajoutes par la boucle ;
+# -s regenere des graines neuves, ce qui est le but (meme config, tirage neuf).
+# Tout ce qui n'est pas liste ici vient de CONFIG_REF.
+COMMUNES=(--from "$CONFIG_REF" --crowd-limit 6000 -n 3000)
 
 # ------------------------------------------------------------- les tableaux --
 CYCLES=(3 10 50)
@@ -47,6 +55,10 @@ for arg in "$@"; do
 done
 
 [[ -d "$DEPOT/simulation" ]] || { echo "DEPOT introuvable : $DEPOT" >&2; exit 1; }
+[[ -f "$CONFIG_REF/config.json" ]] || {
+  echo "CONFIG_REF sans config.json : $CONFIG_REF" >&2
+  echo "  (--from le lit au demarrage ; sans lui les 9 jobs echouent identiquement)" >&2
+  exit 1; }
 mkdir -p "$SORTIES"
 
 soumis=0
@@ -77,7 +89,7 @@ export PYTHONPATH="$DEPOT:$DEPOT/Code:\${PYTHONPATH:-}"
 cd "$dir"
 echo "[job] \$(date '+%F %T')  $nom  sur \$(hostname)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
-exec python -m $MODULE ${COMMUNES[*]} -c $cycle -s $graine
+exec python -m $MODULE $(printf "%q " "${COMMUNES[@]}") -c $cycle -s $graine
 EOF
     chmod +x "$dir/job.sh"
 
