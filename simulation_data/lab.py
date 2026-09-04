@@ -33,7 +33,7 @@ from simulation.simulation_data.energy_response import (default_energy_bins,
                                         energy_response_over_envs,
                                         resource_in_view, _wilson,
                                         ENERGY_EAT_WINDOW)
-from simulation.data_class import LABELS
+from simulation.data_class import LABELS, label_of, color_of
  
 N_FILM       = 3      # genomes rejoues avec la grille, pour les videos
 def _vmap_rot(params, key_env, cles, cfg, model, rot):
@@ -133,13 +133,13 @@ def rotation_name(resources, rot):
     if rot == 0:
         return "baseline"
     rotated = rotate_resources(resources, rot)
-    poison_ch = next(k for k, r in enumerate(rotated) if LABELS[r.id] == "poison")
-    return f"{LABELS[resources[poison_ch].id]}_to_poison"
+    poison_ch = next(k for k, r in enumerate(rotated) if label_of(r.id) == "poison")
+    return f"{label_of(resources[poison_ch].id)}_to_poison"
 
 
 def config_caption(resources, rotated, steps_in_place=None):
     """Deux lignes alignees : config apprise vs config testee, + anciennete."""
-    fmt = lambda rs: " | ".join(f"ch{k} {LABELS[r.id]:<6}" for k, r in enumerate(rs))
+    fmt = lambda rs: " | ".join(f"ch{k} {label_of(r.id):<6}" for k, r in enumerate(rs))
     since = ("" if steps_in_place is None
              else f"   (in place for {steps_in_place:,} steps)".replace(",", " "))
     return f"learned: {fmt(resources)}{since}\ntested : {fmt(rotated)}"
@@ -464,7 +464,7 @@ class LabMixin:
             base_par_type = {}
             for r in self.cfg.resources:
                 _, bn_i, bk_i = self.prob_eat_over_life(
-                    outputs_high, self.cfg.resources, label=LABELS[r.id])
+                    outputs_high, self.cfg.resources, label=label_of(r.id))
                 base_par_type[r.id] = (bn_i, bk_i)
 
             for j, rot in enumerate(rotations_for(self.cfg.resources)):          # j = position sur l'axe, rot = vraie rotation
@@ -533,7 +533,7 @@ class LabMixin:
                 par_type = {}
                 for r in resources_rot:
                     _, n_i, k_i = self.prob_eat_over_life(
-                        out_rot, resources_rot, label=LABELS[r.id])
+                        out_rot, resources_rot, label=label_of(r.id))
                     par_type[r.id] = (n_i, k_i)
                 plot_prob_eat_over_life_by_type(
                     par_type, base_par_type, _wilson, exp_dir,
@@ -603,7 +603,7 @@ class LabMixin:
 
         `resources_cfg` doit etre la config REELLEMENT jouee (permutee pour un
         env adapt) : c'est elle qui dit quel canal porte le poison."""
-        ch = [k for k, r in enumerate(resources_cfg) if LABELS[r.id] == label]
+        ch = [k for k, r in enumerate(resources_cfg) if label_of(r.id) == label]
         if not ch:
             return []
         ch = ch[0]

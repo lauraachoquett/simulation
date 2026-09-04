@@ -8,6 +8,40 @@ import matplotlib.colors as mcolors
 LABELS = ("good", "medium", "poison")     # id 0, 1, 2
 COLOR_BY_ID = {0: "#2A9131", 1: "#3933F35E", 2: "#9C27B0"}
 
+# Couleurs des identites au-dela des trois canoniques.
+_COULEURS_SUP = ("#B5651D", "#0F6E70", "#8A6D3B", "#C2185B")
+
+
+def label_of(i):
+    """Nom de l'identite i, defini pour TOUT i.
+
+    LABELS n'a que trois entrees : `LABELS[r.id]` levait IndexError des la
+    quatrieme ressource. Les identites supplementaires prennent un nom genere.
+    """
+    i = int(i)
+    return LABELS[i] if 0 <= i < len(LABELS) else f"res{i}"
+
+
+def color_of(i):
+    """Couleur de l'identite i, definie pour TOUT i (cf. label_of)."""
+    i = int(i)
+    if i in COLOR_BY_ID:
+        return COLOR_BY_ID[i]
+    return _COULEURS_SUP[(i - len(COLOR_BY_ID)) % len(_COULEURS_SUP)]
+
+
+def ressource_la_plus_lente(resources):
+    """La ressource dont la croissance est la plus lente.
+
+    Remplace `next(r for r in resources if LABELS[r.id] == "poison")`, qui
+    levait StopIteration des qu'aucune ressource n'etait du poison -- donc a une
+    ou deux ressources. L'intention n'a jamais ete "le poison" en tant que tel
+    mais "la plus lente" (cf. le commentaire du frein de surpopulation) ; la lire
+    sur prob_factor la rend definie quel que soit le nombre de ressources et
+    quels que soient leurs noms.
+    """
+    return min(resources, key=lambda r: (r.prob_factor, r.pop_res_prob))
+
 @struct.dataclass
 class AgentState:
     position: jnp.ndarray              # (n_agents, 2)

@@ -4,7 +4,8 @@ import jax
 from jax import random,vmap
 import jax.numpy as jnp
 
-from simulation.data_class import AgentState,SimState,LABELS
+from simulation.data_class import (AgentState, SimState, LABELS, label_of,
+                                   ressource_la_plus_lente)
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 
@@ -163,6 +164,9 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
 # stocks de l'env high_res, par IDENTITE de ressource. Expose pour que les plots
 # puissent afficher le plafond disponible sans redupliquer ces valeurs.
 HIGH_RES_COUNTS = {"good": 40, "medium": 40, "poison": 40}
+# Nombre initial pour une identite absente des tables ci-dessus : les tables
+# sont indexees par NOM, et une 4e ressource n'y figure pas.
+DEFAUT_COUNT = 40
 
 # Facteur applique aux taux de croissance dans l'env de test.
 #
@@ -193,10 +197,10 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         log_obs=True,          
     )
     count_by_id = HIGH_RES_COUNTS
-    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+    poison = ressource_la_plus_lente(cfg.resources)
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+        r.replace(init_number_of_resources=count_by_id.get(label_of(r.id), DEFAUT_COUNT),
                   prob_factor=poison.prob_factor * HIGH_RES_GROWTH_SCALE,
                   pop_res_prob=poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
@@ -216,10 +220,10 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
         log_obs=True,          # idem
     )
     count_by_id =HIGH_RES_COUNTS
-    poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+    poison = ressource_la_plus_lente(cfg.resources)
 
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]],
+        r.replace(init_number_of_resources=count_by_id.get(label_of(r.id), DEFAUT_COUNT),
                   prob_factor=4*poison.prob_factor * HIGH_RES_GROWTH_SCALE,
                   pop_res_prob=4*poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
@@ -241,7 +245,8 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
     
     
     cfg = cfg._replace(resources=tuple(
-        r.replace(init_number_of_resources=count_by_id[LABELS[r.id]]) for r in cfg.resources
+        r.replace(init_number_of_resources=count_by_id.get(label_of(r.id), DEFAUT_COUNT))
+        for r in cfg.resources
     ))
     state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
     return state,outputs    

@@ -29,7 +29,7 @@ import numpy as np
 import optax
 from flax import linen as nn
 
-from simulation.data_class import BASE_RESOURCES, LABELS, MODEL_VERSIONS
+from simulation.data_class import BASE_RESOURCES, LABELS, MODEL_VERSIONS, label_of
 
 # Contournement LOCAL : flax 0.6.11 n'accepte pas LSTMCell(features=...), le
 # cluster (>= 0.7) si. On ne touche a rien quand la signature l'accepte.
@@ -68,15 +68,22 @@ class Sonde(nn.Module):
         return h, c, self.lecture(h)
 
 
-def episodes(cle, n_ep, T, de_par_id, n_types=3, cote=11, n_canaux=5):
+def episodes(cle, n_ep, T, de_par_id, n_types=3, cote=11, n_canaux=None):
     """Un lot d'episodes. Par episode : une permutation canal -> identite tiree
     au hasard, donc la cible change d'un episode a l'autre."""
+    # ressources + agents + murs : deduit, sinon la vue serait mal formee des
+    # que le nombre de ressources change
+    if n_canaux is None:
+        n_canaux = n_types + 2
     c_perm, c_eat, c_act, c_obs = jax.random.split(cle, 4)
 
     # canal k porte l'identite perm[k]
     perm = jnp.stack([jax.random.permutation(k, n_types)
                       for k in jax.random.split(c_perm, n_ep)])       # (E, 3)
-    cible = jnp.argmax(perm == LABELS.index("poison"), axis=1)        # (E,)
+    # La plus NEFASTE, lue sur delta_energy : LABELS.index("poison") supposait
+    # qu'un poison existe et qu'il porte l'identite 2. A une ou deux ressources
+    # c'est faux, et rien ne garantit qu'un "poison" figure dans la liste.
+    cible = jnp.argmax(perm == jnp.argmin(de_par_id), axis=1)         # (E,)
 
     # a chaque pas : rien mange (0) ou le canal 1..3
     tire = jax.random.randint(c_eat, (n_ep, T), 0, n_types + 1)
@@ -134,16 +141,27 @@ def main():
     if a.carry is None:
         a.carry = spec["hidden_dim"]
     tete = tuple(a.hidden) if a.hidden is not None else tuple(spec["hidden_layers"])
+    # Les identites REELLEMENT presentes, pas range(3) : BASE_RESOURCES peut en
+    # porter une seule comme quatre.
+    ids = sorted(r.id for r in BASE_RESOURCES)
+    n_types = len(ids)
+    if n_types < 2:
+        print(f"probe_memory : {n_types} ressource(s). Il en faut au moins 2 "
+              "pour qu'il y ait quelque chose a identifier.")
+        return
     de_par_id = jnp.array([next(r.delta_energy for r in BASE_RESOURCES if r.id == i)
-                           for i in range(3)])
-    print(f"modele {a.model} ({mode})  carry={a.carry}  tete={list(tete)}\n"
+                           for i in ids])
+    print(f"modele {a.model} ({mode})  carry={a.carry}  tete={list(tete)}  "
+          f"{n_types} ressources\n"
           f"delta_energy par identite : "
-          + "  ".join(f"{LABELS[i]} {float(de_par_id[i]):+g}" for i in range(3)))
+          + "  ".join(f"{label_of(i)} {float(de_par_id[k]):+g}"
+                      for k, i in enumerate(ids)))
 
-    sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete)
+    sonde = Sonde(memory_mode=mode, carry_size=a.carry, hidden_layers=tete,
+                  n_types=n_types)
     cle = jax.random.PRNGKey(a.seed)
     cle, c0 = jax.random.split(cle)
-    lot0 = episodes(c0, 2, a.steps, de_par_id)
+    lot0 = episodes(c0, 2, a.steps, de_par_id, n_types)
     params = sonde.init(jax.random.PRNGKey(a.seed + 1),
                         jnp.zeros(a.carry), jnp.zeros(a.carry),
                         lot0[0][0, 0], lot0[1][0, 0], lot0[2][0, 0],
@@ -165,12 +183,13 @@ def main():
 
     @jax.jit
     def etape(params, etat, cle):
-        lot = episodes(cle, a.batch, a.steps, de_par_id)
+        lot = episodes(cle, a.batch, a.steps, de_par_id, n_types)
         (l, acc), g = jax.value_and_grad(perte, has_aux=True)(params, lot)
         maj, etat = opt.update(g, etat, params)
         return optax.apply_updates(params, maj), etat, l, acc
 
-    print(f"\n{'iter':>6}{'loss':>9}{'exactitude':>12}   (hasard = 0.333)")
+    print(f"\n{'iter':>6}{'loss':>9}{'exactitude':>12}"
+          f"   (hasard = {1/n_types:.3f})")
     for it in range(a.iters + 1):
         cle, ce = jax.random.split(cle)
         params, etat, l, acc = etape(params, etat, ce)
@@ -179,7 +198,7 @@ def main():
 
     # exactitude en fonction du nombre de pas ecoules dans l'episode
     cle, ct = jax.random.split(cle)
-    lot = episodes(ct, 1024, a.steps, de_par_id)
+    lot = episodes(ct, 1024, a.steps, de_par_id, n_types)
     logits = deroule(appliquer, params, lot, a.carry)
     exact = (jnp.argmax(logits, -1) == lot[5][:, None])
     print("\nexactitude par pas de l'episode :")

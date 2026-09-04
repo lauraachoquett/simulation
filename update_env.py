@@ -5,7 +5,7 @@ import numpy as np
 from jax import random
 from functools import partial
 from jax import jit
-from simulation.data_class import LABELS
+from simulation.data_class import LABELS, ressource_la_plus_lente
 
 def respawn(x, subkey, prob_factor,pop_res_prob):
     conditions = [
@@ -61,7 +61,9 @@ def resources_growth(carry, cfg, crowd_brake=True, step=None):
         count = grid_resources.sum(axis=(1, 2))                         # (n_types,)
         commence = step >= cfg.crowd_start
         trop = (count > cfg.crowd_limit) & commence
-        poison = next(r for r in cfg.resources if LABELS[r.id] == "poison")
+        # La plus lente, pas "le poison" : a une ou deux ressources il peut ne
+        # pas y en avoir, et next() levait alors StopIteration.
+        poison = ressource_la_plus_lente(cfg.resources)
         frein_pf = cfg.crowd_prob_factor
         frein_pr = cfg.crowd_pop_res_prob
         prob_factor  = jnp.where(trop, poison.prob_factor if frein_pf is None

@@ -8,7 +8,8 @@ import dataclasses
 from typing import NamedTuple
 
 
-from simulation.data_class import AgentState,SimState, ResourceConfig, LABELS
+from simulation.data_class import (AgentState, SimState, ResourceConfig, LABELS,
+                                   label_of, color_of)
 from simulation.agent_mov import get_obs_vector
 from simulation.update_env import resources_growth
 from simulation.data_class import Config, MODEL_VERSIONS
@@ -370,7 +371,7 @@ def log_resource_shuffle(exp_dir, chunk_idx, step, old_resources, new_resources)
         "step":      int(step),
         "order_ids": [int(r.id) for r in new_resources],       # canal k -> id  (l'état après shuffle)
         "changes": [
-            {"channel": k, "from": LABELS[o.id], "to": LABELS[n.id]}
+            {"channel": k, "from": label_of(o.id), "to": label_of(n.id)}
             for k, (o, n) in enumerate(zip(old_resources, new_resources))
             if o.id != n.id
         ],

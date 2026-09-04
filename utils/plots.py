@@ -11,7 +11,20 @@ from matplotlib.lines import Line2D
 import glob 
 import json
 import re 
-from simulation.data_class import COLOR_BY_ID,LABELS
+from simulation.data_class import COLOR_BY_ID, LABELS, label_of, color_of
+
+
+def couleur_du_nom(nom, defaut="#6E7278"):
+    """Couleur d'une identite designee par son NOM.
+
+    L'ancienne forme indexait `[... if l == label][0]`, qui levait IndexError
+    des qu'un nom sortait des trois canoniques -- une 4e ressource, ou un
+    sous-ensemble renomme. Ici un nom inconnu rend un gris neutre.
+    """
+    for i, l in enumerate(LABELS):
+        if l == nom:
+            return color_of(i)
+    return defaut
 from simulation.utils.utils_sim import build_id_timeline
 
 GROUPS = ["encoder", "lstm_input", "lstm_recurrent", "controller"]
@@ -96,7 +109,7 @@ def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
         ids_k  = id_timeline[:, k]
         points = np.array([generations, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]        # 1 couleur par segment
+        seg_colors = [color_of(i) for i in ids_k[:-1]]        # 1 couleur par segment
         ax_evo_res.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
 
     # LineCollection ne cadre pas seule
@@ -106,7 +119,7 @@ def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
 
     # légende = les IDENTITÉS (couleur fixe), pas les canaux
     present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
-    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i]) for i in present_ids]
+    handles = [Line2D([0], [0], color=color_of(i), lw=2, label=label_of(i)) for i in present_ids]
     ax_evo_res.legend(handles=handles, loc='upper right')
 
     ax_evo_agents.set_title('Simulation dynamic')
@@ -179,7 +192,7 @@ def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
         ids_k  = id_timeline[:, k]
         points = np.array([generations, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
-        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]        # 1 couleur par segment
+        seg_colors = [color_of(i) for i in ids_k[:-1]]        # 1 couleur par segment
         ax_conso.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
 
     # LineCollection ne cadre pas seule ; max(.., 1) car la conso peut etre nulle partout
@@ -189,7 +202,7 @@ def plot_consumption_png(pop_history, consumed_history, exp_dir, shuffle_log,
 
     # légende = les IDENTITÉS (couleur fixe), pas les canaux
     present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
-    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i]) for i in present_ids]
+    handles = [Line2D([0], [0], color=color_of(i), lw=2, label=label_of(i)) for i in present_ids]
     ax_conso.legend(handles=handles, loc='upper right')
 
     ax_pop.set_title(_consumption_title(window))
@@ -223,7 +236,7 @@ def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
     id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)  # (T, n_types)
 
     def rgba(i):
-        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        r, g, b, a = mcolors.to_rgba(color_of(i))
         return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
 
     seen = set()                                  # chaque id une seule fois en légende
@@ -240,7 +253,7 @@ def plot_consumption_html(pop_history, consumed_history, exp_dir, shuffle_log,
             fig.add_trace(
                 go.Scatter(
                     x=generations[sl], y=conso[sl, k],
-                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    name=label_of(i), legendgroup=label_of(i), showlegend=show,
                     line=dict(color=rgba(i), width=2),
                 ),
                 secondary_y=True,
@@ -317,7 +330,7 @@ def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         # un segment touchant un NaN n'est pas trace par LineCollection -> les
         # trous (personne n'a rien vu) restent visibles au lieu d'etre interpoles
-        seg_colors = [COLOR_BY_ID[i] for i in ids_k[:-1]]
+        seg_colors = [color_of(i) for i in ids_k[:-1]]
         ax_p.add_collection(LineCollection(segments, colors=seg_colors, linewidth=2))
 
     ax_p.set_xlim(generations[0], generations[-1])
@@ -331,7 +344,7 @@ def plot_prob_eat_png(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
     ax_p.axhline(0, color='grey', lw=0.6, alpha=0.5)
 
     present_ids = sorted(set(int(i) for i in id_timeline.ravel()))
-    handles = [Line2D([0], [0], color=COLOR_BY_ID[i], lw=2, label=LABELS[i])
+    handles = [Line2D([0], [0], color=color_of(i), lw=2, label=label_of(i))
                for i in present_ids]
     handles.append(Line2D([0], [0], color='tab:red', lw=1.2, alpha=0.45,
                           label='population'))
@@ -363,7 +376,7 @@ def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
     id_timeline = build_id_timeline(generations, shuffle_log, initial_order_ids)
 
     def rgba(i):
-        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        r, g, b, a = mcolors.to_rgba(color_of(i))
         return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
 
     seen = set()
@@ -379,7 +392,7 @@ def plot_prob_eat_html(pop_history, n_seen, n_eaten, exp_dir, shuffle_log,
             fig.add_trace(
                 go.Scatter(
                     x=generations[sl], y=p[sl, k],
-                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    name=label_of(i), legendgroup=label_of(i), showlegend=show,
                     line=dict(color=rgba(i), width=2),
                 ),
                 secondary_y=False,
@@ -431,7 +444,7 @@ def plot_prob_eat_over_life(curves, n_pooled, k_pooled, wilson, exp_dir, chunk, 
     z = (frac_dec - 0.5) / (0.5 / np.sqrt(n_pentes)) if n_pentes else 0.0
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
-    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
+    color = couleur_du_nom(label)
 
     for ci in c:                                    # faisceau individuel
         ax.plot(x, ci, color=color, alpha=0.13, lw=1, zorder=2)
@@ -533,7 +546,7 @@ def plot_memory_ablation(n_full, k_full, n_abl, k_abl, wilson, exp_dir, chunk, t
     if nf.size == 0 or na.size == 0:
         return
     x = np.arange(len(nf))
-    color = COLOR_BY_ID[[i for i, l in enumerate(LABELS) if l == label][0]]
+    color = couleur_du_nom(label)
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
     lignes = []
@@ -635,10 +648,10 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
         if not ok.any():
             continue
         trace = True
-        c = COLOR_BY_ID[i]
+        c = color_of(i)
         ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
         ax.plot(x[ok], d[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
-                label=LABELS[i])
+                label=label_of(i))
         # le rapport en annexe : "5x trop" parle mieux que "+0.113" quand les
         # niveaux absolus sont petits
         n_p, k_p = (np.asarray(v, float) for v in per_type[i])
@@ -646,7 +659,7 @@ def plot_prob_eat_excess(per_type, baseline_per_type, exp_dir, chunk, tag,
         pb0 = k_b[ok][0] / n_b[ok][0] if n_b[ok][0] else np.nan
         pp0 = k_p[ok][0] / n_p[ok][0] if n_p[ok][0] else np.nan
         fois = f'  ({pp0/pb0:.1f}x)' if np.isfinite(pb0) and pb0 > 0 else ''
-        lignes.append(f'{LABELS[i]:<7} {d[ok][0]:+.3f} → {d[ok][-1]:+.3f}{fois}')
+        lignes.append(f'{label_of(i):<7} {d[ok][0]:+.3f} → {d[ok][-1]:+.3f}{fois}')
 
     if not trace:
         plt.close(); return
@@ -751,17 +764,17 @@ def plot_prob_eat_ratio(per_type, baseline_per_type, exp_dir, chunk, tag,
         r, lo, hi = _ratio_ci(*per_type[i], *b)
         ok = np.isfinite(r)
         if not ok.any():
-            lignes.append(f'{LABELS[i]:<7} (trop peu d\'evenements)')
+            lignes.append(f'{label_of(i):<7} (trop peu d\'evenements)')
             continue
         trace = True
-        c = COLOR_BY_ID[i]
+        c = color_of(i)
         ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
         ax.plot(x[ok], r[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
-                label=LABELS[i])
+                label=label_of(i))
         # trous eventuels : on signale combien de tranches ont ete masquees
         manque = int((~ok).sum())
         note = f'  [{manque} tranche(s) masquee(s)]' if manque else ''
-        lignes.append(f'{LABELS[i]:<7} {r[ok][0]:5.2f}x → {r[ok][-1]:5.2f}x{note}')
+        lignes.append(f'{label_of(i):<7} {r[ok][0]:5.2f}x → {r[ok][-1]:5.2f}x{note}')
 
     if not trace:
         plt.close(); return
@@ -829,12 +842,12 @@ def plot_prob_eat_over_life_by_type(per_type, baseline_per_type, wilson, exp_dir
         if not ok.any():
             continue
         p, lo, hi = wilson(k_i, n_i)
-        c = COLOR_BY_ID[i]
+        c = color_of(i)
         ax.fill_between(x[ok], lo[ok], hi[ok], color=c, alpha=0.18, zorder=2)
         ax.plot(x[ok], p[ok], 'o-', color=c, lw=2.5, ms=6, zorder=4,
-                label=f'{LABELS[i]} (permuted)')
+                label=f'{label_of(i)} (permuted)')
         var = (p[ok][-1] - p[ok][0]) / p[ok][0] if p[ok][0] > 0 else float('nan')
-        lignes.append(f'{LABELS[i]:<7} {p[ok][0]:.3f} → {p[ok][-1]:.3f}'
+        lignes.append(f'{label_of(i):<7} {p[ok][0]:.3f} → {p[ok][-1]:.3f}'
                       + (f'  ({var:+.0%})' if np.isfinite(var) else ''))
 
         b = baseline_per_type.get(i)
@@ -842,7 +855,7 @@ def plot_prob_eat_over_life_by_type(per_type, baseline_per_type, wilson, exp_dir
             bn, bk = (np.asarray(v, dtype=float) for v in b)
             if (bn > 0).all():
                 ax.plot(x, bk / bn, 's--', color=c, lw=1.3, ms=3.5, alpha=0.55,
-                        zorder=3, label=f'{LABELS[i]} (baseline)')
+                        zorder=3, label=f'{label_of(i)} (baseline)')
 
     ax.set_xticks(x)
     ax.set_xticklabels([f'{100*i//n_bins}–{100*(i+1)//n_bins}%' for i in x])
@@ -895,7 +908,7 @@ def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
                   if baseline is not None else None)
 
     ids = sorted(by_id)                                  # good, medium, poison
-    labels = [LABELS[i] for i in ids]
+    labels = [label_of(i) for i in ids]
     B = np.asarray(eaten).shape[0]
 
     fig, ax = plt.subplots(figsize=(8.5, 5))
@@ -906,7 +919,7 @@ def plot_eaten_by_type_boxplot(eaten, ids_by_channel, exp_dir, chunk, tag,
                         patch_artist=True, showmeans=True, manage_ticks=False,
                         medianprops=dict(color='black', lw=2))
         for patch, i in zip(bp['boxes'], ids):
-            patch.set_facecolor(COLOR_BY_ID[i])
+            patch.set_facecolor(color_of(i))
             patch.set_alpha(alpha)
             if hatch:
                 patch.set_hatch(hatch)
@@ -1048,7 +1061,7 @@ def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
 
     # rgba par id (une seule fois)
     def rgba(i):
-        r, g, b, a = mcolors.to_rgba(COLOR_BY_ID[i])
+        r, g, b, a = mcolors.to_rgba(color_of(i))
         return f"rgba({r*255:.0f},{g*255:.0f},{b*255:.0f},{a:.2f})"
 
     seen = set()                                  # pour n'afficher chaque id qu'une fois en légende
@@ -1066,7 +1079,7 @@ def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
             fig.add_trace(
                 go.Scatter(
                     x=generations[sl], y=res[sl, k],
-                    name=LABELS[i], legendgroup=LABELS[i], showlegend=show,
+                    name=label_of(i), legendgroup=label_of(i), showlegend=show,
                     line=dict(color=rgba(i), width=2),
                 ),
                 secondary_y=True,
@@ -1099,7 +1112,7 @@ def plot_current_config_png(current_grid_res, grid_walls, pos, alive, exp_dir, r
 
     # une couleur par type (indice 0 = blanc = vide)
     ids = [r.id for r in resources]
-    colors = [COLOR_BY_ID[id] for id in ids]
+    colors = [color_of(id) for id in ids]
     colors = ["white"] + colors
     cmap_res = mcolors.ListedColormap(colors[:n_types + 1])
 
@@ -1902,9 +1915,9 @@ def _bary(p_good, p_medium, p_poison):
 
 
 def _teinte_id(nom):
-    """Couleur du sommet, alpha ignore (COLOR_BY_ID[1] a 8 chiffres hex)."""
-    from simulation.data_class import LABELS, COLOR_BY_ID
-    c = COLOR_BY_ID[LABELS.index(nom)]
+    """Couleur du sommet, alpha ignore (color_of(1) a 8 chiffres hex)."""
+    from simulation.data_class import LABELS, COLOR_BY_ID, label_of, color_of
+    c = color_of(LABELS.index(nom))
     return c[:7] if len(c) == 9 else c
 
 
@@ -1958,7 +1971,7 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
     reordonne par identite, sinon les sommets seraient faux des qu'un shuffle a
     eu lieu.
     """
-    from simulation.data_class import LABELS, COLOR_BY_ID
+    from simulation.data_class import LABELS, COLOR_BY_ID, label_of, color_of
 
     eaten = np.asarray(eaten, dtype=float)
     if eaten.shape[1] != 3:

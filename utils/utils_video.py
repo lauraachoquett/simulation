@@ -8,11 +8,11 @@ from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from IPython.display import HTML, display, clear_output
 import numpy as np
 import matplotlib.colors as mcolors
-from simulation.data_class import COLOR_BY_ID
+from simulation.data_class import COLOR_BY_ID, color_of
 
 def save_chunk_video(outputs, filename, fps=20.0, scale=16, max_age=200, resources=None):
     grids = outputs.grid
-    rgba = np.array([mcolors.to_rgba(COLOR_BY_ID[r.id]) for r in resources],
+    rgba = np.array([mcolors.to_rgba(color_of(r.id)) for r in resources],
                     dtype=np.float32)                 # (n_types, 4)  R,G,B,A
 
     rgb, a = rgba[:, :3], rgba[:, 3:4]                # (n_types,3) et (n_types,1)

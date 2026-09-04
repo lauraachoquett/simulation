@@ -20,7 +20,8 @@ import jax
 from simulation.one_simulation import run_simulation_chunk
 from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1
 from simulation.utils.plots import plot_current_config
-from simulation.data_class import Config, ResourceConfig, BASE_RESOURCES, LABELS, MODEL_VERSIONS, resolve_model
+from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABELS,
+                                   MODEL_VERSIONS, resolve_model, label_of, color_of)
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
@@ -295,7 +296,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                 print("----------------- Change config at step : ---------------", state.step)
                 for k, (old, new) in enumerate(zip(old_resources, new_resources)):
                     flag = "" if old.id == new.id else "  <-- changé"
-                    print(f"  canal {k} : {LABELS[old.id]:>7} -> {LABELS[new.id]:<7}{flag}")
+                    print(f"  canal {k} : {label_of(old.id):>7} -> {label_of(new.id):<7}{flag}")
 
                 log_resource_shuffle(exp_dir, chunk_idx, int(state.step),
                                      old_resources, new_resources)
