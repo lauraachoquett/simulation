@@ -22,6 +22,7 @@ from simulation.utils.plots import (
     plot_lifetime_vs_step,
     plot_life_expectancy,
     plot_invasion,
+    plot_population_snapshot,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
@@ -118,6 +119,12 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             grid_res, state.grid[-1, :, :],
             state.agents.position, state.agents.alive,
             exp_dir, self.cfg.resources,name_fig=f'{self.chunk_idx}',
+        )
+        # Instantane de la population au pas courant : ce que font les agents,
+        # et de quel age ils sont. Lu sur `state`, donc au pas exact du tracage.
+        plot_population_snapshot(
+            state.agents.alive, state.last_actions, state.agents.born_step,
+            int(state.step), exp_dir,
         )
         # plot_lifetime_vs_step((life_data[1, :]), (life_data[0, :]), exp_dir, self.cfg)
         plot_life_expectancy((life_data[1, :]), (life_data[0, :]), exp_dir, bin_width=1000)
