@@ -965,7 +965,7 @@ class LabMixin:
                               mangé (sinon les NaN des censurés fausseraient tout).
         """
         B = outputs_lab.alive.shape[0]
-        t_explore, ever_ate, greed = [], [], []
+        t_explore, ever_ate, greed, age, died = [], [], [], [], []
         for b in range(B):
             single = jax.tree_util.tree_map(lambda x: x[b], outputs_lab)
             m = self._per_agent_metrics(single)
@@ -974,21 +974,36 @@ class LabMixin:
             t_explore.append(m["t_explore"])
             ever_ate.append(m["ever_ate"])
             greed.append(m["greediness"])
+            age.append(m["age"])
+            died.append(m["died"])
  
         t_explore = np.concatenate(t_explore) if t_explore else np.array([])
         ever_ate  = np.concatenate(ever_ate).astype(bool) if ever_ate else np.array([], bool)
         greed     = np.concatenate(greed) if greed else np.array([])
+        age       = np.concatenate(age) if age else np.array([])
+        died      = np.concatenate(died).astype(bool) if died else np.array([], bool)
  
         found = t_explore[ever_ate]                       # temps de ceux qui ont mangé
+        # Duree de vie : meme precaution que pour explore_time. Les survivants
+        # sont CENSURES A DROITE -- leur "age" vaut la duree du rollout, pas leur
+        # duree de vie. Les moyenner avec les morts tirerait la statistique vers
+        # lab_time_steps et la rendrait ininterpretable. On resume donc sur les
+        # morts seuls, et frac_died dit quelle part de la population c'est.
         summary = {
             "chunk":            self.chunk_idx + 1,
             "n_agents":         int(ever_ate.size),        # tous les agents testés
             "n_found_food":     int(found.size),           # ceux retenus dans explore_time
             "frac_found_food":  float(ever_ate.mean()) if ever_ate.size else 0.0,
+            "n_died":           int(died.sum()),
+            "frac_died":        float(died.mean()) if died.size else 0.0,
+            **_dispersion(age[died], "lifetime", empty=float("nan")),
             **_dispersion(found, "explore_time", empty=float("nan")),
             **_dispersion(_clean(greed), "greediness", empty=float("nan")),  # <== NOUVEAU
         }
-        agg = {"t_explore": t_explore, "ever_ate": ever_ate, "greediness": greed}
+        # age et died bruts : de quoi refaire une analyse de survie correcte
+        # (Kaplan-Meier) plutot que de se contenter du resume sur les morts.
+        agg = {"t_explore": t_explore, "ever_ate": ever_ate, "greediness": greed,
+               "age": age, "died": died}
         return agg, summary
  
     # =================================================================
