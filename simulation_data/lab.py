@@ -47,6 +47,10 @@ def _vmap_rot(params, key_env, cles, cfg, model, rot):
         params, cles)
 
 EVO_BATCH    = 25     # enfants evalues par vmap : borne la memoire GPU
+# Pas de simulation entre deux figures d'energie. Le lab tourne bien plus
+# souvent que ces figures ne sont utiles : il en sortait une par genome a chaque
+# evaluation, soit des milliers de PNG sur un run long.
+PERIODE_ENERGIE = 1_000_000
 GREED_WINDOW = 10     # W : fenetres non chevauchantes pour la greediness
 REWARD_LAG   = 1      # log.rewards[t] = recompense gagnee au pas t-1
 #   Une fois `obs=state.obs` applique dans StepLog :
@@ -559,10 +563,25 @@ class LabMixin:
                                 resources_rot,
                                 label=f"adapt_{name}_chunk_{self.chunk_idx}_lab_{b}")
 
-    def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=10):
+    def _plot_energy(self, outputs, exp_dir, lab_dir, env_title, n_envs=1):
         """Sauve exp_dir/energy/<lab_dir>/chunk_<N>_agent_<b>.png pour les
         n_envs premiers génomes (les survivants sont déjà triés). Un sous-graphe
-        par agent vivant : 1 pour lab_1/lab_2, 4 pour lab_3 (les clones)."""
+        par agent vivant : 1 pour lab_1/lab_2, 4 pour lab_3 (les clones).
+
+        Cadence propre, en PAS de simulation, et UN genome par figure.
+
+        Le compteur est porte par l'instance plutot que deduit d'un modulo sur
+        chunk_idx : rien ne garantit qu'un chunk d'evaluation tombe pile sur un
+        multiple de PERIODE_ENERGIE, et la figure ne sortirait alors jamais.
+        Il est tenu par lab_dir, sinon la premiere variante consommerait le
+        creneau et les trois autres seraient muettes.
+        """
+        pas = self.chunk_idx * self.cfg.chunk_size
+        derniers = self.__dict__.setdefault("_dernier_pas_energie", {})
+        if lab_dir in derniers and pas - derniers[lab_dir] < PERIODE_ENERGIE:
+            return
+        derniers[lab_dir] = pas
+
         plot_lab_energy(
             energy          = np.asarray(outputs.energy),      # (B, T, N)
             alive           = np.asarray(outputs.alive),       # (B, T, N)
