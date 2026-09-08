@@ -402,6 +402,16 @@ def parse_cli(cfg):
     p.add_argument("-m", "--model", dest="model_version",
                    choices=sorted(MODEL_VERSIONS) + ["custom"],
                    default=cfg.model_version, help="version du reseau (defaut %(default)s)")
+    # prob_factor et delta_energy vivent dans les ResourceConfig, pas dans
+    # Config : ils ne peuvent pas passer par CLI_PARAMS, qui ne sait ecrire que
+    # des champs plats. Ils sont appliques a la main plus bas.
+    p.add_argument("--pf", "--prob-factor", dest="prob_factor", type=float,
+                   nargs="+", default=None, metavar="V",
+                   help="prob_factor : une valeur pour toutes les ressources, "
+                        "ou une par canal, dans l'ordre des canaux")
+    p.add_argument("--de", "--delta-energy", dest="delta_energy", type=float,
+                   nargs="+", default=None, metavar="V",
+                   help="delta_energy : meme regle que --pf")
     p.add_argument("-s", "--seed",    type=int, default=None,
                    help="graine (defaut 105). Avec --from, la passer ignore les "
                         "graines chargees et en regenere de neuves")
@@ -435,6 +445,27 @@ def parse_cli(cfg):
         subkeys = None
         print(f"[cli] --seed {args.seed} : graines de --from ignorees, "
               f"nouveau tirage")
+
+    # Ressources : une valeur pour toutes, ou une par canal. On applique dans
+    # l'ordre des canaux -- celui de cfg.resources, donc celui du config.json --
+    # et on imprime le resultat, parce qu'apres un shuffle canal != identite et
+    # que le lecteur ne peut pas deviner lequel a ete touche.
+    res = list(cfg.resources)
+    for nom, champ in (("--pf", "prob_factor"), ("--de", "delta_energy")):
+        vals = getattr(args, champ)
+        if vals is None:
+            continue
+        if len(vals) == 1:
+            vals = vals * len(res)
+        elif len(vals) != len(res):
+            p.error(f"{nom} : {len(vals)} valeur(s) pour {len(res)} ressource(s) "
+                    f"— en donner 1 (pour toutes) ou {len(res)}")
+        res = [r.replace(**{champ: v}) for r, v in zip(res, vals)]
+    if args.prob_factor is not None or args.delta_energy is not None:
+        maj["resources"] = tuple(res)
+        print("[cli] ressources :", "  ".join(
+            f"c{k}={label_of(r.id)} pf={r.prob_factor:g} de={r.delta_energy:+g}"
+            for k, r in enumerate(res)))
 
     neuf = cfg._replace(**maj)
     diff = {c: getattr(neuf, c) for c in Config._fields
