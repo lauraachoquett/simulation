@@ -2162,79 +2162,89 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
     plt.close(fig)
     print(f"Figure saved: {out}")
 
+def plot_age_structure(alive, born_step, step, exp_dir, age_bin=100,
+                       fig_dir=None):
+    """Effectif par casier d'age, a UN pas donne.
+
+    Dit si la population est renouvelee ou vieillissante ; un pic unique au
+    premier casier suit un effondrement recent. Le slot 0 est exclu : c'est
+    l'index de gestion JAX, jamais un agent.
+    """
+    alive = np.asarray(alive).astype(bool).copy()
+    alive[0] = False
+    born = np.asarray(born_step, dtype=float)
+    step = int(step)
+    n = int(alive.sum())
+    if n == 0:
+        print("Age structure : aucun agent vivant, figure sautee.")
+        return
+
+    age = step - born[alive]
+    age = age[np.isfinite(age) & (age >= 0)]
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    if age.size:
+        hi = max(age.max(), age_bin)
+        ax.hist(age, bins=np.arange(0, hi + age_bin, age_bin), color="#7A6041",
+                edgecolor="white", linewidth=.6, zorder=3)
+        ax.axvline(np.median(age), color="#C1121F", ls="--", lw=1.3, zorder=4,
+                   label=f"median {np.median(age):.0f}")
+        ax.legend(fontsize=9, frameon=False)
+    ax.set_xlabel(f"Age (steps, bins of {age_bin})")
+    ax.set_ylabel("Number of agents")
+    ax.grid(axis="y", alpha=.3, zorder=0)
+    ax.set_title(f"Age structure at step {step}  ({n} agents)", fontsize=12)
+
+    fig.tight_layout()
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig", "snapshot")
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, f"age_structure_step_{step}.png")
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+
 
 # Ordre fige par agent_mov.action_depl_theta : (dtheta, deplacement).
 # On nomme la rotation par son angle et non "gauche/droite" : le sens depend de
 # la convention d'orientation, l'angle est sans ambiguite.
 ACTION_LABELS = ("Stay", "Turn +\u03c0/2", "Turn \u2212\u03c0/2", "Advance")
+ACTION_COLORS = ("#BDBDBD", "#90CAF9", "#4FC3F7", "#E63946")
 
 
-def plot_population_snapshot(alive, last_actions, born_step, step, exp_dir,
-                             age_bin=100, fig_dir=None):
-    """Etat de la population a UN pas : que fait-elle, et de quel age est-elle.
+def plot_action_distribution(actions, exp_dir, start_step=0, steps=None,
+                             fig_dir=None):
+    """Repartition des actions au fil du temps, en aires empilees.
 
-    Deux lectures complementaires. A gauche, une barre qui occupe presque tout
-    signale une politique degeneree -- tout avancer, ou tout rester. A droite,
-    la structure d'age dit si la population est renouvelee ou vieillissante ;
-    un pic unique au premier casier suit un effondrement recent.
-
-    Le slot 0 est exclu partout : c'est l'index de gestion JAX, jamais un agent.
+    `actions` est (T, n_actions) : la fraction des agents VIVANTS ayant choisi
+    chaque action, un point par pas. Une bande qui occupe tout signale une
+    politique degeneree -- tout avancer, ou tout rester -- ce qu'une moyenne
+    globale masquerait.
     """
-    alive = np.asarray(alive).astype(bool)
-    acts  = np.asarray(last_actions, dtype=float)
-    born  = np.asarray(born_step, dtype=float)
-    step  = int(step)
-
-    vivants = alive.copy()
-    vivants[0] = False
-    n = int(vivants.sum())
-    if n == 0:
-        print("Snapshot : aucun agent vivant, figure sautee.")
+    a = np.asarray(actions, dtype=float)
+    if a.ndim != 2 or a.shape[0] == 0:
+        print("Action distribution : rien a tracer.")
         return
+    x = (np.asarray(steps) if steps is not None
+         else np.arange(start_step, start_step + a.shape[0]))
 
-    fig, (ga, dr) = plt.subplots(1, 2, figsize=(12, 4.4))
-
-    # --- repartition des actions ---
-    a = acts[vivants]
-    # one-hot -> indice ; une ligne toute a zero (agent qui n'a pas encore agi)
-    # ne doit pas compter comme "rester", d'ou le masque sur la somme
-    a_ok = a.sum(axis=1) > 0
-    idx = np.argmax(a[a_ok], axis=1)
-    n_act = acts.shape[1]
-    parts = np.bincount(idx, minlength=n_act) / max(a_ok.sum(), 1)
+    n_act = a.shape[1]
     noms = [ACTION_LABELS[k] if k < len(ACTION_LABELS) else f"a{k}"
             for k in range(n_act)]
 
-    ga.bar(noms, parts, color="#41617A", width=.62, zorder=3)
-    for k, v in enumerate(parts):
-        ga.text(k, v + .015, f"{v:.2f}", ha="center", fontsize=9, color="0.3")
-    ga.set_ylabel("Fraction of living agents")
-    ga.set_ylim(0, max(1.0, parts.max() * 1.15))
-    ga.grid(axis="y", alpha=.3, zorder=0)
-    ga.set_title(f"Action distribution  ({int(a_ok.sum())} agents)", fontsize=11)
+    fig, ax = plt.subplots(figsize=(9, 4.4))
+    ax.stackplot(x, *[a[:, k] for k in range(n_act)],
+                 labels=noms, colors=ACTION_COLORS[:n_act], alpha=.85)
+    ax.set_xlabel("Steps")
+    ax.set_ylabel("Fraction of living agents")
+    ax.set_ylim(0, 1)
+    ax.set_xlim(x[0], x[-1])
+    ax.set_title("Action distribution over time", fontsize=12)
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
 
-    # --- effectif par casier d'age ---
-    age = step - born[vivants]
-    age = age[np.isfinite(age) & (age >= 0)]
-    if age.size:
-        hi = max(age.max(), age_bin)
-        bords = np.arange(0, hi + age_bin, age_bin)
-        dr.hist(age, bins=bords, color="#7A6041", edgecolor="white",
-                linewidth=.6, zorder=3)
-        dr.axvline(np.median(age), color="#C1121F", ls="--", lw=1.3, zorder=4,
-                   label=f"median {np.median(age):.0f}")
-        dr.legend(fontsize=9, frameon=False)
-    dr.set_xlabel(f"Age (steps, bins of {age_bin})")
-    dr.set_ylabel("Number of agents")
-    dr.grid(axis="y", alpha=.3, zorder=0)
-    dr.set_title(f"Age structure  ({n} agents)", fontsize=11)
-
-    fig.suptitle(f"Population snapshot at step {step}", fontsize=12.5)
     fig.tight_layout()
-
-    fig_dir = fig_dir or os.path.join(exp_dir, "fig", "snapshot")
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig")
     os.makedirs(fig_dir, exist_ok=True)
-    out = os.path.join(fig_dir, f"population_snapshot_step_{step}.png")
+    out = os.path.join(fig_dir, "action_distribution.png")
     fig.savefig(out, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {out}")
@@ -2379,7 +2389,7 @@ def plot_lab_exploration(exp_dir):
  
     frac = np.array([s["frac_found_food"] for s in S])
  
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharex=True)
+    fig, axes = plt.subplots(1, 4, figsize=(19, 4), sharex=True)
  
     axes[0].plot(x, frac, marker="o", color="C2")
     axes[0].set_title("Fraction of agents that found food")
@@ -2400,6 +2410,23 @@ def plot_lab_exploration(exp_dir):
     axes[1].grid(alpha=0.3)
     axes[1].legend(loc="best")
  
+    # Duree de vie : conditionnelle aux MORTS, les survivants etant censures a
+    # droite (l'episode s'arrete a lab_time_steps). La part de morts est tracee
+    # sur le meme panneau, en axe secondaire : sans elle une hausse de la duree
+    # mediane peut n'etre qu'une baisse de la mortalite.
+    _plot_band(axes[3], x, S, "lifetime", color="C3", label="median (dead only)")
+    axes[3].set_title("Lifespan of agents that died")
+    axes[3].set_ylabel("steps")
+    axes[3].grid(alpha=0.3)
+    if all("frac_died" in s_ for s_ in S):
+        jum = axes[3].twinx()
+        jum.plot(x, [s_["frac_died"] for s_ in S], color="0.45", lw=1.1,
+                 ls="--", marker=".", ms=4)
+        jum.set_ylabel("fraction that died", color="0.45")
+        jum.set_ylim(0, 1)
+        jum.tick_params(axis="y", colors="0.45")
+    axes[3].legend(loc="best", fontsize=8)
+
     for ax in axes:
         ax.set_xlabel("chunk")
  

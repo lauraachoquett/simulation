@@ -39,6 +39,28 @@ def compute_seen_eaten_chunk(outputs, window=EAT_WINDOW):
     return n_seen, n_eaten
 
 
+def compute_action_fractions_chunk(outputs):
+    """(T, n_actions) : part des agents VIVANTS ayant choisi chaque action.
+
+    Reduit des le chunk, comme les autres series : garder (T, N, n_actions) sur
+    tout le run coûterait 1000 pas x 2000 agents x 4 par chunk pour un trace qui
+    n'a besoin que des fractions.
+
+    Le slot 0 est exclu (index de gestion JAX), et un agent dont le one-hot est
+    entierement nul -- il n'a pas encore agi -- est retire du denominateur au
+    lieu d'etre compte comme "rester", ce qu'un argmax naif ferait.
+    """
+    acts  = np.asarray(outputs.actions)          # (T, N, n_actions), one-hot
+    alive = np.asarray(outputs.alive).astype(bool).copy()   # (T, N)
+    alive[:, 0] = False
+    pris = acts.sum(axis=-1) > 0                 # (T, N) a agi
+    m = (alive & pris)[..., None]                # (T, N, 1)
+    compte = (acts * m).sum(axis=1)              # (T, n_actions)
+    total = compte.sum(axis=1, keepdims=True)
+    return np.divide(compte, total, out=np.zeros_like(compte, dtype=float),
+                     where=total > 0)
+
+
 class DemographyMixin:
 
     def _init_demography(self):
@@ -50,6 +72,7 @@ class DemographyMixin:
         self.eaten_seen_history = []
         self.mov_history = []
         self.life_history = []
+        self.action_history = []
 
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx
@@ -60,6 +83,7 @@ class DemographyMixin:
         res_chunk = np.array(outputs.grid[:, :n_types, :, :].sum(axis=(2, 3)))
         consumed_chunk = np.array(outputs.consumed_res)           # (T, n_types)
         seen_chunk, eaten_seen_chunk = compute_seen_eaten_chunk(outputs)
+        action_chunk = compute_action_fractions_chunk(outputs)    # (T, n_actions)
         mov_chunk  = compute_mean_movement_chunk(outputs, self.cfg.grid_length)
         life_chunk = compute_lifetime_chunk(outputs, self.cfg)
 
@@ -71,6 +95,7 @@ class DemographyMixin:
         self.eaten_seen_history.append(eaten_seen_chunk)
         self.mov_history.append(mov_chunk)
         self.life_history.append(life_chunk)
+        self.action_history.append(action_chunk)
 
         np.savez(
             os.path.join(data_dir, f"chunk_{self.chunk_idx:05d}.npz"),
@@ -82,6 +107,7 @@ class DemographyMixin:
             n_eaten_seen  = eaten_seen_chunk,
             mean_movement = mov_chunk,
             mean_life     = life_chunk,
+            action_frac   = action_chunk,
         )
 
     def check_end_condition(self):

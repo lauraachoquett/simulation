@@ -22,7 +22,8 @@ from simulation.utils.plots import (
     plot_lifetime_vs_step,
     plot_life_expectancy,
     plot_invasion,
-    plot_population_snapshot,
+    plot_age_structure,
+    plot_action_distribution,
 )
 
 from simulation.utils.utils_sim import load_shuffle_log
@@ -120,11 +121,16 @@ class simulation_data(DemographyMixin, GenealogyMixin, WeightsMixin, LabMixin):
             state.agents.position, state.agents.alive,
             exp_dir, self.cfg.resources,name_fig=f'{self.chunk_idx}',
         )
-        # Instantane de la population au pas courant : ce que font les agents,
-        # et de quel age ils sont. Lu sur `state`, donc au pas exact du tracage.
-        plot_population_snapshot(
-            state.agents.alive, state.last_actions, state.agents.born_step,
-            int(state.step), exp_dir,
+        # Structure d'age au pas courant, lue sur `state` : un instantane par
+        # appel, le nom du fichier porte le pas.
+        plot_age_structure(state.agents.alive, state.agents.born_step,
+                           int(state.step), exp_dir)
+        # Repartition des actions : une SERIE, pas un instantane -- une politique
+        # degeneree se voit a sa bande qui s'elargit, pas a un point.
+        act_full = np.concatenate(self.action_history, axis=0)
+        plot_action_distribution(
+            block_apply(act_full, edges, "mean"), exp_dir,
+            self.start_step, steps=steps_r,
         )
         # plot_lifetime_vs_step((life_data[1, :]), (life_data[0, :]), exp_dir, self.cfg)
         plot_life_expectancy((life_data[1, :]), (life_data[0, :]), exp_dir, bin_width=1000)
