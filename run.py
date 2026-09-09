@@ -253,7 +253,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
             ## TEST AGENTS IN LAB ENV ##
             phase = (chunk_idx) % cfg.cycle_period
-            if ((chunk_idx) % cfg.lab_evaluation_freq == 0) or (phase in cfg.lab_after_shuffle):
+            # lab_after_shuffle n'a de sens que s'il y a des permutations : a une
+            # seule ressource elles sont l'identite, et ces evaluations
+            # supplementaires mesureraient une adaptation a un changement qui
+            # n'a pas eu lieu.
+            apres_shuffle = len(cfg.resources) > 1 and phase in cfg.lab_after_shuffle
+            if ((chunk_idx) % cfg.lab_evaluation_freq == 0) or apres_shuffle:
                 subkey_lab,subkey_sim = random.split(subkey_lab)
                 def submit_video(outputs_np, vid_path, *args, label=None):
                     os.makedirs(os.path.dirname(vid_path), exist_ok=True)  # avant submit
@@ -284,7 +289,11 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
 
             ## SHUFFLE RESOURCES ##
-            if (chunk_idx) % cfg.cycle_period == 0 and chunk_idx >10 :
+            # A une ressource, permuter est l'identite : le shuffle ne changeait
+            # rien mais imprimait et journalisait une ligne a chaque cycle, ce
+            # qui laisse croire a un changement dans resource_shuffles.jsonl.
+            if ((chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10
+                    and len(cfg.resources) > 1):
                 old_resources = cfg.resources
                 if cfg.shuffle_version == "v1":
                     # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
