@@ -18,9 +18,10 @@ Trois points de conception valent d'etre connus.
    checkpoint tardif avec cet ordre ferait porter chaque metrique sur la mauvaise
    identite, sans que rien ne le signale.
 
-3. Meme `key_env` pour tous les checkpoints. C'est ce qui rend la serie
-   comparable : la grille de depart du lab est identique partout, seuls les
-   genomes changent.
+3. Meme `key_env` pour tous les checkpoints, tiree de cfg.lab_seed. C'est ce
+   qui rend la serie comparable -- grille de depart identique partout, seuls les
+   genomes changent -- et ce qui aligne le rejeu sur les evaluations faites
+   pendant le run.
 
 L'env d'ADAPTATION n'est pas rejoue : il empile ses rotations et c'est lui qui
 avait fait tomber le GPU en OOM. Les videos non plus, elles dominent le cout.
@@ -109,7 +110,9 @@ def main():
                    help="genomes par checkpoint, 0 = toute la population")
     p.add_argument("--lab", dest="lab_time_steps", type=int, default=None,
                    help="duree du rollout (defaut : celle de la config)")
-    p.add_argument("--seed", type=int, default=0, help="graine du lab")
+    p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
+                   help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
+                        "que le rejeu tombe sur le MEME etalon que le run)")
     a = p.parse_args()
 
     cfg, _ = load_config(a.exp_dir)
@@ -128,9 +131,13 @@ def main():
         return
     print(f"{len(ckpts)} checkpoint(s) : {[c for c, _ in ckpts]}")
 
-    # une seule cle d'env pour toute la serie : voir le point 3 de l'en-tete
-    cle = random.PRNGKey(a.seed)
-    cle, key_env = random.split(cle)
+    # une seule cle d'env pour toute la serie : voir le point 3 de l'en-tete.
+    # Elle vient de cfg.lab_seed, donc le rejeu note les genomes sur exactement
+    # le meme etalon que les evaluations faites pendant le run.
+    graine_lab = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
+    key_env = random.PRNGKey(graine_lab)
+    cle = random.PRNGKey(graine_lab + 1)
+    print(f"env de lab : graine {graine_lab}")
 
     sd = simulation_data(cfg, 0, 1)
 

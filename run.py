@@ -179,8 +179,11 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     initial_grid_res = state.grid[:n_types, :, :]       
     chunks_survived = start_chunk
     
-    key,subkey_lab = random.split(key) #same lab env for every test
-    subkey_lab,subkey_env_lab = random.split(subkey_lab) #same lab env for every test
+    key, subkey_lab = random.split(key)
+    # L'env de lab a sa PROPRE graine, sans lien avec celle du run : c'est ce qui
+    # rend deux runs comparables. Derivee de key, elle changeait avec -s et
+    # chaque graine etait notee sur un etalon different.
+    subkey_env_lab = random.PRNGKey(cfg.lab_seed)
     
     plot_current_config(initial_grid_res,state.grid[-1, :, :] ,state.agents.position, state.agents.alive, exp_dir , cfg.resources,name_fig=f'init')
 
@@ -343,6 +346,7 @@ CLI_PARAMS = [
     (("--mvar",),         "mutation_var",                   float),
     (("--pregrow",),      "pre_growth_step",                int),
     (("--lab",),          "lab_time_steps",                 int),
+    (("--lab-seed",),     "lab_seed",                       int),
     (("--video-freq",),   "video_freq",                     int),
     (("--crowd-start",),  "crowd_start",                    int),
     (("--crowd-limit",),  "crowd_limit",                    int),

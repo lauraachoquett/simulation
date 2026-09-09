@@ -169,6 +169,12 @@ class Config(NamedTuple):
     crowd_prob_factor : float = None
     crowd_pop_res_prob : float = None
     
+    # Graine de l'ENVIRONNEMENT de lab, independante de celle du run. Sans ce
+    # decouplage, subkey_env_lab derivait de PRNGKey(args.seed) : deux runs de
+    # graines differentes etaient mesures dans deux labs differents, et l'ecart
+    # entre eux melangeait la difference des genomes a celle de l'etalon.
+    lab_seed : int = 0
+
     lab_time_steps : int = 2000
 
     hidden_dim : int = 8              # taille du carry LSTM (h et c), cf. reset_b
