@@ -998,19 +998,21 @@ class LabMixin:
         died      = np.concatenate(died).astype(bool) if died else np.array([], bool)
  
         found = t_explore[ever_ate]                       # temps de ceux qui ont mangé
-        # Duree de vie : meme precaution que pour explore_time. Les survivants
-        # sont CENSURES A DROITE -- leur "age" vaut la duree du rollout, pas leur
-        # duree de vie. Les moyenner avec les morts tirerait la statistique vers
-        # lab_time_steps et la rendrait ininterpretable. On resume donc sur les
-        # morts seuls, et frac_died dit quelle part de la population c'est.
+        # Duree de vie : MEMES CLES que l'env high_res (data_lab_env), pour que
+        # les deux se tracent avec le meme code et se comparent sans conversion.
+        #   duree_vie      : tous les agents, survivants compris -- ceux-ci sont
+        #                    censures a droite, leur age vaut la duree du rollout
+        #   duree_vie_mort : les morts seuls, grandeur conditionnelle
         summary = {
             "chunk":            self.chunk_idx + 1,
             "n_agents":         int(ever_ate.size),        # tous les agents testés
             "n_found_food":     int(found.size),           # ceux retenus dans explore_time
             "frac_found_food":  float(ever_ate.mean()) if ever_ate.size else 0.0,
-            "n_died":           int(died.sum()),
-            "frac_died":        float(died.mean()) if died.size else 0.0,
-            **_dispersion(age[died], "lifetime", empty=float("nan")),
+            "n_morts":          int(died.sum()),
+            "n_survivants":     int((~died).sum()),
+            "frac_survie":      float((~died).mean()) if died.size else 0.0,
+            **_dispersion(age,       "duree_vie"),
+            **_dispersion(age[died], "duree_vie_mort", empty=float("nan")),
             **_dispersion(found, "explore_time", empty=float("nan")),
             **_dispersion(_clean(greed), "greediness", empty=float("nan")),  # <== NOUVEAU
         }

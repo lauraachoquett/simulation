@@ -347,6 +347,17 @@ CLI_PARAMS = [
     (("--replay-n",),     "replay_top_n",                   int),
     (("--replay-keys",),  "replay_keys",                    int),
     (("--replay-video-frac",), "replay_video_min_frac",     float),
+    # --- ajoutes pour piloter une config entiere depuis la ligne de commande ---
+    (("--grid",),         "grid_length",                    int),
+    (("--chunk",),        "chunk_size",                     int),
+    (("--ckpt-freq",),    "checkpoint_freq",                int),
+    (("--agents-init",),  "n_agents_init",                  int),
+    (("--time-to-die",),  "time_to_die",                    int),
+    # float et non int : les config.json existants y portent 210.0
+    (("--time-above-repr",), "time_above_repr",             float),
+    (("--min-energy-repr",), "min_energy_repr",             float),
+    (("--start-energy",), "starting_energy",                float),
+    (("--energy-to-die",), "energy_to_die",                 float),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config
@@ -357,6 +368,8 @@ CLI_FLAGS = [
     (("--randpos",), "random_pos_offspring"),
     (("--mem-ablation",), "lab_memory_ablation"),
     (("--weights",), "track_weights"),
+    (("--repro",),   "reproduction_on"),
+    (("--growth",),  "resources_growth"),
 ]
 
 
@@ -412,6 +425,12 @@ def parse_cli(cfg):
     p.add_argument("--de", "--delta-energy", dest="delta_energy", type=float,
                    nargs="+", default=None, metavar="V",
                    help="delta_energy : meme regle que --pf")
+    p.add_argument("--prp", "--pop-res-prob", dest="pop_res_prob", type=float,
+                   nargs="+", default=None, metavar="V",
+                   help="pop_res_prob : meme regle que --pf")
+    p.add_argument("--init-res", dest="init_number_of_resources", type=int,
+                   nargs="+", default=None, metavar="N",
+                   help="init_number_of_resources : meme regle que --pf")
     p.add_argument("-s", "--seed",    type=int, default=None,
                    help="graine (defaut 105). Avec --from, la passer ignore les "
                         "graines chargees et en regenere de neuves")
@@ -451,7 +470,9 @@ def parse_cli(cfg):
     # et on imprime le resultat, parce qu'apres un shuffle canal != identite et
     # que le lecteur ne peut pas deviner lequel a ete touche.
     res = list(cfg.resources)
-    for nom, champ in (("--pf", "prob_factor"), ("--de", "delta_energy")):
+    for nom, champ in (("--pf", "prob_factor"), ("--de", "delta_energy"),
+                       ("--prp", "pop_res_prob"),
+                       ("--init-res", "init_number_of_resources")):
         vals = getattr(args, champ)
         if vals is None:
             continue
@@ -461,10 +482,13 @@ def parse_cli(cfg):
             p.error(f"{nom} : {len(vals)} valeur(s) pour {len(res)} ressource(s) "
                     f"— en donner 1 (pour toutes) ou {len(res)}")
         res = [r.replace(**{champ: v}) for r, v in zip(res, vals)]
-    if args.prob_factor is not None or args.delta_energy is not None:
+    if any(getattr(args, c) is not None for c in
+           ("prob_factor", "delta_energy", "pop_res_prob",
+            "init_number_of_resources")):
         maj["resources"] = tuple(res)
         print("[cli] ressources :", "  ".join(
-            f"c{k}={label_of(r.id)} pf={r.prob_factor:g} de={r.delta_energy:+g}"
+            f"c{k}={label_of(r.id)} pf={r.prob_factor:g} de={r.delta_energy:+g} "
+            f"prp={r.pop_res_prob:g} n0={r.init_number_of_resources}"
             for k, r in enumerate(res)))
 
     neuf = cfg._replace(**maj)

@@ -2410,22 +2410,14 @@ def plot_lab_exploration(exp_dir):
     axes[1].grid(alpha=0.3)
     axes[1].legend(loc="best")
  
-    # Duree de vie : conditionnelle aux MORTS, les survivants etant censures a
-    # droite (l'episode s'arrete a lab_time_steps). La part de morts est tracee
-    # sur le meme panneau, en axe secondaire : sans elle une hausse de la duree
-    # mediane peut n'etre qu'une baisse de la mortalite.
-    _plot_band(axes[3], x, S, "lifetime", color="C3", label="median (dead only)")
-    axes[3].set_title("Lifespan of agents that died")
+    # Duree de vie : STRICTEMENT le meme panneau que celui de plot_lab_metrics
+    # (env high_res) -- meme cle, meme _plot_band, meme titre, meme unite. Les
+    # deux figures se lisent donc de la meme facon.
+    _plot_band(axes[3], x, S, "duree_vie")
+    axes[3].set_title("Lifespan")
     axes[3].set_ylabel("steps")
     axes[3].grid(alpha=0.3)
-    if all("frac_died" in s_ for s_ in S):
-        jum = axes[3].twinx()
-        jum.plot(x, [s_["frac_died"] for s_ in S], color="0.45", lw=1.1,
-                 ls="--", marker=".", ms=4)
-        jum.set_ylabel("fraction that died", color="0.45")
-        jum.set_ylim(0, 1)
-        jum.tick_params(axis="y", colors="0.45")
-    axes[3].legend(loc="best", fontsize=8)
+    axes[3].legend(loc="best")
 
     for ax in axes:
         ax.set_xlabel("chunk")
