@@ -27,37 +27,44 @@ import numpy as np
 from jax import random
 
 from simulation.data_class import Config, BASE_RESOURCES, label_of, color_of, resolve_model
-from simulation.lab_env import vmap_over_agents_env_lab_high_res
+from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
+                                vmap_over_agents_env_lab_low_res)
 from simulation.run import build_model
 from simulation.utils.utils_sim import load_config
 
 
-def grille_de_depart(cfg, model, graine):
+# Les deux env de MESURE. lab_3 (clones) partage la grille de high_res, il
+# n'apporte rien de plus a regarder ici.
+ENVS = (("high_res", vmap_over_agents_env_lab_high_res),
+        ("low_res",  vmap_over_agents_env_lab_low_res))
+
+
+def grille_de_depart(fn, cfg, model, graine):
     """(n_types, L, L), (L, L) : ressources et murs au premier pas du lab."""
     params = jnp.zeros((1, model.num_params))
     cfg_v = cfg._replace(log_grid=True, lab_time_steps=2)
-    _, out = vmap_over_agents_env_lab_high_res(
-        params, random.PRNGKey(graine), random.split(random.PRNGKey(0), 1),
-        model, cfg_v)
+    _, out = fn(params, random.PRNGKey(graine),
+                random.split(random.PRNGKey(0), 1), model, cfg_v)
     g = np.asarray(out.grid[0, 0])            # (n_types + 2, L, L)
     n = len(cfg.resources)
     return g[:n], g[n + 1]
 
 
 def trace(grilles, cfg, sortie):
-    """Une vignette par graine, plus le compte par identite."""
-    n_types = len(cfg.resources)
-    k = len(grilles)
-    cols = min(k, 4)
-    lignes = (k + cols - 1) // cols
-    fig, axes = plt.subplots(lignes, cols, figsize=(3.6 * cols, 3.9 * lignes),
+    """Une LIGNE par environnement, une COLONNE par graine.
+
+    Ce sens-la et non l'inverse : on choisit une graine, donc ce qu'on compare
+    est une colonne entiere -- il faut voir d'un coup ce que la meme graine
+    donne dans les deux env.
+    """
+    seeds = sorted({graine for _, graine, _, _ in grilles})
+    noms = [n for n, _ in ENVS]
+    fig, axes = plt.subplots(len(noms), len(seeds),
+                             figsize=(3.5 * len(seeds), 3.9 * len(noms)),
                              squeeze=False)
 
-    for ax in axes.ravel()[k:]:
-        ax.axis("off")
-
-    for i, (graine, res, murs) in enumerate(grilles):
-        ax = axes[i // cols, i % cols]
+    for env, graine, res, murs in grilles:
+        ax = axes[noms.index(env)][seeds.index(graine)]
         L = murs.shape[0]
         img = np.ones((L, L, 3))
         img[murs > 0] = (0.25, 0.25, 0.25)
@@ -70,12 +77,12 @@ def trace(grilles, cfg, sortie):
         ax.set_xticks([]); ax.set_yticks([])
         comptes = "  ".join(f"{label_of(r.id)} {int(res[c].sum())}"
                             for c, r in enumerate(cfg.resources))
-        ax.set_title(f"seed {graine}\n{comptes}", fontsize=9)
+        ax.set_title(f"{env} · seed {graine}\n{comptes}", fontsize=9)
 
-    fig.suptitle("Lab starting grid, by seed  "
-                 f"(grid {grilles[0][2].shape[0]}, agents spawn in the central band)",
-                 fontsize=12)
-    # rect et h_pad : sans eux les titres de la 2e ligne recouvrent la 1ere
+    fig.suptitle("Lab starting grids, by environment and seed"
+                 f"  (grid {grilles[0][3].shape[0]}, "
+                 "agents spawn in the central band)", fontsize=12)
+    # rect et h_pad : sans eux les titres d'une ligne recouvrent la precedente
     fig.tight_layout(rect=[0, 0, 1, 0.94], h_pad=2.6)
     os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
     fig.savefig(sortie, dpi=150)
@@ -127,12 +134,13 @@ def main():
     model = build_model(cfg)
 
     grilles = []
-    for s in a.seeds:
-        res, murs = grille_de_depart(cfg, model, s)
-        grilles.append((s, res, murs))
-        print(f"  seed {s:>4} : "
-              + "  ".join(f"{label_of(r.id)}={int(res[c].sum())}"
-                          for c, r in enumerate(cfg.resources)))
+    for nom, fn in ENVS:
+        for s in a.seeds:
+            res, murs = grille_de_depart(fn, cfg, model, s)
+            grilles.append((nom, s, res, murs))
+            print(f"  {nom:<9} seed {s:>4} : "
+                  + "  ".join(f"{label_of(r.id)}={int(res[c].sum())}"
+                              for c, r in enumerate(cfg.resources)))
     trace(grilles, cfg, a.out)
 
 
