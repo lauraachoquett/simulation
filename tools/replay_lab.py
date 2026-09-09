@@ -98,10 +98,14 @@ def par_lots(fn, params, key_env, cles, model, cfg, batch):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("exp_dir", help="dossier d'experience a rejouer")
+    p.add_argument("exp_dirs", nargs="+", metavar="EXP_DIR",
+                   help="un ou plusieurs dossiers d'experience a rejouer")
     p.add_argument("--out", default=None,
-                   help="dossier de sortie (defaut <exp_dir>/replay). Ecrire "
-                        "ailleurs que dans exp_dir preserve les donnees du run")
+                   help="dossier de sortie. Defaut <exp_dir>/replay, un par "
+                        "experience. Avec --out et plusieurs experiences, un "
+                        "sous-dossier par nom d'experience : sans ca elles "
+                        "ecriraient toutes dans le meme lab_data et les "
+                        "resumes se melangeraient")
     p.add_argument("--chunks", type=int, nargs="*", default=None,
                    help="checkpoints a rejouer (defaut : tous)")
     p.add_argument("--batch", type=int, default=25,
@@ -115,74 +119,78 @@ def main():
                         "que le rejeu tombe sur le MEME etalon que le run)")
     a = p.parse_args()
 
-    cfg, _ = load_config(a.exp_dir)
-    if a.lab_time_steps:
-        cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
-    model = build_model(cfg)
-    sortie = a.out or os.path.join(a.exp_dir, "replay")
-    os.makedirs(sortie, exist_ok=True)
+    for exp_dir in a.exp_dirs:
+        print(f"\n=== {exp_dir}")
+        cfg, _ = load_config(exp_dir)
+        if a.lab_time_steps:
+            cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
+        model = build_model(cfg)
+        sortie = (os.path.join(a.out, os.path.basename(exp_dir.rstrip('/')))
+                  if a.out and len(a.exp_dirs) > 1
+                  else a.out or os.path.join(exp_dir, "replay"))
+        os.makedirs(sortie, exist_ok=True)
 
-    ckpts = checkpoints_de(a.exp_dir)
-    if a.chunks:
-        garde = set(a.chunks)
-        ckpts = [c for c in ckpts if c[0] in garde]
-    if not ckpts:
-        print(f"Aucun checkpoint dans {a.exp_dir}/checkpoints/")
-        return
-    print(f"{len(ckpts)} checkpoint(s) : {[c for c, _ in ckpts]}")
+        ckpts = checkpoints_de(exp_dir)
+        if a.chunks:
+            garde = set(a.chunks)
+            ckpts = [c for c in ckpts if c[0] in garde]
+        if not ckpts:
+            print(f"Aucun checkpoint dans {exp_dir}/checkpoints/")
+            return
+        print(f"{len(ckpts)} checkpoint(s) : {[c for c, _ in ckpts]}")
 
-    # une seule cle d'env pour toute la serie : voir le point 3 de l'en-tete.
-    # Elle vient de cfg.lab_seed, donc le rejeu note les genomes sur exactement
-    # le meme etalon que les evaluations faites pendant le run.
-    graine_lab = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
-    key_env = random.PRNGKey(graine_lab)
-    cle = random.PRNGKey(graine_lab + 1)
-    print(f"env de lab : graine {graine_lab}")
+        # une seule cle d'env pour toute la serie : voir le point 3 de l'en-tete.
+        # Elle vient de cfg.lab_seed, donc le rejeu note les genomes sur exactement
+        # le meme etalon que les evaluations faites pendant le run.
+        graine_lab = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
+        key_env = random.PRNGKey(graine_lab)
+        cle = random.PRNGKey(graine_lab + 1)
+        print(f"env de lab : graine {graine_lab}")
 
-    sd = simulation_data(cfg, 0, 1)
+        sd = simulation_data(cfg, 0, 1)
 
-    for chunk, _ in ckpts:
-        state = load_checkpoint(a.exp_dir, chunk)
-        step = int(state.step)
-        res = resources_au_pas(cfg, a.exp_dir, step)
-        cfg_c = cfg._replace(resources=res, log_grid=False)
-        sd.cfg = cfg_c
-        sd.chunk_idx = chunk
+        for chunk, _ in ckpts:
+            state = load_checkpoint(exp_dir, chunk)
+            step = int(state.step)
+            res = resources_au_pas(cfg, exp_dir, step)
+            cfg_c = cfg._replace(resources=res, log_grid=False)
+            sd.cfg = cfg_c
+            sd.chunk_idx = chunk
 
-        survivants = sd.compute_survivors(state)
-        if not survivants:
-            print(f"  chunk {chunk:>5} (step {step}) : aucun survivant, saute")
-            continue
-        ids = np.array([i for i, _ in survivants])
-        if a.n:
-            ids = ids[:a.n]
-        params = state.agents.params[ids]
+            survivants = sd.compute_survivors(state)
+            if not survivants:
+                print(f"  chunk {chunk:>5} (step {step}) : aucun survivant, saute")
+                continue
+            ids = np.array([i for i, _ in survivants])
+            if a.n:
+                ids = ids[:a.n]
+            params = state.agents.params[ids]
 
-        cle, k_sim = random.split(cle)
-        cles = random.split(k_sim, len(ids))
-        canaux = " ".join(label_of(r.id) for r in res)
-        print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
-              f"canaux [{canaux}]", flush=True)
+            cle, k_sim = random.split(cle)
+            cles = random.split(k_sim, len(ids))
+            canaux = " ".join(label_of(r.id) for r in res)
+            print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
+                  f"canaux [{canaux}]", flush=True)
 
-        out_high = par_lots(vmap_over_agents_env_lab_high_res,
-                            params, key_env, cles, model, cfg_c, a.batch)
-        out_low = par_lots(vmap_over_agents_env_lab_low_res,
-                           params, key_env, cles, model, cfg_c, a.batch)
-        out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
-                           params, key_env, cles, model, cfg_c, a.batch)
+            out_high = par_lots(vmap_over_agents_env_lab_high_res,
+                                params, key_env, cles, model, cfg_c, a.batch)
+            out_low = par_lots(vmap_over_agents_env_lab_low_res,
+                               params, key_env, cles, model, cfg_c, a.batch)
+            out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
+                               params, key_env, cles, model, cfg_c, a.batch)
 
-        agg, summary = sd.data_lab_env(out_high, resources=res)
-        sd._save_lab_data(agg, summary, sortie)
+            agg, summary = sd.data_lab_env(out_high, resources=res)
+            sd._save_lab_data(agg, summary, sortie)
 
-        agg_low, summary_low = sd.data_lab_env_low_res(out_low)
-        sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
+            agg_low, summary_low = sd.data_lab_env_low_res(out_low)
+            sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
 
-        sd.compare_alone_vs_clones(out_high, out_clo, sortie)
+            sd.compare_alone_vs_clones(out_high, out_clo, sortie)
 
-    plot_lab_metrics(exp_dir=sortie)
-    plot_lab_exploration(exp_dir=sortie)
-    plot_alone_vs_clones(exp_dir=sortie)
-    print(f"\nFigures dans {os.path.join(sortie, 'fig')}")
+        plot_lab_metrics(exp_dir=sortie)
+        plot_lab_exploration(exp_dir=sortie)
+        plot_alone_vs_clones(exp_dir=sortie)
+        print(f"Figures dans {os.path.join(sortie, 'fig')}")
 
 
 if __name__ == "__main__":

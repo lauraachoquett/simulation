@@ -173,7 +173,7 @@ class Config(NamedTuple):
     # decouplage, subkey_env_lab derivait de PRNGKey(args.seed) : deux runs de
     # graines differentes etaient mesures dans deux labs differents, et l'ecart
     # entre eux melangeait la difference des genomes a celle de l'etalon.
-    lab_seed : int = 0
+    lab_seed : int = 1        # cf. tools/preview_lab_env : graine retenue
 
     lab_time_steps : int = 2000
 
