@@ -291,6 +291,30 @@ def load_config(resume_exp):
     seeds_full = [jnp.array(s, dtype=jnp.uint32) for s in cfg_dict.pop("seeds_full")]
     env = cfg_dict.pop("env", None)
     cfg_dict.pop("seeds", None)
+    # Config ANTERIEURE a la refonte par ressource : prob_factor, pop_res_prob et
+    # init_number_of_resources etaient des champs PLATS, il n'y avait qu'une
+    # ressource, et delta_energy n'existait pas -- le code faisait
+    # `rewards = local_resources` sur une grille 0/1, donc un gain de +1.0
+    # (one_simulation.py:67 a 61ace61). On reconstruit, en le disant.
+    if "resources" not in cfg_dict and "prob_factor" in cfg_dict:
+        cfg_dict["resources"] = [{
+            "init_number_of_resources": cfg_dict["init_number_of_resources"],
+            "prob_factor":  cfg_dict["prob_factor"],
+            "pop_res_prob": cfg_dict["pop_res_prob"],
+            "delta_energy": 1.0,
+            "id": 0,
+        }]
+        # Ces deux champs n'ont pas de defaut dans Config et n'existaient pas non
+        # plus. energy_max : aucun clip a l'epoque, l'energie etait NON BORNEE --
+        # prendre le defaut actuel (8.0) introduirait une saturation absente du
+        # run d'origine. lab_evaluation_freq : le lab n'existait pas, sans effet
+        # sur la dynamique.
+        cfg_dict.setdefault("energy_max", 1e9)
+        cfg_dict.setdefault("lab_evaluation_freq", 500)
+        print("[load_config] config anterieure aux ressources multiples : une "
+              "ressource reconstruite (delta_energy=+1.0), energy_max=1e9 "
+              "(l'energie n'etait pas plafonnee)")
+
     cfg_dict["resources"] = tuple(ResourceConfig(**r) for r in cfg_dict["resources"])  # <-- ajout
     # JSON ne connait que les listes : sans cette reconversion, Config redevient
     # non hachable et jax.jit(static_argnames=['cfg']) leve a la premiere trace.
