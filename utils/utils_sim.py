@@ -309,6 +309,20 @@ def load_config(resume_exp):
         cfg_dict.update(MODEL_VERSIONS["v1"], model_version="v1")
         print("[load_config] config anterieure aux champs reseau -> v1 "
               "(jointe, hidden_dim=4, hidden_layers=(8,)). Surcharger avec -m.")
+    # Cles INCONNUES de ce Config : une config ecrite par une autre branche en
+    # porte (inner_loop, vpred_oracle... viennent de simulation_meta). Le cas
+    # symetrique -- cles manquantes -- etait deja couvert par les defauts ; sans
+    # ce filtre, Config(**cfg_dict) levait un TypeError peu parlant.
+    #
+    # On les ecarte BRUYAMMENT : une option absente de cette branche ne peut pas
+    # etre honoree, et un run qui croirait reprendre `vpred_oracle: true` ferait
+    # silencieusement autre chose que le run de reference.
+    inconnues = {k: v for k, v in cfg_dict.items() if k not in Config._fields}
+    if inconnues:
+        cfg_dict = {k: v for k, v in cfg_dict.items() if k in Config._fields}
+        print("[load_config] champs ignores, inconnus de cette branche : "
+              + ", ".join(f"{k}={v}" for k, v in sorted(inconnues.items())))
+
     return Config(**cfg_dict), seeds_full
 
 def print_params(params, prefix="", total=0):
