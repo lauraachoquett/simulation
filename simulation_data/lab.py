@@ -410,8 +410,18 @@ class LabMixin:
                             label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
-            final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
-                agent_params, key_env, key_sim, model, cfg_m)
+            # A une seule ressource aucune permutation n'existe : l'experience
+            # d'adaptation n'a pas d'objet, et la boucle `for j, rot` plus bas
+            # est deja un no-op. On saute donc les deux rollouts qui, eux,
+            # planteraient.
+            rotations = rotations_for(self.cfg.resources)
+            if not rotations:
+                print(f"[lab] {len(self.cfg.resources)} ressource(s) : pas de "
+                      "permutation possible, env d'adaptation saute")
+            outputs_adapt = vid_adapt = None
+            if rotations:
+                final_state, outputs_adapt = vmap_over_agents_env_lab_adapt(
+                    agent_params, key_env, key_sim, model, cfg_m)
             # outputs_adapt : axe 0 = agent (B), axe 1 = rotation (2)
 
             # Le MEME rollout, memes genomes, memes cles, memoire coupee. C'est
@@ -421,8 +431,11 @@ class LabMixin:
             outputs_adapt_abl = outputs_high_abl = None
             if self.cfg.lab_memory_ablation:
                 cfg_abl = cfg_m._replace(ablate_recurrence=True)   # grille non journalisee aussi
-                _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
-                    agent_params, key_env, key_sim, model, cfg_abl)
+                # seul le bras ADAPT demande des rotations ; la comparaison de
+                # memoire sur high_res, elle, tient a une seule ressource
+                if rotations:
+                    _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
+                        agent_params, key_env, key_sim, model, cfg_abl)
                 _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
                     agent_params, key_env, key_sim, model, cfg_abl)
                 self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
@@ -430,7 +443,8 @@ class LabMixin:
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
-            vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
+            if rotations:
+                vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
 
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]

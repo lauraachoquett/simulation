@@ -259,8 +259,20 @@ def rotate_resources(resources, shift):
     return tuple(resources[(k - shift) % n] for k in range(n))
 
 def launch_adaptation_env(agent_params, key_env, key_sim, cfg, model):
+    """Le meme genome dans chaque permutation NON TRIVIALE des canaux.
+
+    A une seule ressource il n'en existe aucune : rotations_for rend un tuple
+    vide, la boucle ne tourne pas, et `tree_map(f, *[])` levait un TypeError
+    illisible sur l'argument `tree` manquant. L'appelant doit tester avant.
+    """
+    rotations = rotations_for(cfg.resources)
+    if not rotations:
+        raise ValueError(
+            f"launch_adaptation_env : {len(cfg.resources)} ressource(s), donc "
+            "aucune permutation non triviale. Tester rotations_for(cfg.resources) "
+            "avant d'appeler.")
     states, outputs = [], []
-    for rot in rotations_for(cfg.resources):
+    for rot in rotations:
         s, o = launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=rot)
         states.append(s)
         outputs.append(o)
