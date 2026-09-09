@@ -83,6 +83,33 @@ def trace(grilles, cfg, sortie):
     print(f"Figure saved: {sortie}")
 
 
+def config_par_defaut():
+    """Une Config minimale mais COMPLETE.
+
+    Les champs sont enumeres depuis Config elle-meme (`_field_defaults`) plutot
+    qu'ecrits a la main : une liste figee se perime des qu'un champ obligatoire
+    est ajoute, et l'erreur ne sort qu'a l'execution. Seuls comptent ici ceux qui
+    touchent la grille du lab ; le reste n'influe pas sur ce qu'on affiche.
+    """
+    valeurs = {
+        "grid_length": 200, "chunk_size": 1000, "num_chunks": 1,
+        "checkpoint_freq": 50, "video_freq": 50, "lab_evaluation_freq": 500,
+        "n_agents_max": 10, "n_agents_init": 5, "agent_view": 5,
+        "temperature": 0.3, "energy_decay": 0.01,
+        "factor_energy_decay_not_moving": 0.3, "energy_max": 8.0,
+        "time_to_die": 400, "time_above_repr": 320, "min_energy_repr": 6.0,
+        "starting_energy": 1.5, "random_pos_offspring": False,
+        "mutation_var": 0.02, "param_mutate": 0.3, "pre_growth_step": 500,
+    }
+    sans_defaut = [f for f in Config._fields if f not in Config._field_defaults]
+    manquants = [f for f in sans_defaut if f not in valeurs]
+    if manquants:
+        raise SystemExit(
+            "config_par_defaut : champs obligatoires non couverts "
+            f"({', '.join(manquants)}). Les ajouter ici, ou passer --from.")
+    return Config(**valeurs, resources=BASE_RESOURCES, model_version="v2")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4, 5],
@@ -95,15 +122,7 @@ def main():
     if a.config_exp:
         cfg, _ = load_config(a.config_exp)
     else:
-        from simulation.run import __file__ as _  # noqa
-        cfg = Config(grid_length=200, chunk_size=1000, num_chunks=1,
-                     checkpoint_freq=50, video_freq=50, lab_evaluation_freq=500,
-                     n_agents_max=10, n_agents_init=5, agent_view=5,
-                     temperature=0.3, energy_decay=0.01,
-                     factor_energy_decay_not_moving=0.3, energy_max=8.0,
-                     time_to_die=400, time_above_repr=320, min_energy_repr=6.0,
-                     starting_energy=1.5, resources=BASE_RESOURCES,
-                     model_version="v2")
+        cfg = config_par_defaut()
     cfg = resolve_model(cfg)
     model = build_model(cfg)
 
