@@ -96,6 +96,13 @@ def par_lots(fn, params, key_env, cles, model, cfg, batch):
                                   *morceaux)
 
 
+def tracer(sortie):
+    plot_lab_metrics(exp_dir=sortie)
+    plot_lab_exploration(exp_dir=sortie)
+    plot_alone_vs_clones(exp_dir=sortie)
+    print(f"Figures dans {os.path.join(sortie, 'fig')}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("exp_dirs", nargs="+", metavar="EXP_DIR",
@@ -114,6 +121,12 @@ def main():
                    help="genomes par checkpoint, 0 = toute la population")
     p.add_argument("--lab", dest="lab_time_steps", type=int, default=None,
                    help="duree du rollout (defaut : celle de la config)")
+    p.add_argument("--merge", action="store_true",
+                   help="tout ecrire dans UN seul lab_data et ne tracer qu'une "
+                        "serie : ce qu'il faut pour un run repris, dont la suite "
+                        "vit dans un autre dossier. Passer les experiences dans "
+                        "l'ordre CHRONOLOGIQUE -- sur un numero de chunk present "
+                        "des deux cotes, la derniere donnee l'emporte")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
@@ -125,9 +138,12 @@ def main():
         if a.lab_time_steps:
             cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
         model = build_model(cfg)
-        sortie = (os.path.join(a.out, os.path.basename(exp_dir.rstrip('/')))
-                  if a.out and len(a.exp_dirs) > 1
-                  else a.out or os.path.join(exp_dir, "replay"))
+        if a.merge:
+            sortie = a.out or os.path.join(a.exp_dirs[0], "replay_merge")
+        elif a.out and len(a.exp_dirs) > 1:
+            sortie = os.path.join(a.out, os.path.basename(exp_dir.rstrip('/')))
+        else:
+            sortie = a.out or os.path.join(exp_dir, "replay")
         os.makedirs(sortie, exist_ok=True)
 
         ckpts = checkpoints_de(exp_dir)
@@ -187,10 +203,13 @@ def main():
 
             sd.compare_alone_vs_clones(out_high, out_clo, sortie)
 
-        plot_lab_metrics(exp_dir=sortie)
-        plot_lab_exploration(exp_dir=sortie)
-        plot_alone_vs_clones(exp_dir=sortie)
-        print(f"Figures dans {os.path.join(sortie, 'fig')}")
+        if not a.merge:
+            tracer(sortie)
+
+    if a.merge:
+        # une seule fois, sur le lab_data commun : les fonctions de trace lisent
+        # tous les chunk_*_summary.json du dossier et les trient par numero
+        tracer(sortie)
 
 
 if __name__ == "__main__":

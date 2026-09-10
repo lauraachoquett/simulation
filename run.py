@@ -127,9 +127,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     exp_dir,data_dir = create_exp_file(save_dir)
     save_script(exp_dir)
     
-    num_chunks_exp = cfg.num_chunks + chunk_id
+    # Le checkpoint state_chunk_N porte l'etat APRES le chunk N : la reprise
+    # commence donc au chunk N+1. Repartir a N faisait porter au chunk suivant
+    # l'etiquette N, decalant numero et pas de 1000 a chaque reprise -- et
+    # surtout reutilisant subkeys[N-1], deja consomme, de sorte qu'un run repris
+    # ne suivait pas la meme suite aleatoire qu'un run continu.
+    reprend = resume_exp is not None and os.path.exists(resume_exp)
+    start_chunk = chunk_id + 1 if reprend else 1
+    num_chunks_exp = cfg.num_chunks + start_chunk
 
-    if resume_exp is not None and os.path.exists(resume_exp):
+    if reprend:
         print(f"Reprise depuis {resume_exp} au chunk {chunk_id}")
         state = load_checkpoint(resume_exp, chunk_id)
         # cfg et graines viennent de parse_cli, qui a deja lu ce dossier : les
@@ -139,7 +146,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             key, k_sup = random.split(key)
             subkeys.extend(random.split(k_sup, num_chunks_exp - len(subkeys)))
 
-        start_chunk = chunk_id
         model = build_model(cfg)
         n_ckpt = state.agents.params.shape[1]
         if model.num_params != n_ckpt:
@@ -162,7 +168,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         model = build_model(cfg)
         key, subkey_state = jax.random.split(key)
         state = init_state(subkey_state, cfg, model)
-        start_chunk = 1
         
 
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
