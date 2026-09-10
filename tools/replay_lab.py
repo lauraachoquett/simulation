@@ -96,7 +96,49 @@ def par_lots(fn, params, key_env, cles, model, cfg, batch):
                                   *morceaux)
 
 
+def lab_data_de(chemin):
+    """Le dossier lab_data d'un chemin, qu'on donne l'experience ou son replay."""
+    for candidat in (os.path.join(chemin, "lab_data"),
+                     os.path.join(chemin, "replay", "lab_data")):
+        if os.path.isdir(candidat):
+            return candidat
+    return None
+
+
+def fusionner(chemins, sortie):
+    """Rassemble des lab_data deja produits, sans rien reevaluer.
+
+    Les fichiers portent le numero de chunk dans leur nom : une simple copie
+    dedoublonne donc d'elle-meme, et sur un chunk present des deux cotes le
+    DERNIER chemin donne l'emporte. D'ou l'ordre chronologique.
+    """
+    import shutil
+    dest = os.path.join(sortie, "lab_data")
+    os.makedirs(dest, exist_ok=True)
+    total = 0
+    for chemin in chemins:
+        src = lab_data_de(chemin)
+        if src is None:
+            print(f"  {chemin} : pas de lab_data/ ni de replay/lab_data/, ignore")
+            continue
+        n = 0
+        for f in sorted(glob.glob(os.path.join(src, "*"))):
+            if os.path.isfile(f):
+                shutil.copy2(f, os.path.join(dest, os.path.basename(f)))
+                n += 1
+        print(f"  {src} : {n} fichier(s)")
+        total += n
+    if not total:
+        print("Rien a fusionner.")
+        return
+    print(f"{len(os.listdir(dest))} fichier(s) apres dedoublonnage")
+    tracer(sortie)
+
+
 def tracer(sortie):
+    # les fonctions de trace ecrivent dans <sortie>/fig sans le creer : en mode
+    # fusion rien d'autre ne l'a fait avant
+    os.makedirs(os.path.join(sortie, "fig"), exist_ok=True)
     plot_lab_metrics(exp_dir=sortie)
     plot_lab_exploration(exp_dir=sortie)
     plot_alone_vs_clones(exp_dir=sortie)
@@ -121,6 +163,11 @@ def main():
                    help="genomes par checkpoint, 0 = toute la population")
     p.add_argument("--lab", dest="lab_time_steps", type=int, default=None,
                    help="duree du rollout (defaut : celle de la config)")
+    p.add_argument("--merge-only", dest="merge_only", action="store_true",
+                   help="ne RIEN reevaluer : fusionner des lab_data deja "
+                        "produits et tracer. Les chemins donnes peuvent etre "
+                        "les dossiers d'experience (leur replay/ est trouve "
+                        "tout seul) ou les replay/ eux-memes")
     p.add_argument("--merge", action="store_true",
                    help="tout ecrire dans UN seul lab_data et ne tracer qu'une "
                         "serie : ce qu'il faut pour un run repris, dont la suite "
@@ -131,6 +178,10 @@ def main():
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
     a = p.parse_args()
+
+    if a.merge_only:
+        fusionner(a.exp_dirs, a.out or os.path.join(a.exp_dirs[0], "replay_merge"))
+        return
 
     for exp_dir in a.exp_dirs:
         print(f"\n=== {exp_dir}")
