@@ -2267,6 +2267,40 @@ def plot_action_distribution(actions, exp_dir, start_step=0, steps=None,
     print(f"Figure saved: {out}")
 
 
+def maillage_simplex(resources, N=200):
+    """(x, y, E) sur un maillage barycentrique regulier.
+
+    E = somme_i p_i * de_i, l'esperance d'energie par item mange. Lineaire sur
+    le simplex, donc sa ligne zero est une droite.
+    """
+    par_id = {r.id: r for r in resources}
+    if set(par_id) != {0, 1, 2}:
+        return None
+    de = np.array([par_id[LABELS.index(n)].delta_energy
+                   for n in ("good", "medium", "poison")], dtype=float)
+    i, j = np.meshgrid(np.arange(N + 1), np.arange(N + 1), indexing="ij")
+    garde = (i + j) <= N
+    pg, pp = i[garde] / N, j[garde] / N
+    pm = 1.0 - pg - pp
+    x, y = _bary(pg, pm, pp)
+    return x, y, pg * de[0] + pm * de[1] + pp * de[2]
+
+
+def ligne_equilibre(ax, resources, color="black", lw=2.2, label=True, zorder=3):
+    """Trace E[de] = 0 : la frontiere entre les regimes qui RAPPORTENT et ceux
+    qui COUTENT. C'est ce qui transforme une position dans le triangle en
+    jugement. Rend False si les trois identites ne sont pas la."""
+    m = maillage_simplex(resources)
+    if m is None:
+        return False
+    x, y, E = m
+    z = ax.tricontour(x, y, E, levels=[0.0], colors=color, linewidths=lw,
+                      zorder=zorder)
+    if label:
+        ax.clabel(z, fmt={0.0: "break-even"}, fontsize=9, inline=True)
+    return True
+
+
 def plot_energy_expectation(resources, out_path, niveaux=7):
     """Esperance d'energie par item mange, pour chaque composition de regime.
 
@@ -2283,14 +2317,7 @@ def plot_energy_expectation(resources, out_path, niveaux=7):
     de = np.array([par_id[LABELS.index(n)].delta_energy
                    for n in ("good", "medium", "poison")], dtype=float)
 
-    # maillage barycentrique regulier
-    N = 200
-    i, j = np.meshgrid(np.arange(N + 1), np.arange(N + 1), indexing="ij")
-    garde = (i + j) <= N
-    pg, pp = i[garde] / N, j[garde] / N
-    pm = 1.0 - pg - pp
-    x, y = _bary(pg, pm, pp)
-    E = pg * de[0] + pm * de[1] + pp * de[2]
+    x, y, E = maillage_simplex(resources)
 
     vmax = float(np.abs(de).max())
     fig, ax = plt.subplots(figsize=(9.2, 7))
@@ -2299,9 +2326,7 @@ def plot_energy_expectation(resources, out_path, niveaux=7):
     cs = ax.tricontour(x, y, E, levels=niveaux, colors="0.30", linewidths=.6,
                        zorder=1)
     ax.clabel(cs, fmt="%+.2f", fontsize=7.5, inline=True)
-    z = ax.tricontour(x, y, E, levels=[0.0], colors="black", linewidths=2.2,
-                      zorder=3)
-    ax.clabel(z, fmt={0.0: "break-even"}, fontsize=9, inline=True)
+    ligne_equilibre(ax, resources)
 
     _cadre_simplex(ax)
     cb = fig.colorbar(tcf, ax=ax, shrink=.72, pad=.10,
