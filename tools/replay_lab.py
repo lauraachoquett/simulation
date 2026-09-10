@@ -97,9 +97,16 @@ def par_lots(fn, params, key_env, cles, model, cfg, batch):
 
 
 def lab_data_de(chemin):
-    """Le dossier lab_data d'un chemin, qu'on donne l'experience ou son replay."""
-    for candidat in (os.path.join(chemin, "lab_data"),
-                     os.path.join(chemin, "replay", "lab_data")):
+    """Le dossier lab_data d'un chemin, qu'on donne l'experience ou son replay.
+
+    replay/ EN PREMIER, et c'est important : un dossier d'experience porte aussi
+    son propre lab_data, rempli par les evaluations faites PENDANT le run. Celles-ci
+    ne portent que sur les 50 premiers survivants et, sur les runs anterieurs a
+    lab_seed, sur un environnement different a chaque graine. Les melanger au
+    rejeu donnerait une serie incoherente sans que rien ne le signale.
+    """
+    for candidat in (os.path.join(chemin, "replay", "lab_data"),
+                     os.path.join(chemin, "lab_data")):
         if os.path.isdir(candidat):
             return candidat
     return None
