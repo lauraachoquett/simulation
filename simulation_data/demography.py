@@ -5,7 +5,10 @@ mouvement / durée de vie, les sauve sur disque, et fournit la condition d'arrê
 de la simulation.
 """
 
+import glob
 import os
+import re
+
 import numpy as np
 
 from simulation.utils.plots import compute_mean_movement_chunk, compute_lifetime_chunk
@@ -73,6 +76,59 @@ class DemographyMixin:
         self.mov_history = []
         self.life_history = []
         self.action_history = []
+
+    # Les series sauvees par chunk, et le nom de l'historique qui les recoit.
+    # L'axe de concatenation differe : mean_life est (2, n_morts), donc empilee
+    # sur l'axe 1, toutes les autres sur l'axe 0.
+    SERIES = (("population",    "pop_history",        0),
+              ("resources",     "res_history",        0),
+              ("oracles",       "oracle_history",     0),
+              ("consumed",      "consumed_history",   0),
+              ("n_seen",        "seen_history",       0),
+              ("n_eaten_seen",  "eaten_seen_history", 0),
+              ("mean_movement", "mov_history",        0),
+              ("mean_life",     "life_history",       1),
+              ("action_frac",   "action_history",     0))
+
+    def charger_historique(self, source_dir, jusqu_au_chunk):
+        """Reprend les series d'un run precedent, pour les chunks < jusqu_au_chunk.
+
+        Sans ca, une reprise repart avec des historiques VIDES : les figures ne
+        couvrent que la fenetre depuis la reprise, et life_expectancy est en plus
+        biaisee -- ses casiers de naissance anciens ne retiennent que les agents
+        morts APRES la reprise, c'est-a-dire les plus vieux, ce qui tire la
+        mediane vers le haut.
+
+        Rend le pas de depart a poser dans start_step : les figures indexent
+        l'historique depuis cette valeur, la laisser au chunk de reprise
+        decalerait tout l'axe des abscisses de la partie rechargee.
+        """
+        data_dir = os.path.join(source_dir, "data")
+        fichiers = sorted(glob.glob(os.path.join(data_dir, "chunk_*.npz")))
+        repris = []
+        for f in fichiers:
+            m = re.search(r"chunk_(\d+)\.npz$", f)
+            if not m or int(m.group(1)) >= jusqu_au_chunk:
+                continue
+            d = np.load(f)
+            manquantes = [k for k, _, _ in self.SERIES if k not in d.files]
+            if manquantes:
+                # un run anterieur a l'ajout d'une serie : on ne recharge rien
+                # plutot que de decaler les series entre elles
+                print(f"[historique] {os.path.basename(f)} sans {manquantes} : "
+                      "chargement abandonne, les figures repartiront de la reprise")
+                return None
+            for cle, nom, _ in self.SERIES:
+                getattr(self, nom).append(d[cle])
+            repris.append(int(m.group(1)))
+            d.close()
+
+        if not repris:
+            print(f"[historique] rien a reprendre dans {data_dir}")
+            return None
+        print(f"[historique] {len(repris)} chunk(s) repris "
+              f"({min(repris)} a {max(repris)})")
+        return (min(repris) - 1) * self.cfg.chunk_size
 
     def update_data_with_chunk(self, outputs, data_dir,chunk_idx):
         self.chunk_idx = chunk_idx

@@ -172,6 +172,17 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     start_step = start_chunk * cfg.chunk_size
 
     sim_data = simulation_data(cfg=cfg,start_step=start_step, start_chunk =start_chunk)
+
+    # Reprise : recharger les series du run d'origine, sinon les figures ne
+    # couvrent que depuis la reprise et life_expectancy est biaisee (ses casiers
+    # de naissance anciens ne retiennent que les agents morts apres, donc les
+    # plus vieux). start_step suit, sans quoi l'axe des abscisses serait decale
+    # de toute la partie rechargee.
+    if resume_exp is not None and os.path.exists(resume_exp):
+        debut = sim_data.charger_historique(resume_exp, start_chunk)
+        if debut is not None:
+            start_step = debut
+            sim_data.start_step = debut
     sim_data.register_founders(state,model)
     
     
