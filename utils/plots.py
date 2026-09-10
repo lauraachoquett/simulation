@@ -1556,7 +1556,7 @@ def plot_lab_metrics(exp_dir, suffix=""):
     S = [json.load(open(f)) for f in files]
     x = np.array([s["chunk"] for s in S])
  
-    fig, axes = plt.subplots(2, 3, figsize=(15, 7), sharex=True)
+    fig, axes = plt.subplots(2, 4, figsize=(20, 7), sharex=True)
  
     specs = [
         (axes[0, 0], "duree_vie",    "Lifespan",              "steps"),
@@ -1601,6 +1601,23 @@ def plot_lab_metrics(exp_dir, suffix=""):
         ax.grid(alpha=0.3)
     else:
         ax.axis("off")
+
+    # Naissances POTENTIELLES : les fois ou le seuil de reproduction est atteint,
+    # sans le plafond de places libres. Dans les env de lab n_agents_max vaut 2
+    # ou 5, donc les naissances reelles saturent des le premier evenement et ne
+    # disent rien de la fecondite d'un genome. Absent des runs anterieurs a son
+    # ajout -> case laissee vide.
+    ax = axes[0, 3]
+    if any("repro_potentiel_p50" in s_ for s_ in S):
+        _plot_band(ax, x, S, "repro_potentiel", color="C4")
+        ax.set_title("Potential births per life\n(reproduction threshold reached)")
+        ax.set_ylabel("births")
+        ax.grid(alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+    else:
+        ax.axis("off")
+
+    axes[1, 3].axis("off")
 
     for ax in axes.ravel():
         ax.set_xlabel("chunk")

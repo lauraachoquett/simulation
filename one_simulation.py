@@ -37,6 +37,12 @@ class StepLog(NamedTuple):
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
+    repro_ready: jax.Array # (N,) -> le seuil de reproduction est atteint A CE PAS,
+                           #        AVANT le plafond de places libres et avant
+                           #        cfg.reproduction_on. Compte donc les naissances
+                           #        qui AURAIENT eu lieu. Comptable : time_over est
+                           #        remis a zero des que le seuil est atteint (l.71),
+                           #        que la naissance ait lieu ou non.
     
 
 @partial(jax.jit, static_argnames=['cfg','model'])
@@ -305,6 +311,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             saw_res = saw_res_step,
             ate_res = ate_res_step,
             is_oracle = state.agents.is_oracle,
+            repro_ready = reproduces & (survives_int > 0),
         )
         
         return new_state, log

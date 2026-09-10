@@ -764,6 +764,13 @@ class LabMixin:
                 rew = rew[..., 0]
             time_under_min_energy = np.asarray(outputs.time_under_min_energy)  # (T, N)
             energy = np.asarray(outputs.energy)        # (T, N)
+            # Naissances qui AURAIENT eu lieu : le seuil de reproduction est
+            # atteint, avant le plafond de places libres et avant
+            # cfg.reproduction_on. Dans les env de lab n_agents_max vaut 2 ou 5,
+            # donc les naissances reelles sont bridees des le premier evenement
+            # et ne disent rien de la vitesse a laquelle un genome se reproduit.
+            repro = np.asarray(getattr(outputs, "repro_ready",
+                                       np.zeros_like(alive))).astype(bool)
  
             T = alive.shape[0]
  
@@ -803,6 +810,11 @@ class LabMixin:
             cum_rew   = np.cumsum(rew_pos, axis=0)
             total_rew = window_sum(cum_rew, birth_row - 1, death_row)
             mean_rew  = total_rew / (age + 1)
+
+            # Naissances potentielles sur la vie de l'individu, meme fenetre et
+            # meme technique de cumsum que la consommation.
+            cum_repro = np.cumsum(repro.astype(np.float64), axis=0)
+            repro_par_vie = window_sum(cum_repro, birth_row - 1, death_row)
  
             # 6) Mouvement (grandeur "par transition") -> fenêtre [birth_row, death_row-1]
             delta = pos[1:] - pos[:-1]                                  # (T-1, N, 2)
@@ -906,6 +918,8 @@ class LabMixin:
                 "wall_death": wall_death,  # True = mort par mur ; False si survivant
                 "energy_end": energy_end,  # énergie au dernier pas vivant
                 "died":       died,        # True = mort, False = survivant (censuré)
+                "repro_ready": repro_par_vie,   # naissances potentielles sur la vie
+                "repro_rate": repro_par_vie / np.maximum(age, 1),   # par pas
                 "t_explore":  t_explore,   # délai avant 1re ressource (NaN si jamais)
                 "ever_ate":   ever_ate,    # True si l'agent a mangé au moins une fois
                 "greediness": greediness,  # G = Cr / Tr (NaN si Tr = 0)      <== NOUVEAU
@@ -925,7 +939,8 @@ class LabMixin:
     def _agg_lab(self, outputs_lab, resources=None):
         keys = ["age", "total_rew", "mean_rew", "total_move",
                 "mean_speed", "energy_end", "wall_death", "died",
-                "greediness", "adapt_score", "adapt_gain"]
+                "greediness", "adapt_score", "adapt_gain",
+                "repro_ready", "repro_rate"]
         agg = {k: [] for k in keys}
  
         B = outputs_lab.alive.shape[0]          # nb d'environnements = nb d'agents testés
@@ -959,6 +974,9 @@ class LabMixin:
             **_dispersion(agg["age"][died],  "duree_vie_mort"),  # morts uniquement
             **_dispersion(agg["mean_rew"],   "consommation"),
             **_dispersion(agg["mean_speed"], "mouvement"),
+            # naissances qui auraient eu lieu sans le plafond de places
+            **_dispersion(agg["repro_ready"], "repro_potentiel"),
+            **_dispersion(agg["repro_rate"],  "repro_taux"),
             # G indéfini (NaN) pour les agents n'ayant jamais vu de ressource
             **_dispersion(_clean(agg["greediness"]), "greediness", empty=float("nan")),
             # NaN pour un agent n'ayant rien vu ou rien mange
