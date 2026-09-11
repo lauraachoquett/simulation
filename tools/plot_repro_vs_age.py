@@ -21,6 +21,7 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -137,7 +138,16 @@ def main():
         grilles.append((h / max(m.sum(), 1), int(m.sum()),
                         step[m].min() if m.any() else 0,
                         step[m].max() if m.any() else 0))
-    vmax = max(g[0].max() for g in grilles) or 1.0
+    # Plafond au quantile des cases NON VIDES, pas au maximum : une seule case
+    # tres peuplee -- le paquet a zero descendant, souvent -- compressait tout le
+    # reste dans le pale. Et echelle en racine : les densites s'etalent sur deux
+    # ordres de grandeur, une echelle lineaire n'en montre que le sommet.
+    occupees = np.concatenate([g[0][g[0] > 0].ravel() for g in grilles
+                               if (g[0] > 0).any()])
+    vmax = float(np.quantile(occupees, 0.97)) if occupees.size else 1.0
+    norm = mcolors.PowerNorm(gamma=0.5, vmin=0, vmax=vmax)
+    cmap = plt.get_cmap("magma_r").copy()
+    cmap.set_bad("white")            # une case vide n'est pas une densite faible
 
     cols = min(k, 3)
     lignes = -(-k // cols)
@@ -148,8 +158,8 @@ def main():
 
     for i, (h, n, s0, s1) in enumerate(grilles):
         ax = axes[i // cols][i % cols]
-        im = ax.pcolormesh(bx, by, h.T, cmap="magma_r", vmin=0, vmax=vmax,
-                           shading="flat")
+        im = ax.pcolormesh(bx, by, np.where(h.T > 0, h.T, np.nan), cmap=cmap,
+                           norm=norm, shading="flat")
         # mediane par casier d'age : la tendance, sur les valeurs exactes
         m = (step > bornes[i]) & (step <= bornes[i + 1])
         centres, med = [], []
@@ -159,7 +169,11 @@ def main():
                 centres.append((bx[j] + bx[j + 1]) / 2)
                 med.append(np.median(repro[sel]))
         if centres:
-            ax.plot(centres, med, color="#1D3557", lw=1.8, zorder=3)
+            # lisere blanc : la mediane passe sur les cases les plus sombres,
+            # ou un trait bleu uni disparait
+            ax.plot(centres, med, color="#1D3557", lw=2.0, zorder=3,
+                    path_effects=[pe.Stroke(linewidth=3.6, foreground="white"),
+                                  pe.Normal()])
         ax.set_title(f"steps {s0:,.0f}–{s1:,.0f}   ({n} genomes)", fontsize=10)
         ax.grid(alpha=.18, zorder=0)
 
@@ -169,7 +183,9 @@ def main():
         ligne[0].set_ylabel("Potential offspring")
 
     barre = fig.colorbar(im, ax=axes, pad=.015, fraction=.025)
-    barre.set_label("Fraction of the genomes in that panel", fontsize=10)
+    barre.set_label("Fraction of the genomes in that panel\n"
+                    "(square-root scale, clipped at the 97th percentile)",
+                    fontsize=9)
 
     fig.suptitle("Potential offspring against lifespan, over time\n"
                  f"{len(age)} genomes — {nuls} with none "
