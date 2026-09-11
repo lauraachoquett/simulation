@@ -61,6 +61,17 @@ def charge(data_dir, chunk_size):
     return (np.concatenate(age), np.concatenate(repro), np.concatenate(step))
 
 
+def court(v):
+    """50 000 -> 50k, 1 200 000 -> 1.2M. Les titres de vignette sont le premier
+    element a devenir illisible quand on en demande beaucoup."""
+    v = float(v)
+    if v >= 1e6:
+        return f"{v/1e6:.1f}M".replace(".0M", "M")
+    if v >= 1e3:
+        return f"{v/1e3:.0f}k"
+    return f"{v:.0f}"
+
+
 def casiers(age, n_x=26):
     """Bords des casiers : entiers en y, reguliers en x.
 
@@ -161,10 +172,17 @@ def main():
     cmap = plt.get_cmap(a.cmap).copy()
     cmap.set_bad("white")            # une case vide n'est pas une densite faible
 
-    cols = min(k, 3)
+    # Grille a peu pres carree, et non 3 colonnes fixes : a 12 tranches une
+    # grille 3x4 donne des vignettes hautes et etroites dont les titres se
+    # chevauchent. constrained_layout reserve la place des titres et de la barre
+    # de couleur, ce que bbox_inches seul ne fait pas.
+    cols = min(k, max(3, int(np.ceil(np.sqrt(k)))))
     lignes = -(-k // cols)
-    fig, axes = plt.subplots(lignes, cols, figsize=(4.5 * cols, 3.7 * lignes),
-                             squeeze=False, sharex=True, sharey=True)
+    petit = k > 6
+    fig, axes = plt.subplots(lignes, cols,
+                             figsize=(3.9 * cols, 3.3 * lignes),
+                             squeeze=False, sharex=True, sharey=True,
+                             constrained_layout=True)
     for ax in axes.ravel()[k:]:
         ax.axis("off")
 
@@ -186,29 +204,41 @@ def main():
             ax.plot(centres, med, color="#1D3557", lw=2.0, zorder=3,
                     path_effects=[pe.Stroke(linewidth=3.6, foreground="white"),
                                   pe.Normal()])
-        ax.set_title(f"steps {s0:,.0f}–{s1:,.0f}   ({n} genomes)", fontsize=10)
+        ax.set_title(f"{court(s0)}–{court(s1)}"
+                     + ("" if petit else f"   ({n} genomes)"),
+                     fontsize=8.5 if petit else 10)
         ax.grid(alpha=.18, zorder=0)
 
+    # une seule paire d'etiquettes d'axes : repetee sur chaque vignette elle
+    # mange la place quand il y en a beaucoup
     for ax in axes[-1]:
-        ax.set_xlabel("Lifespan in the lab (steps)")
+        ax.set_xlabel("Lifespan in the lab (steps)", fontsize=9 if petit else 10)
     for ligne in axes:
-        ligne[0].set_ylabel("Potential offspring")
+        ligne[0].set_ylabel("Potential offspring", fontsize=9 if petit else 10)
+    if petit:
+        for ax in axes.ravel():
+            ax.tick_params(labelsize=8)
 
-    barre = fig.colorbar(im, ax=axes, pad=.015, fraction=.025)
+    barre = fig.colorbar(im, ax=axes, fraction=.025)
     barre.set_label("Fraction of the genomes in that panel\n"
                     f"(power scale \u03b3={a.gamma:g}, clipped at the "
                     f"{100*a.clip:.0f}th percentile)", fontsize=9)
 
-    fig.suptitle("Potential offspring against lifespan, over time\n"
-                 f"{len(age)} genomes — {nuls} with none "
-                 f"({100*nuls/len(age):.0f} %)"
-                 + (f" — {hors} above {r_max}, off scale" if hors else "")
-                 + " — shared colour scale",
-                 fontsize=12.5)
+    if petit:
+        fig.suptitle("Potential offspring against lifespan, over time"
+                     f"   —   steps shown as ranges, {len(age)} genomes total",
+                     fontsize=12)
+    else:
+        fig.suptitle("Potential offspring against lifespan, over time\n"
+                     f"{len(age)} genomes — {nuls} with none "
+                     f"({100*nuls/len(age):.0f} %)"
+                     + (f" — {hors} above {r_max}, off scale" if hors else "")
+                     + " — shared colour scale",
+                     fontsize=12.5)
 
     sortie = a.out or os.path.join(a.source, "fig", "repro_vs_age.png")
     os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
-    fig.savefig(sortie, dpi=150, bbox_inches="tight")
+    fig.savefig(sortie, dpi=150)
     plt.close(fig)
     print(f"Figure saved: {sortie}")
 
