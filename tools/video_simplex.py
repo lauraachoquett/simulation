@@ -34,11 +34,12 @@ import jax
 import jax.numpy as jnp
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import random
 
-from simulation.data_class import LABELS, label_of
+from simulation.data_class import LABELS, label_of, color_of
 from simulation.lab_env import vmap_over_agents_env_lab_high_res
 from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
@@ -134,11 +135,18 @@ def contour_kde(ax, x, y, niveau=0.5, **kw):
     return _segments(cs)
 
 
-def frame(fig, chaine, dispo, resources, step, pas_shuffle, bornes, fantome,
-          trainee):
-    """Compose une frame et rend (contour, barycentre) pour la suivante."""
+def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
+          fantome, trainee, shuffle_actif=False, n_reels=None):
+    """Compose une frame et rend (contour, barycentre) pour la suivante.
+
+    `p` est deja en PROPORTIONS : l'interpolation entre deux checkpoints se fait
+    en amont, dans l'espace des compositions. Une combinaison convexe de deux
+    compositions valides en est une -- les points interpoles restent donc dans
+    le triangle, ce qu'une interpolation en coordonnees d'ecran ne garantirait
+    pas.
+    """
     fig.clear()
-    ax = fig.add_axes([0.03, 0.13, 0.94, 0.81])
+    ax = fig.add_axes([0.13, 0.13, 0.85, 0.81])
     _cadre_simplex(ax)
     # marge elargie : les etiquettes des sommets sont posees HORS des limites
     # que pose _cadre_simplex, et se faisaient couper
@@ -146,7 +154,8 @@ def frame(fig, chaine, dispo, resources, step, pas_shuffle, bornes, fantome,
     ax.set_ylim(-0.13, np.sqrt(3) / 2 + 0.11)
     ligne_equilibre(ax, resources, color="0.25", lw=1.6, label=False, zorder=2)
 
-    p = composition(chaine)
+    p = np.asarray(p, dtype=float)
+    ages = np.asarray(ages, dtype=float)
     barycentre = None
     contour = None
     if len(p):
@@ -165,16 +174,16 @@ def frame(fig, chaine, dispo, resources, step, pas_shuffle, bornes, fantome,
             t = np.array(trainee)
             for i in range(len(t) - 1):
                 ax.plot(t[i:i + 2, 0], t[i:i + 2, 1], color="#C1121F",
-                        lw=1.6, alpha=0.15 + 0.85 * i / max(len(t) - 2, 1),
+                        lw=1.1, alpha=0.10 + 0.55 * i / max(len(t) - 2, 1),
                         zorder=4)
 
-        ax.scatter(x, y, s=46, color="#1D3557", alpha=.72, edgecolor="white",
-                   linewidth=.5, zorder=5)
+        sc = ax.scatter(x, y, s=52, c=ages, cmap="viridis", norm=norm_age,
+                        alpha=.85, edgecolor="white", linewidth=.5, zorder=5)
         contour = contour_kde(ax, x, y, colors="#1D3557", linewidths=2.0,
                               linestyles="--", zorder=6)
         barycentre = (float(x.mean()), float(y.mean()))
-        ax.scatter([barycentre[0]], [barycentre[1]], s=150, marker="X",
-                   color="#C1121F", edgecolor="white", linewidth=1.0, zorder=7)
+        ax.scatter([barycentre[0]], [barycentre[1]], s=120, marker="X",
+                   color="#C1121F", edgecolor="white", linewidth=1.2, zorder=7)
 
     if dispo is not None and np.sum(dispo) > 0:
         d = np.asarray(dispo, float)
@@ -182,24 +191,92 @@ def frame(fig, chaine, dispo, resources, step, pas_shuffle, bornes, fantome,
         ax.scatter([xd], [yd], marker="o", s=200, facecolor="none",
                    edgecolor="black", linewidth=2.0, zorder=8)
 
-    ax.set_title(f"Diet composition — step {step:,}   ({len(p)} genomes)",
+    ax.set_title(f"Diet composition — step {int(round(step)):,}   "
+                 f"({n_reels if n_reels is not None else len(p)} genomes)",
                  fontsize=13)
 
-    # frise : ou l'on en est, et ou sont tombees les permutations
-    fr = fig.add_axes([0.10, 0.05, 0.80, 0.03])
-    fr.set_xlim(bornes); fr.set_ylim(0, 1)
-    fr.set_yticks([]); fr.spines[["left", "right", "top"]].set_visible(False)
-    fr.axhspan(0, 1, color="0.92")
-    for sh in pas_shuffle:
-        if bornes[0] <= sh <= bornes[1]:
-            fr.axvline(sh, color="#B5651D", lw=1.6)
-    fr.axvline(step, color="#C1121F", lw=2.6)
+    # Correspondance canal -> identite, en encart. Les sommets du triangle sont
+    # des IDENTITES, donc une permutation ne fait rien bouger du decor : sans cet
+    # encart, rien a l'image ne dit CE QUI a change.
+    lignes = [f"c{k} = {label_of(r.id)}" for k, r in enumerate(resources)]
+    ax.text(0.985, 0.985, "channel map\n" + "\n".join(lignes),
+            transform=ax.transAxes, va="top", ha="right", fontsize=9,
+            family="monospace", zorder=9,
+            bbox=dict(boxstyle="round,pad=0.45",
+                      facecolor="#FFF3F0" if shuffle_actif else "white",
+                      edgecolor="#C1121F" if shuffle_actif else "0.75",
+                      linewidth=2.0 if shuffle_actif else .8))
+    if shuffle_actif:
+        # dans les axes et non au-dessus : a 1.002 le bandeau recouvrait le titre
+        ax.text(0.5, 0.965, "CHANNEL PERMUTATION", transform=ax.transAxes,
+                ha="center", va="top", fontsize=12.5, weight="bold",
+                color="#C1121F", zorder=9,
+                bbox=dict(boxstyle="round,pad=0.32", facecolor="#FFF3F0",
+                          edgecolor="#C1121F", linewidth=1.4))
+
+    # Frise : une bande par CANAL, coloree selon l'identite qu'il porte. Des
+    # traits verticaux diraient qu'une permutation a lieu, pas CE QUI change --
+    # or c'est la seule chose que le triangle ne montre pas, ses sommets etant
+    # des identites fixes. Ici les couleurs s'echangent, on lit donc la
+    # permutation elle-meme.
+    n_can = len(epoques[0][1])
+    fr = fig.add_axes([0.13, 0.05, 0.80, 0.075])
+    fr.set_xlim(bornes)
+    fr.set_ylim(-0.5, n_can - 0.5)
+    fr.spines[["right", "top"]].set_visible(False)
+
+    for i, (x0, ordre) in enumerate(epoques):
+        x1 = epoques[i + 1][0] if i + 1 < len(epoques) else bornes[1]
+        if x1 <= bornes[0] or x0 >= bornes[1]:
+            continue
+        x0, x1 = max(x0, bornes[0]), min(x1, bornes[1])
+        for k, ident in enumerate(ordre):
+            fr.barh(n_can - 1 - k, x1 - x0, left=x0, height=.82,
+                    color=color_of(int(ident)), edgecolor="white", linewidth=.6)
+
+    fr.axvline(step, color="#C1121F", lw=2.4, zorder=5)
+    fr.set_yticks(range(n_can))
+    fr.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)], fontsize=8)
     fr.set_xlabel("Simulation step", fontsize=9)
     fr.tick_params(labelsize=8)
+
+    if len(p):
+        cax = fig.add_axes([0.055, 0.18, 0.018, 0.62])
+        barre = fig.colorbar(sc, cax=cax)
+        barre.set_label("Lifespan in the lab (steps)", fontsize=9)
+        cax.yaxis.set_ticks_position("left")
+        cax.yaxis.set_label_position("left")
+        cax.tick_params(labelsize=8)
 
     fig.canvas.draw()
     img = np.asarray(fig.canvas.buffer_rgba())[..., :3]
     return img, contour, barycentre
+
+
+def apparier(pa, pb):
+    """Affectation de cout minimal entre deux nuages de compositions.
+
+    Les genomes ne sont PAS les memes d'un checkpoint a l'autre : il n'existe
+    aucune correspondance naturelle. On en fabrique une qui minimise la distance
+    totale parcourue, de sorte que la transition ressemble a un glissement du
+    nuage plutot qu'a une pluie de points sans rapport.
+
+    Effectifs differents : le plus petit nuage est complete par tirage avec
+    remise. Des points se dedoublent donc, ce qui est le comportement voulu --
+    une population qui grossit voit ses paquets se scinder.
+    """
+    from scipy.optimize import linear_sum_assignment
+    na, nb = len(pa), len(pb)
+    if na == 0 or nb == 0:
+        return pa, pb
+    rng = np.random.default_rng(0)
+    if na < nb:
+        pa = np.vstack([pa, pa[rng.integers(0, na, nb - na)]])
+    elif nb < na:
+        pb = np.vstack([pb, pb[rng.integers(0, nb, na - nb)]])
+    cout = np.linalg.norm(pa[:, None, :] - pb[None, :, :], axis=-1)
+    i, j = linear_sum_assignment(cout)
+    return pa[i], pb[j]
 
 
 def main():
@@ -210,11 +287,15 @@ def main():
                    help="fichier .mp4 (defaut <exp_dir>/videos/simplex.mp4)")
     p.add_argument("-n", type=int, default=50, help="genomes par frame")
     p.add_argument("--batch", type=int, default=25)
-    p.add_argument("--fps", type=int, default=6)
-    p.add_argument("--pause", type=int, default=4,
-                   help="frames tenues apres une permutation")
-    p.add_argument("--trainee", type=int, default=12,
-                   help="longueur de la trainee du barycentre")
+    p.add_argument("--fps", type=int, default=12)
+    p.add_argument("--morph", type=int, default=6,
+                   help="images intercalaires entre deux checkpoints (defaut "
+                        "%(default)s). 0 = saut sec, comme avant")
+    p.add_argument("--pause", type=int, default=8,
+                   help="frames tenues sur une permutation")
+    p.add_argument("--trainee", type=int, default=8,
+                   help="longueur de la trainee du barycentre, en CHECKPOINTS "
+                        "(defaut %(default)s). 0 la supprime")
     p.add_argument("--lab", dest="lab_time_steps", type=int, default=None)
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None)
     a = p.parse_args()
@@ -239,7 +320,8 @@ def main():
         print("Aucun checkpoint.")
         return
     pas_tries = sorted(trouves)
-    print(f"{len(pas_tries)} frame(s), pas {pas_tries[0]:,} a {pas_tries[-1]:,}")
+    print(f"{len(pas_tries)} checkpoint(s), pas {pas_tries[0]:,} a "
+          f"{pas_tries[-1]:,}")
 
     graine = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
     key_env = random.PRNGKey(graine)
@@ -247,78 +329,127 @@ def main():
 
     shuffle_log = load_shuffle_log(a.exp_dirs[0])
     pas_shuffle = [e["step"] for e in shuffle_log]
+    # epoques : (pas de debut, ordre des canaux). La premiere part de l'ordre
+    # initial du run, les suivantes de chaque permutation journalisee.
+    epoques = [(pas_tries[0], [r.id for r in cfg.resources])] + \
+              [(e["step"], list(e["order_ids"])) for e in shuffle_log]
+    epoques.sort(key=lambda t: t[0])
     bornes = (pas_tries[0], pas_tries[-1])
-
     sd = simulation_data(cfg, 0, 1)
+
+    # ---- passe 1 : evaluer, sans rien tracer -------------------------------
+    # Tout collecter d'abord permet de fixer l'echelle des couleurs sur TOUTE la
+    # video : une echelle recalculee par frame ferait varier la teinte d'un
+    # meme age d'une image a l'autre.
+    etapes, dispo = [], None
+    for step in pas_tries:
+        d, chunk = trouves[step]
+        state = load_checkpoint(d, chunk)
+        res = resources_au_pas(cfg, d, step)
+        cfg_c = cfg._replace(resources=res, log_grid=False)
+        sd.cfg, sd.chunk_idx = cfg_c, chunk
+
+        survivants = sd.compute_survivors(state)
+        if not survivants:
+            print(f"  step {step:>9,} : aucun survivant, saute")
+            continue
+        rng = np.random.default_rng(step)
+        ids = np.array([i for i, _ in survivants])
+        if a.n and len(ids) > a.n:
+            ids = ids[rng.choice(len(ids), a.n, replace=False)]
+
+        cle, k = random.split(cle)
+        out = par_lots(vmap_over_agents_env_lab_high_res,
+                       state.agents.params[ids], key_env,
+                       random.split(k, len(ids)), model, cfg_c, a.batch)
+        mange = sd.eaten_by_type(out)              # (M, n_types) par CANAL
+        # duree de vie lue sur `alive` et non via _agg_lab : un env qui ne rend
+        # aucune metrique y serait saute, ce qui desalignerait age et regime
+        age = np.asarray(out.alive).sum(axis=(1, 2)).astype(float)
+
+        par_identite = np.zeros_like(mange)
+        for k_canal, r in enumerate(res):
+            par_identite[:, r.id] = mange[:, k_canal]
+
+        total = par_identite.sum(axis=1)
+        ok = total > 0                    # rien mange -> composition indefinie
+        etapes.append(dict(step=step, p=par_identite[ok] / total[ok, None],
+                           age=age[ok], res=res, n=int(ok.sum())))
+
+        if dispo is None:
+            cle, kg = random.split(cle)
+            _, og = vmap_over_agents_env_lab_high_res(
+                state.agents.params[ids[:1]], key_env, random.split(kg, 1),
+                model, cfg_c._replace(log_grid=True))
+            dc = sd.available_by_type(og, len(res))
+            dispo = np.zeros(len(res))
+            for k_canal, r in enumerate(res):
+                dispo[r.id] = dc[k_canal]
+        print(f"  step {step:>9,} : {int(ok.sum())} genomes", flush=True)
+
+    if not etapes:
+        print("Rien a tracer.")
+        return
+
+    tous_ages = np.concatenate([e["age"] for e in etapes if len(e["age"])])
+    norm_age = mcolors.Normalize(vmin=float(tous_ages.min()),
+                                 vmax=float(tous_ages.max()))
+
+    # ---- passe 2 : rendre, en interpolant ----------------------------------
     sortie = a.out or os.path.join(a.exp_dirs[0], "videos", "simplex.mp4")
     os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
-
-    # rapport cale sur celui des limites du triangle elargies : sinon l'aspect
-    # egal comprime le dessin et laisse une bande morte
-    fig = plt.figure(figsize=(8.2, 7.6), dpi=120)
-    fantome, trainee, dispo = None, [], None
+    fig = plt.figure(figsize=(9.0, 7.6), dpi=120)
+    fantome, trainee = None, []
+    # en IMAGES et non en checkpoints, puisque la trainee suit les intercalaires
+    long_trainee = a.trainee * (a.morph + 1)
+    n_frames = 0
 
     with VideoWriter(sortie, fps=a.fps) as vid:
-        for step in pas_tries:
-            d, chunk = trouves[step]
-            state = load_checkpoint(d, chunk)
-            res = resources_au_pas(cfg, d, step)
-            cfg_c = cfg._replace(resources=res, log_grid=False)
-            sd.cfg, sd.chunk_idx = cfg_c, chunk
+        for i, e in enumerate(etapes):
+            precedent = etapes[i - 1] if i else None
+            juste_apres = bool(precedent is not None and any(
+                precedent["step"] < sh <= e["step"] for sh in pas_shuffle))
 
-            survivants = sd.compute_survivors(state)
-            if not survivants:
-                print(f"  step {step:>9,} : aucun survivant, saute")
-                continue
-            rng = np.random.default_rng(step)
-            ids = np.array([i for i, _ in survivants])
-            if a.n and len(ids) > a.n:
-                ids = ids[rng.choice(len(ids), a.n, replace=False)]
+            # images intercalaires : le nuage GLISSE de l'etape precedente a
+            # celle-ci, au lieu de sauter
+            inter = []
+            if precedent is not None and a.morph:
+                pa, pb = apparier(precedent["p"], e["p"])
+                aa = np.resize(precedent["age"], len(pa))
+                ab = np.resize(e["age"], len(pb))
+                for t in np.linspace(0, 1, a.morph + 2)[1:-1]:
+                    inter.append(((1 - t) * pa + t * pb,
+                                  (1 - t) * aa + t * ab,
+                                  precedent["step"] + t * (e["step"] - precedent["step"])))
 
-            cle, k = random.split(cle)
-            out = par_lots(vmap_over_agents_env_lab_high_res,
-                           state.agents.params[ids], key_env,
-                           random.split(k, len(ids)), model, cfg_c, a.batch)
-            mange = sd.eaten_by_type(out)              # (M, n_types) par CANAL
+            # La trainee suit AUSSI les images intercalaires : reliee aux seuls
+            # checkpoints elle sautait d'un point a l'autre et se lisait comme un
+            # gribouillis, alors que le nuage, lui, glisse.
+            for pi, ai, si in inter:
+                img, _, b = frame(fig, pi, ai, norm_age, dispo, e["res"], si,
+                                  epoques, bornes, fantome, trainee,
+                                  shuffle_actif=juste_apres, n_reels=e["n"])
+                vid.add(img); n_frames += 1
+                if b is not None:
+                    trainee.append(b); trainee[:] = trainee[-long_trainee:]
 
-            # canal -> identite : les sommets sont des IDENTITES, une permutation
-            # ne doit pas faire tourner le triangle
-            par_identite = np.zeros_like(mange)
-            for k_canal, r in enumerate(res):
-                par_identite[:, r.id] = mange[:, k_canal]
-
-            if dispo is None:                          # une seule fois : la
-                cle, kg = random.split(cle)            # disponibilite par
-                _, og = vmap_over_agents_env_lab_high_res(   # identite ne change
-                    state.agents.params[ids[:1]], key_env,   # pas d'une epoque
-                    random.split(kg, 1), model,              # a l'autre
-                    cfg_c._replace(log_grid=True))
-                dc = sd.available_by_type(og, len(res))
-                dispo = np.zeros(len(res))
-                for k_canal, r in enumerate(res):
-                    dispo[r.id] = dc[k_canal]
-
-            img, contour, bary = frame(fig, par_identite, dispo, res, step,
-                                       pas_shuffle, bornes, fantome, trainee)
-            vid.add(img)
-
-            # une permutation vient-elle de tomber ? on tient la frame, et on
-            # garde le contour d'avant en fantome pour la suivante
-            juste_apres = any(step - (bornes[1] - bornes[0]) / len(pas_tries)
-                              < s <= step for s in pas_shuffle)
+            img, contour, bary = frame(fig, e["p"], e["age"], norm_age, dispo,
+                                       e["res"], e["step"], epoques, bornes,
+                                       fantome, trainee,
+                                       shuffle_actif=juste_apres, n_reels=e["n"])
+            vid.add(img); n_frames += 1
             if juste_apres:
                 for _ in range(a.pause):
-                    vid.add(img)
+                    vid.add(img); n_frames += 1
 
             fantome = contour if juste_apres else None
             if bary is not None:
                 trainee.append(bary)
-                trainee[:] = trainee[-a.trainee:]
-            print(f"  step {step:>9,} : {len(ids)} genomes"
-                  + ("   <- permutation" if juste_apres else ""), flush=True)
+                trainee[:] = trainee[-long_trainee:]
 
     plt.close(fig)
-    print(f"\nVideo : {sortie}")
+    print(f"\n{n_frames} images, {n_frames / a.fps:.1f} s")
+    print(f"Video : {sortie}")
 
 
 if __name__ == "__main__":
