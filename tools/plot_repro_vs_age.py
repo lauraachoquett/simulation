@@ -60,22 +60,15 @@ def charge(data_dir, chunk_size):
     return (np.concatenate(age), np.concatenate(repro), np.concatenate(step))
 
 
-def tendance(x, y, n_bins=12):
-    """Mediane par casier d'age : la tendance d'ensemble, robuste aux zeros."""
-    if x.size < n_bins * 3:
-        return None
-    bords = np.quantile(x, np.linspace(0, 1, n_bins + 1))
-    bords = np.unique(bords)
-    if len(bords) < 3:
-        return None
-    idx = np.clip(np.digitize(x, bords) - 1, 0, len(bords) - 2)
-    cx, cy = [], []
-    for b in range(len(bords) - 1):
-        m = idx == b
-        if m.sum() >= 5:
-            cx.append(x[m].mean())
-            cy.append(np.median(y[m]))
-    return (np.array(cx), np.array(cy)) if cx else None
+def casiers(age, n_x=26):
+    """Bords des casiers : entiers en y, reguliers en x.
+
+    repro_ready est un COMPTE : des casiers a cheval sur les entiers
+    melangeraient 1 et 2 descendants dans la meme case et liseraient la densite
+    de travers.
+    """
+    bx = np.linspace(0, max(age.max(), 1), n_x + 1)
+    return bx
 
 
 def main():
@@ -83,10 +76,14 @@ def main():
     p.add_argument("source", help="dossier de fusion, d'experience, ou lab_data")
     p.add_argument("-o", "--out", default=None,
                    help="fichier de sortie (defaut <source>/fig/repro_vs_age.png)")
-    p.add_argument("--jitter", type=float, default=0.16,
-                   help="decalage vertical aleatoire (defaut %(default)s). "
-                        "repro_ready est ENTIER : sans lui les points s'empilent "
-                        "en lignes et les densites sont invisibles. 0 pour couper")
+    p.add_argument("--tranches", type=int, default=6,
+                   help="nombre de vignettes, decoupees en tranches de PAS "
+                        "d'effectif egal (defaut %(default)s)")
+    p.add_argument("--repro-max", type=int, default=None,
+                   help="dernier casier de descendance. Defaut : le quantile 99, "
+                        "pas le maximum -- quelques valeurs rares etiraient l'axe "
+                        "et ecrasaient la masse. Le compte du titre dit combien "
+                        "sont au-dela")
     p.add_argument("--chunk-size", type=int, default=None,
                    help="pas par chunk (defaut : lu dans config.json, sinon 1000)")
     a = p.parse_args()
@@ -113,42 +110,77 @@ def main():
               "sont anterieures a son ajout, il faut rejouer le lab.")
         return
     age, repro, step = d
-
     nuls = int((repro == 0).sum())
     print(f"{len(age)} genomes, {len(np.unique(step))} instants, "
           f"{nuls} a zero descendant ({100*nuls/len(age):.0f} %)")
 
-    fig, ax = plt.subplots(figsize=(8.4, 5.4))
-    norm = mcolors.Normalize(vmin=step.min(), vmax=step.max())
-    # le decalage ne touche QUE l'affichage : la tendance plus bas est calculee
-    # sur les valeurs exactes
-    y = repro + (np.random.default_rng(0).uniform(-a.jitter, a.jitter, len(repro))
-                 if a.jitter else 0.0)
-    sc = ax.scatter(age, y, c=step, cmap="viridis", norm=norm, s=26,
-                    alpha=.72, edgecolor="none", zorder=3)
+    # Tranches a EFFECTIF egal et non a duree egale : les checkpoints ne sont pas
+    # forcement reguliers, et une tranche vide ferait une vignette blanche.
+    pas_uniques = np.unique(step)
+    k = min(a.tranches, len(pas_uniques))
+    bornes = np.quantile(step, np.linspace(0, 1, k + 1))
+    bornes[0] -= 1                               # inclure le premier instant
 
-    t = tendance(age, repro)
-    if t is not None:
-        ax.plot(t[0], t[1], color="#C1121F", lw=2.0, marker="o", ms=4,
-                zorder=4, label="median by age bin")
-        ax.legend(loc="upper left", fontsize=9, frameon=False)
+    r_max = (a.repro_max if a.repro_max is not None
+             else int(max(np.ceil(np.quantile(repro, 0.99)), 1)))
+    hors = int((repro > r_max).sum())
+    by = np.arange(-0.5, r_max + 1.5)            # un casier par entier
+    bx = casiers(age)
 
-    barre = fig.colorbar(sc, ax=ax, pad=.02)
-    barre.set_label("Simulation step", fontsize=10)
+    # Toutes les vignettes partagent l'echelle de couleur, sinon deux images
+    # d'allure identique porteraient des effectifs differents. On normalise en
+    # FRACTION de la tranche : les tranches n'ont pas le meme nombre de genomes.
+    grilles = []
+    for i in range(k):
+        m = (step > bornes[i]) & (step <= bornes[i + 1])
+        h, _, _ = np.histogram2d(age[m], repro[m], bins=[bx, by])
+        grilles.append((h / max(m.sum(), 1), int(m.sum()),
+                        step[m].min() if m.any() else 0,
+                        step[m].max() if m.any() else 0))
+    vmax = max(g[0].max() for g in grilles) or 1.0
 
-    ax.set_xlabel("Lifespan in the lab (steps)")
-    ax.set_ylabel("Potential offspring"
-                  + (f"  (jittered \u00b1{a.jitter:g} for readability)"
-                     if a.jitter else ""))
-    ax.grid(alpha=.3, zorder=0)
-    ax.set_title("Potential offspring against lifespan\n"
+    cols = min(k, 3)
+    lignes = -(-k // cols)
+    fig, axes = plt.subplots(lignes, cols, figsize=(4.5 * cols, 3.7 * lignes),
+                             squeeze=False, sharex=True, sharey=True)
+    for ax in axes.ravel()[k:]:
+        ax.axis("off")
+
+    for i, (h, n, s0, s1) in enumerate(grilles):
+        ax = axes[i // cols][i % cols]
+        im = ax.pcolormesh(bx, by, h.T, cmap="magma_r", vmin=0, vmax=vmax,
+                           shading="flat")
+        # mediane par casier d'age : la tendance, sur les valeurs exactes
+        m = (step > bornes[i]) & (step <= bornes[i + 1])
+        centres, med = [], []
+        for j in range(len(bx) - 1):
+            sel = m & (age >= bx[j]) & (age < bx[j + 1])
+            if sel.sum() >= 4:
+                centres.append((bx[j] + bx[j + 1]) / 2)
+                med.append(np.median(repro[sel]))
+        if centres:
+            ax.plot(centres, med, color="#1D3557", lw=1.8, zorder=3)
+        ax.set_title(f"steps {s0:,.0f}–{s1:,.0f}   ({n} genomes)", fontsize=10)
+        ax.grid(alpha=.18, zorder=0)
+
+    for ax in axes[-1]:
+        ax.set_xlabel("Lifespan in the lab (steps)")
+    for ligne in axes:
+        ligne[0].set_ylabel("Potential offspring")
+
+    barre = fig.colorbar(im, ax=axes, pad=.015, fraction=.025)
+    barre.set_label("Fraction of the genomes in that panel", fontsize=10)
+
+    fig.suptitle("Potential offspring against lifespan, over time\n"
                  f"{len(age)} genomes — {nuls} with none "
-                 f"({100*nuls/len(age):.0f} %)", fontsize=12)
+                 f"({100*nuls/len(age):.0f} %)"
+                 + (f" — {hors} above {r_max}, off scale" if hors else "")
+                 + " — shared colour scale",
+                 fontsize=12.5)
 
-    fig.tight_layout()
     sortie = a.out or os.path.join(a.source, "fig", "repro_vs_age.png")
     os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
-    fig.savefig(sortie, dpi=150)
+    fig.savefig(sortie, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Figure saved: {sortie}")
 
