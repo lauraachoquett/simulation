@@ -75,6 +75,40 @@ def triangle_patch(ax):
                    edgecolor="none")
 
 
+def _chemins(cs):
+    """Les Path d'un contour, quelle que soit la version de matplotlib.
+
+    `ContourSet.collections` est supprime depuis matplotlib 3.10 ; la version
+    recente expose get_paths() directement sur le ContourSet.
+    """
+    if hasattr(cs, "collections"):
+        return [p for c in cs.collections for p in c.get_paths()]
+    return list(cs.get_paths())
+
+
+def _decouper(cs, patch):
+    """Applique un chemin de decoupe au contour, ancienne et nouvelle API."""
+    if hasattr(cs, "collections"):
+        for c in cs.collections:
+            c.set_clip_path(patch)
+    else:
+        cs.set_clip_path(patch)
+
+
+def _segments(cs):
+    """Les lobes du contour, separes.
+
+    to_polygons et non `.vertices` : un Path peut contenir plusieurs lobes
+    disjoints, et concatener leurs sommets tracerait un trait parasite de l'un a
+    l'autre -- precisement le cas que le contour a 50 % doit pouvoir montrer.
+    """
+    segs = []
+    for chemin in _chemins(cs):
+        segs.extend(np.asarray(v) for v in chemin.to_polygons(closed_only=False)
+                    if len(v) > 1)
+    return segs
+
+
 def contour_kde(ax, x, y, niveau=0.5, **kw):
     """Contour contenant `niveau` de la masse, par estimation de densite.
 
@@ -96,10 +130,8 @@ def contour_kde(ax, x, y, niveau=0.5, **kw):
     d = k(np.vstack([gx.ravel(), gy.ravel()])).reshape(gx.shape)
     seuil = np.percentile(k(pts), 100 * (1 - niveau))
     cs = ax.contour(gx, gy, d, levels=[seuil], **kw)
-    decoupe = triangle_patch(ax)
-    for c in cs.collections:
-        c.set_clip_path(decoupe)
-    return [p.vertices for c in cs.collections for p in c.get_paths()]
+    _decouper(cs, triangle_patch(ax))
+    return _segments(cs)
 
 
 def frame(fig, chaine, dispo, resources, step, pas_shuffle, bornes, fantome,
