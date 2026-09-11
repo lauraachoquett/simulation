@@ -99,6 +99,34 @@ def load_history(*data_dirs):
     return hist
 
 
+def chaine_de_reprise(exp_dir):
+    """[ancetres..., exp_dir] en remontant `resume_from` de config en config.
+
+    Un run repris vit dans un dossier neuf ; sans cette remontee il faudrait
+    enumerer la chaine a la main, et un maillon oublie tronque les figures sans
+    que rien ne le signale. Un dossier parent disparu arrete la remontee avec un
+    message plutot que de produire une serie amputee en silence.
+    """
+    chaine, vus = [], set()
+    courant = os.path.abspath(exp_dir)
+    while courant and courant not in vus:
+        vus.add(courant)
+        chaine.append(courant)
+        try:
+            cfg, _ = load_config(courant)
+        except Exception:
+            break
+        parent = getattr(cfg, "resume_from", "")
+        if not parent:
+            break
+        if not os.path.isdir(parent):
+            print(f"[replot] parent introuvable : {parent} — la serie commence "
+                  f"au chunk {getattr(cfg, 'resume_chunk', 0) + 1}")
+            break
+        courant = parent
+    return list(reversed(chaine))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -112,19 +140,29 @@ def main(argv=None):
                          "Défaut : le dossier du run, donc ses figures sont "
                          "écrasées. À donner pour une fusion, qui n'appartient "
                          "à aucun des runs")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="ne PAS remonter la chaine des reprises ; ne tracer que "
+                         "le dossier donne")
     ap.add_argument("--n-target", type=int, default=0,
                     help="réduire à ~N points ; 0 = pleine résolution (défaut)")
     args = ap.parse_args(argv)
 
-    exp_dir = args.exp_dirs[0]
-    hist = load_history(*[os.path.join(d, "data") for d in args.exp_dirs])
+    # Un seul dossier : on remonte la chaine des reprises tout seul. Plusieurs :
+    # on prend exactement ce qui est donne, sans deviner.
+    dossiers = (chaine_de_reprise(args.exp_dirs[0]) if len(args.exp_dirs) == 1
+                and not args.no_resume else list(args.exp_dirs))
+    if len(dossiers) > 1 and len(args.exp_dirs) == 1:
+        print("[replot] chaine de reprise suivie : "
+              + " -> ".join(os.path.basename(d.rstrip("/")) for d in dossiers))
+    exp_dir = dossiers[0]
+    hist = load_history(*[os.path.join(d, "data") for d in dossiers])
 
     # config et journal de permutations viennent du PREMIER dossier : c'est lui
     # qui porte l'ordre initial des canaux, dont depend la lecture de tout le
     # reste. Le journal d'une reprise ne contient que ses propres permutations.
     cfg, _ = load_config(exp_dir)
     shuffle_log = load_shuffle_log(exp_dir)
-    for d in args.exp_dirs[1:]:
+    for d in dossiers[1:]:
         for e in load_shuffle_log(d):
             if not any(abs(e["step"] - v["step"]) < 1 for v in shuffle_log):
                 shuffle_log.append(e)

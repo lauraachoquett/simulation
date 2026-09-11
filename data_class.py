@@ -175,6 +175,13 @@ class Config(NamedTuple):
     # entre eux melangeait la difference des genomes a celle de l'etalon.
     lab_seed : int = 1        # cf. tools/preview_lab_env : graine retenue
 
+    # Tracabilite d'une reprise. Une reprise cree un dossier NEUF, donc sans ces
+    # deux champs rien dans le config.json ne dit d'ou elle repart -- et les
+    # figures d'un run repris sont inlisibles sans savoir quelle moitie vient
+    # d'ou. Vides sur un run parti de zero.
+    resume_from : str = ""
+    resume_chunk : int = 0
+
     lab_time_steps : int = 2000
 
     hidden_dim : int = 8              # taille du carry LSTM (h et c), cf. reset_b

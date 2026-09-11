@@ -173,6 +173,13 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
     print(f"[reseau] {cfg.model_version} memory_mode={cfg.memory_mode} "
           f"hidden_dim={cfg.hidden_dim} hidden_layers={list(cfg.hidden_layers)} "
           f"output_dim={cfg.output_dim} -> {model.num_params} parametres")
+    if reprend:
+        # avant save_config : c'est la seule trace de la filiation entre les deux
+        # dossiers, et tools/replot la lit pour recoller les series
+        cfg = cfg._replace(resume_from=os.path.abspath(resume_exp),
+                           resume_chunk=int(chunk_id))
+        print(f"[reprise] depuis {resume_exp} au chunk {chunk_id} "
+              f"-> premier chunk calcule : {start_chunk}")
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
