@@ -85,6 +85,18 @@ def main():
                         "pas le maximum -- quelques valeurs rares etiraient l'axe "
                         "et ecrasaient la masse. Le compte du titre dit combien "
                         "sont au-dela")
+    p.add_argument("--gamma", type=float, default=0.5,
+                   help="courbure de l'echelle de couleur (defaut %(default)s). "
+                        "PLUS HAUT = PLUS CLAIR : 1.0 donne une echelle lineaire, "
+                        "0.3 sature vite vers le sombre")
+    p.add_argument("--clip", type=float, default=0.97,
+                   help="quantile des cases occupees ou l'echelle sature "
+                        "(defaut %(default)s). PLUS HAUT = PLUS CLAIR : 1.0 "
+                        "borne au maximum, donc seule la case la plus peuplee "
+                        "est noire")
+    p.add_argument("--cmap", default="magma_r",
+                   help="palette (defaut %(default)s). Plus douces : Blues, "
+                        "YlOrRd, rocket_r. Ajouter _r inverse le sens")
     p.add_argument("--chunk-size", type=int, default=None,
                    help="pas par chunk (defaut : lu dans config.json, sinon 1000)")
     a = p.parse_args()
@@ -144,9 +156,9 @@ def main():
     # ordres de grandeur, une echelle lineaire n'en montre que le sommet.
     occupees = np.concatenate([g[0][g[0] > 0].ravel() for g in grilles
                                if (g[0] > 0).any()])
-    vmax = float(np.quantile(occupees, 0.97)) if occupees.size else 1.0
-    norm = mcolors.PowerNorm(gamma=0.5, vmin=0, vmax=vmax)
-    cmap = plt.get_cmap("magma_r").copy()
+    vmax = float(np.quantile(occupees, a.clip)) if occupees.size else 1.0
+    norm = mcolors.PowerNorm(gamma=a.gamma, vmin=0, vmax=vmax)
+    cmap = plt.get_cmap(a.cmap).copy()
     cmap.set_bad("white")            # une case vide n'est pas une densite faible
 
     cols = min(k, 3)
@@ -184,8 +196,8 @@ def main():
 
     barre = fig.colorbar(im, ax=axes, pad=.015, fraction=.025)
     barre.set_label("Fraction of the genomes in that panel\n"
-                    "(square-root scale, clipped at the 97th percentile)",
-                    fontsize=9)
+                    f"(power scale \u03b3={a.gamma:g}, clipped at the "
+                    f"{100*a.clip:.0f}th percentile)", fontsize=9)
 
     fig.suptitle("Potential offspring against lifespan, over time\n"
                  f"{len(age)} genomes — {nuls} with none "
