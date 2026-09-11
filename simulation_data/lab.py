@@ -459,6 +459,13 @@ class LabMixin:
             # qu'a trois ressources ; BASE_RESOURCES est deja passe a deux.
             par_genome = self.data_lab_env_grouped(outputs_high)
             if n_types == 3:
+                # Les memes donnees que la figure, sur disque : la video du
+                # simplex peut alors les rejouer telles quelles au lieu de
+                # reevaluer les genomes depuis les checkpoints -- qui sont de
+                # toute facon moins frequents que les evaluations de lab, donc
+                # donneraient MOINS d'images.
+                self._save_simplex(eaten_baseline, baseline_ids,
+                                   par_genome["age"], av_base, exp_dir)
                 plot_food_simplex(
                     eaten_baseline, baseline_ids, par_genome["age"],
                     av_base, exp_dir, self.chunk_idx, titre="lab_1 — high_res",
@@ -731,6 +738,23 @@ class LabMixin:
         (survives_int=0), la somme sur tout le rollout couvre donc sa vie entiere
         sans avoir a fenetrer sur [birth, death]."""
         return np.asarray(outputs_lab.consumed_res).sum(axis=1)   # (B, T, n_types) -> (B, n_types)
+
+    def _save_simplex(self, eaten, ids, age, dispo, exp_dir):
+        """Le nuage du simplex, tel qu'il est trace, dans lab_data/.
+
+        `eaten` et `dispo` sont indexes par CANAL ; `ids` donne l'identite de
+        chaque canal. On garde les deux plutot que de convertir ici : la
+        conversion est la meme que celle du trace, autant qu'elle se fasse au
+        meme endroit et une seule fois.
+        """
+        data_dir = os.path.join(exp_dir, "lab_data")
+        os.makedirs(data_dir, exist_ok=True)
+        np.savez_compressed(
+            os.path.join(data_dir, f"simplex_chunk_{self.chunk_idx}.npz"),
+            eaten=np.asarray(eaten), ids=np.asarray(ids),
+            age=np.asarray(age), dispo=np.asarray(dispo),
+            step=np.int64(self.chunk_idx * self.cfg.chunk_size),
+            lab_time_steps=np.int64(self.cfg.lab_time_steps))
 
     def _save_lab_data(self, agg, summary, exp_dir, suffix=""):
         data_dir = os.path.join(exp_dir, "lab_data")

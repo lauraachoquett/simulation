@@ -28,7 +28,9 @@ et le saut vers le poison tombe entre deux frames -- la video montre alors un
 nuage immobile en suggerant qu'il ne se passe rien.
 """
 import argparse
+import glob
 import os
+import re
 
 import jax
 import jax.numpy as jnp
@@ -243,6 +245,41 @@ def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
     return img, contour, barycentre
 
 
+def etapes_depuis_lab_data(exp_dirs, cfg):
+    """Les nuages deja calcules pendant le run, sans rien reevaluer.
+
+    Les simplex sont traces a chaque evaluation de lab, plus frequente que les
+    checkpoints : cette source donne donc PLUS d'images qu'un rejeu, et pour un
+    cout nul. Elle porte en revanche les genomes que le run avait retenus
+    (les 50 premiers survivants), pas un echantillon qu'on choisit ici.
+    """
+    par_id = {r.id: r for r in cfg.resources}
+    par_step, dispo = {}, None
+    for d in exp_dirs:
+        for f in glob.glob(os.path.join(d, "lab_data", "simplex_chunk_*.npz")):
+            with np.load(f) as z:
+                step = int(z["step"])
+                eaten, ids, age = z["eaten"], z["ids"], z["age"]
+                if dispo is None:
+                    dc = z["dispo"]
+                    dispo = np.zeros(len(ids))
+                    for k, i in enumerate(ids):
+                        dispo[int(i)] = dc[k]
+            # canal -> identite : les sommets du triangle sont des identites
+            par_identite = np.zeros_like(np.asarray(eaten, float))
+            for k, i in enumerate(ids):
+                par_identite[:, int(i)] = eaten[:, k]
+            total = par_identite.sum(axis=1)
+            ok = total > 0
+            if not ok.any():
+                continue
+            par_step[step] = dict(
+                step=step, p=par_identite[ok] / total[ok, None],
+                age=np.asarray(age, float)[ok],
+                res=tuple(par_id[int(i)] for i in ids), n=int(ok.sum()))
+    return [par_step[s] for s in sorted(par_step)], dispo
+
+
 def apparier(pa, pb):
     """Affectation de cout minimal entre deux nuages de compositions.
 
@@ -290,6 +327,10 @@ def main():
                         "(defaut %(default)s). 0 la supprime")
     p.add_argument("--lab", dest="lab_time_steps", type=int, default=None)
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None)
+    p.add_argument("--from-lab-data", dest="from_lab_data", action="store_true",
+                   help="lire les nuages deja enregistres par le run "
+                        "(lab_data/simplex_chunk_*.npz) au lieu de reevaluer "
+                        "depuis les checkpoints. Plus d'images, cout nul")
     a = p.parse_args()
 
     cfg, _ = load_config(a.exp_dirs[0])
@@ -299,89 +340,87 @@ def main():
         print(f"video_simplex : {len(cfg.resources)} ressource(s). Le simplex en "
               "demande 3.")
         return
-    model = build_model(cfg)
+    # ---- passe 1 : d'ou viennent les nuages ? ------------------------------
+    if a.from_lab_data:
+        etapes, dispo = etapes_depuis_lab_data(a.exp_dirs, cfg)
+        if not etapes:
+            print("Aucun simplex_chunk_*.npz. Ces runs sont anterieurs a leur "
+                  "enregistrement : relancer sans --from-lab-data.")
+            return
+        print(f"{len(etapes)} frame(s) lues dans lab_data, pas "
+              f"{etapes[0]['step']:,} a {etapes[-1]['step']:,}")
+    else:
+        model = build_model(cfg)
+        # checkpoints dedoublonnes par PAS et non par numero de chunk : sur les
+        # runs repris avant a7a31a3 les deux divergent
+        trouves = {}
+        for d in a.exp_dirs:
+            for chunk, _ in checkpoints_de(d):
+                st = load_checkpoint(d, chunk)
+                trouves[int(st.step)] = (d, chunk)
+        if not trouves:
+            print("Aucun checkpoint.")
+            return
+        pas_tries = sorted(trouves)
+        print(f"{len(pas_tries)} checkpoint(s), pas {pas_tries[0]:,} a "
+              f"{pas_tries[-1]:,}")
 
-    # tous les checkpoints des dossiers donnes, dedoublonnes par PAS et non par
-    # numero de chunk : sur les runs repris avant a7a31a3 les deux divergent
-    trouves = {}
-    for d in a.exp_dirs:
-        for chunk, _ in checkpoints_de(d):
-            st = load_checkpoint(d, chunk)
-            trouves[int(st.step)] = (d, chunk)
-    if not trouves:
-        print("Aucun checkpoint.")
-        return
-    pas_tries = sorted(trouves)
-    print(f"{len(pas_tries)} checkpoint(s), pas {pas_tries[0]:,} a "
-          f"{pas_tries[-1]:,}")
+        graine = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
+        key_env = random.PRNGKey(graine)
+        cle = random.PRNGKey(graine + 1)
+        sd = simulation_data(cfg, 0, 1)
+        etapes, dispo = [], None
+        for step in pas_tries:
+            d, chunk = trouves[step]
+            state = load_checkpoint(d, chunk)
+            res = resources_au_pas(cfg, d, step)
+            cfg_c = cfg._replace(resources=res, log_grid=False)
+            sd.cfg, sd.chunk_idx = cfg_c, chunk
 
-    graine = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
-    key_env = random.PRNGKey(graine)
-    cle = random.PRNGKey(graine + 1)
+            survivants = sd.compute_survivors(state)
+            if not survivants:
+                print(f"  step {step:>9,} : aucun survivant, saute")
+                continue
+            rng = np.random.default_rng(step)
+            ids = np.array([i for i, _ in survivants])
+            if a.n and len(ids) > a.n:
+                ids = ids[rng.choice(len(ids), a.n, replace=False)]
 
-    shuffle_log = load_shuffle_log(a.exp_dirs[0])
-    pas_shuffle = [e["step"] for e in shuffle_log]
-    # epoques : (pas de debut, ordre des canaux). La premiere part de l'ordre
-    # initial du run, les suivantes de chaque permutation journalisee.
-    epoques = [(pas_tries[0], [r.id for r in cfg.resources])] + \
-              [(e["step"], list(e["order_ids"])) for e in shuffle_log]
-    epoques.sort(key=lambda t: t[0])
-    bornes = (pas_tries[0], pas_tries[-1])
-    sd = simulation_data(cfg, 0, 1)
+            cle, k = random.split(cle)
+            out = par_lots(vmap_over_agents_env_lab_high_res,
+                           state.agents.params[ids], key_env,
+                           random.split(k, len(ids)), model, cfg_c, a.batch)
+            mange = sd.eaten_by_type(out)
+            age = np.asarray(out.alive).sum(axis=(1, 2)).astype(float)
 
-    # ---- passe 1 : evaluer, sans rien tracer -------------------------------
-    # Tout collecter d'abord permet de fixer l'echelle des couleurs sur TOUTE la
-    # video : une echelle recalculee par frame ferait varier la teinte d'un
-    # meme age d'une image a l'autre.
-    etapes, dispo = [], None
-    for step in pas_tries:
-        d, chunk = trouves[step]
-        state = load_checkpoint(d, chunk)
-        res = resources_au_pas(cfg, d, step)
-        cfg_c = cfg._replace(resources=res, log_grid=False)
-        sd.cfg, sd.chunk_idx = cfg_c, chunk
-
-        survivants = sd.compute_survivors(state)
-        if not survivants:
-            print(f"  step {step:>9,} : aucun survivant, saute")
-            continue
-        rng = np.random.default_rng(step)
-        ids = np.array([i for i, _ in survivants])
-        if a.n and len(ids) > a.n:
-            ids = ids[rng.choice(len(ids), a.n, replace=False)]
-
-        cle, k = random.split(cle)
-        out = par_lots(vmap_over_agents_env_lab_high_res,
-                       state.agents.params[ids], key_env,
-                       random.split(k, len(ids)), model, cfg_c, a.batch)
-        mange = sd.eaten_by_type(out)              # (M, n_types) par CANAL
-        # duree de vie lue sur `alive` et non via _agg_lab : un env qui ne rend
-        # aucune metrique y serait saute, ce qui desalignerait age et regime
-        age = np.asarray(out.alive).sum(axis=(1, 2)).astype(float)
-
-        par_identite = np.zeros_like(mange)
-        for k_canal, r in enumerate(res):
-            par_identite[:, r.id] = mange[:, k_canal]
-
-        total = par_identite.sum(axis=1)
-        ok = total > 0                    # rien mange -> composition indefinie
-        etapes.append(dict(step=step, p=par_identite[ok] / total[ok, None],
-                           age=age[ok], res=res, n=int(ok.sum())))
-
-        if dispo is None:
-            cle, kg = random.split(cle)
-            _, og = vmap_over_agents_env_lab_high_res(
-                state.agents.params[ids[:1]], key_env, random.split(kg, 1),
-                model, cfg_c._replace(log_grid=True))
-            dc = sd.available_by_type(og, len(res))
-            dispo = np.zeros(len(res))
+            par_identite = np.zeros_like(mange)
             for k_canal, r in enumerate(res):
-                dispo[r.id] = dc[k_canal]
-        print(f"  step {step:>9,} : {int(ok.sum())} genomes", flush=True)
+                par_identite[:, r.id] = mange[:, k_canal]
+            total = par_identite.sum(axis=1)
+            ok = total > 0
+            etapes.append(dict(step=step, p=par_identite[ok] / total[ok, None],
+                               age=age[ok], res=res, n=int(ok.sum())))
+
+            if dispo is None:
+                cle, kg = random.split(cle)
+                _, og = vmap_over_agents_env_lab_high_res(
+                    state.agents.params[ids[:1]], key_env, random.split(kg, 1),
+                    model, cfg_c._replace(log_grid=True))
+                dc = sd.available_by_type(og, len(res))
+                dispo = np.zeros(len(res))
+                for k_canal, r in enumerate(res):
+                    dispo[r.id] = dc[k_canal]
+            print(f"  step {step:>9,} : {int(ok.sum())} genomes", flush=True)
 
     if not etapes:
         print("Rien a tracer.")
         return
+
+    shuffle_log = load_shuffle_log(a.exp_dirs[0])
+    epoques = [(etapes[0]["step"], [r.id for r in cfg.resources])] + \
+              [(e["step"], list(e["order_ids"])) for e in shuffle_log]
+    epoques.sort(key=lambda t: t[0])
+    bornes = (etapes[0]["step"], etapes[-1]["step"])
 
     tous_ages = np.concatenate([e["age"] for e in etapes if len(e["age"])])
     norm_age = mcolors.Normalize(vmin=float(tous_ages.min()),
@@ -400,7 +439,8 @@ def main():
         for i, e in enumerate(etapes):
             precedent = etapes[i - 1] if i else None
             juste_apres = bool(precedent is not None and any(
-                precedent["step"] < sh <= e["step"] for sh in pas_shuffle))
+                precedent["step"] < sh["step"] <= e["step"]
+                for sh in shuffle_log))
 
             # images intercalaires : le nuage GLISSE de l'etape precedente a
             # celle-ci, au lieu de sauter
