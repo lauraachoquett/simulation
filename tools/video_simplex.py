@@ -136,7 +136,7 @@ def contour_kde(ax, x, y, niveau=0.5, **kw):
 
 
 def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
-          fantome, trainee, shuffle_actif=False, n_reels=None):
+          fantome, trainee, shuffle_actif=False, n_reels=None, taille=110):
     """Compose une frame et rend (contour, barycentre) pour la suivante.
 
     `p` est deja en PROPORTIONS : l'interpolation entre deux checkpoints se fait
@@ -177,8 +177,8 @@ def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
                         lw=1.1, alpha=0.10 + 0.55 * i / max(len(t) - 2, 1),
                         zorder=4)
 
-        sc = ax.scatter(x, y, s=52, c=ages, cmap="viridis", norm=norm_age,
-                        alpha=.85, edgecolor="white", linewidth=.5, zorder=5)
+        sc = ax.scatter(x, y, s=taille, c=ages, cmap="viridis", norm=norm_age,
+                        alpha=.85, edgecolor="white", linewidth=.7, zorder=5)
         contour = contour_kde(ax, x, y, colors="#1D3557", linewidths=2.0,
                               linestyles="--", zorder=6)
         barycentre = (float(x.mean()), float(y.mean()))
@@ -283,6 +283,8 @@ def main():
                         "%(default)s). 0 = saut sec, comme avant")
     p.add_argument("--pause", type=int, default=8,
                    help="frames tenues sur une permutation")
+    p.add_argument("--taille", type=float, default=110,
+                   help="aire des points, en points^2 (defaut %(default)s)")
     p.add_argument("--trainee", type=int, default=8,
                    help="longueur de la trainee du barycentre, en CHECKPOINTS "
                         "(defaut %(default)s). 0 la supprime")
@@ -418,7 +420,8 @@ def main():
             for pi, ai, si in inter:
                 img, _, b = frame(fig, pi, ai, norm_age, dispo, e["res"], si,
                                   epoques, bornes, fantome, trainee,
-                                  shuffle_actif=juste_apres, n_reels=e["n"])
+                                  shuffle_actif=juste_apres, n_reels=e["n"],
+                                  taille=a.taille)
                 vid.add(img); n_frames += 1
                 if b is not None:
                     trainee.append(b); trainee[:] = trainee[-long_trainee:]
@@ -426,7 +429,8 @@ def main():
             img, contour, bary = frame(fig, e["p"], e["age"], norm_age, dispo,
                                        e["res"], e["step"], epoques, bornes,
                                        fantome, trainee,
-                                       shuffle_actif=juste_apres, n_reels=e["n"])
+                                       shuffle_actif=juste_apres, n_reels=e["n"],
+                                       taille=a.taille)
             vid.add(img); n_frames += 1
             if juste_apres:
                 for _ in range(a.pause):
