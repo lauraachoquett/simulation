@@ -1419,46 +1419,118 @@ def plot_lifetime_vs_step_html(death_steps, lifetimes, exp_dir,cfg, name_fig='si
     
     
 ## LIFE EXPECTANCY
-def compute_life_expectancy(death_steps, lifetimes, bin_width=100):
-    """Médiane de survie par cohorte : regroupe par step de naissance
-    (largeur bin_width) et renvoie (centres, âge médian à la mort, effectif)."""
+def cohortes(death_steps, lifetimes, bin_width=100):
+    """Cohortes par pas de naissance : mediane, quartiles, effectif.
+
+    Rend aussi `dernier_mort`, le pas de la derniere mort observee. Il sert a
+    reperer les cohortes TRONQUEES : nees trop tard pour qu'on ait pu voir leurs
+    membres vieillir, elles ne contiennent que ceux qui sont morts vite, et leur
+    mediane est tiree vers le bas. C'est un artefact d'observation, pas une
+    baisse de la longevite -- et il tombe precisement la ou on cherche a lire
+    l'evolution recente.
+    """
     death_steps = np.asarray(death_steps, dtype=float)
     lifetimes   = np.asarray(lifetimes, dtype=float)
     born        = death_steps - lifetimes
 
     edges  = np.arange(born.min(), born.max() + bin_width, bin_width)
     n_bins = len(edges) - 1
-    idx    = np.clip(np.digitize(born, edges) - 1, 0, n_bins - 1)   # bin de chaque individu
+    idx    = np.clip(np.digitize(born, edges) - 1, 0, n_bins - 1)
 
-    med_age = np.full(n_bins, np.nan)
-    count   = np.zeros(n_bins, dtype=int)
+    med = np.full(n_bins, np.nan)
+    q1  = np.full(n_bins, np.nan)
+    q3  = np.full(n_bins, np.nan)
+    count = np.zeros(n_bins, dtype=int)
     for b in range(n_bins):
         vals = lifetimes[idx == b]
         count[b] = vals.size
         if vals.size:
-            med_age[b] = np.median(vals)
+            med[b] = np.median(vals)
+            q1[b], q3[b] = np.percentile(vals, [25, 75])
 
-    centers = 0.5 * (edges[:-1] + edges[1:])
-    return centers, med_age, count
+    return dict(centres=0.5 * (edges[:-1] + edges[1:]), med=med, q1=q1, q3=q3,
+                count=count, dernier_mort=float(death_steps.max()),
+                age_max=float(lifetimes.max()))
+
+
+def compute_life_expectancy(death_steps, lifetimes, bin_width=100):
+    """(centres, mediane, effectif). Conserve pour la variante HTML."""
+    c = cohortes(death_steps, lifetimes, bin_width)
+    return c["centres"], c["med"], c["count"]
  
 def plot_life_expectancy(death_steps, lifetimes, exp_dir, bin_width=100, name_fig='sim'):
     plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width, name_fig)
     plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width, name_fig)
 
-def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10, name_fig='sim'):
-    centers, med_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
-    _, ax = plt.subplots(figsize=(12, 4))
-    ax.set_xlabel('Born step')
-    ax.set_ylabel('Life expectancy (steps)')
-    ax.scatter(centers, med_age, color='tab:purple')
-    ax.grid(True, alpha=0.3)
-    ax.set_title(f"Life expectancy with lifetime average over {bin_width} agents")
+def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10,
+                             name_fig='sim', min_n=20, clip=0.98):
+    """Esperance de vie par cohorte de naissance.
 
-    plt.tight_layout()
+    Trois corrections par rapport a un simple nuage de medianes :
+
+    - les cohortes de MOINS de `min_n` individus sont ecartees. Une mediane sur
+      deux agents est du bruit, et c'est elle qui etirait l'axe ;
+    - l'axe y est borne a un quantile des medianes retenues, pas au maximum ;
+    - la zone TRONQUEE a droite est grisee. Les cohortes nees moins de `age_max`
+      avant la derniere mort observee ne contiennent que des agents morts vite :
+      leur mediane baisse pour une raison d'observation, pas de biologie.
+    """
+    c = cohortes(death_steps, lifetimes, bin_width)
+    x, med, q1, q3, n = c["centres"], c["med"], c["q1"], c["q3"], c["count"]
+    assez = n >= min_n
+    ecartees = int(((n > 0) & ~assez).sum())
+
+    debut_tronque = c["dernier_mort"] - c["age_max"]
+
+    fig, (ax, bas) = plt.subplots(2, 1, figsize=(12, 5.4), sharex=True,
+                                  gridspec_kw=dict(height_ratios=[3, 1]),
+                                  constrained_layout=True)
+
+    if assez.any():
+        ax.fill_between(x[assez], q1[assez], q3[assez], color="tab:purple",
+                        alpha=.20, zorder=2, label="p25–p75")
+        ax.plot(x[assez], med[assez], color="tab:purple", lw=1.8, zorder=3,
+                label="median")
+
+    if debut_tronque < x.max():
+        for a in (ax, bas):
+            a.axvspan(debut_tronque, x.max() + bin_width, color="0.85",
+                      alpha=.55, zorder=0)
+        ax.text(debut_tronque, ax.get_ylim()[1], " truncated cohorts ",
+                va="top", ha="left", fontsize=8.5, color="0.35", zorder=4)
+
+    ax.set_ylabel("Lifespan at death (steps)")
+    ax.grid(alpha=.3, zorder=1)
+    ax.legend(loc="upper left", fontsize=9, frameon=False)
+
+    # borne haute sur les medianes RETENUES : une cohorte maigre restee dans le
+    # lot etirerait encore l'axe
+    if assez.any():
+        haut = float(np.nanquantile(q3[assez], clip))
+        hors = int((med[assez] > haut).sum())
+        ax.set_ylim(0, haut * 1.05)
+    else:
+        hors = 0
+
+    bas.bar(x, n, width=bin_width * .9, color="0.55", zorder=2)
+    bas.axhline(min_n, color="tab:red", lw=1.0, ls="--", zorder=3)
+    bas.set_ylabel("cohort size")
+    bas.set_xlabel("Birth step")
+    bas.grid(alpha=.3, zorder=1)
+
+    titre = (f"Life expectancy by birth cohort (bins of {bin_width:,} steps)")
+    sous = f"{int(n.sum())} deaths"
+    if ecartees:
+        sous += f" — {ecartees} cohorts under {min_n} dropped"
+    if hors:
+        sous += f" — {hors} medians above the axis"
+    fig.suptitle(f"{titre}\n{sous}", fontsize=12)
+
     path_save_fig = os.path.join(exp_dir, 'fig')
     os.makedirs(path_save_fig, exist_ok=True)
-    plt.savefig(os.path.join(path_save_fig, f'plot_life_exp_{name_fig}.png'), dpi=120)
-    plt.close()
+    fig.savefig(os.path.join(path_save_fig, f'plot_life_exp_{name_fig}.png'), dpi=120)
+    plt.close(fig)
+
 
 def plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width=10, name_fig='sim'):
     centers, med_age, _ = compute_life_expectancy(death_steps, lifetimes, bin_width)
