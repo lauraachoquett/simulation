@@ -1462,8 +1462,25 @@ def plot_life_expectancy(death_steps, lifetimes, exp_dir, bin_width=100, name_fi
     plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width, name_fig)
     plot_life_expectancy_html(death_steps, lifetimes, exp_dir, bin_width, name_fig)
 
+def _mediane_glissante(y, fen):
+    """Mediane glissante, en ignorant les trous.
+
+    Mediane et non moyenne : une cohorte isolee a valeur extreme -- il y en a --
+    deplacerait la moyenne de toute la fenetre.
+    """
+    n = len(y)
+    out = np.full(n, np.nan)
+    demi = fen // 2
+    for i in range(n):
+        seg = y[max(0, i - demi):min(n, i + demi + 1)]
+        seg = seg[~np.isnan(seg)]
+        if seg.size:
+            out[i] = np.median(seg)
+    return out
+
+
 def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10,
-                             name_fig='sim', min_n=20, clip=0.98):
+                             name_fig='sim', min_n=20, clip=0.98, lissage=None):
     """Esperance de vie par cohorte de naissance.
 
     Trois corrections par rapport a un simple nuage de medianes :
@@ -1471,6 +1488,11 @@ def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10,
     - les cohortes de MOINS de `min_n` individus sont ecartees. Une mediane sur
       deux agents est du bruit, et c'est elle qui etirait l'axe ;
     - l'axe y est borne a un quantile des medianes retenues, pas au maximum ;
+    - la courbe est LISSEE par mediane glissante. `lissage` est le nombre de
+      cohortes dans la fenetre ; None l'ajuste pour en garder une quarantaine de
+      points effectifs, ce qui reste lisible quelle que soit la longueur du run.
+      La courbe brute reste en fond, pale : le lissage ne doit pas faire
+      disparaitre le bruit qu'il masque ;
     - la zone TRONQUEE a droite est grisee. Les cohortes nees moins de `age_max`
       avant la derniere mort observee ne contiennent que des agents morts vite :
       leur mediane baisse pour une raison d'observation, pas de biologie.
@@ -1487,10 +1509,20 @@ def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10,
                                   constrained_layout=True)
 
     if assez.any():
-        ax.fill_between(x[assez], q1[assez], q3[assez], color="tab:purple",
-                        alpha=.20, zorder=2, label="p25–p75")
-        ax.plot(x[assez], med[assez], color="tab:purple", lw=1.8, zorder=3,
-                label="median")
+        fen = lissage if lissage else max(1, int(assez.sum()) // 40)
+        fen = max(1, fen | 1)                     # impair : fenetre centree
+        mm = np.where(assez, med, np.nan)
+        q1m = _mediane_glissante(np.where(assez, q1, np.nan), fen)
+        q3m = _mediane_glissante(np.where(assez, q3, np.nan), fen)
+        lisse = _mediane_glissante(mm, fen)
+
+        ax.fill_between(x, q1m, q3m, color="tab:purple", alpha=.18, zorder=2,
+                        label="p25–p75 (smoothed)")
+        if fen > 1:
+            ax.plot(x[assez], med[assez], color="tab:purple", lw=.7, alpha=.30,
+                    zorder=3, label="median, raw")
+        ax.plot(x, lisse, color="tab:purple", lw=2.2, zorder=4,
+                label=f"median, {fen}-cohort rolling" if fen > 1 else "median")
 
     if debut_tronque < x.max():
         for a in (ax, bas):
@@ -1512,13 +1544,22 @@ def plot_life_expectancy_png(death_steps, lifetimes, exp_dir, bin_width=10,
     else:
         hors = 0
 
-    bas.bar(x, n, width=bin_width * .9, color="0.55", zorder=2)
+    # Au-dela de ~80 cohortes, mille barres d'un pixel forment un pave illisible.
+    # Une aire donne la meme information -- ou l'effectif chute -- et laisse voir
+    # le seuil.
+    if len(x) > 80:
+        bas.fill_between(x, n, color="0.62", step="mid", zorder=2)
+        bas.plot(x, _mediane_glissante(n.astype(float), max(1, len(x) // 40 | 1)),
+                 color="0.25", lw=1.2, zorder=3)
+    else:
+        bas.bar(x, n, width=bin_width * .9, color="0.55", zorder=2)
     bas.axhline(min_n, color="tab:red", lw=1.0, ls="--", zorder=3)
     bas.set_ylabel("cohort size")
     bas.set_xlabel("Birth step")
     bas.grid(alpha=.3, zorder=1)
 
-    titre = (f"Life expectancy by birth cohort (bins of {bin_width:,} steps)")
+    titre = (f"Life expectancy by birth cohort (bins of {bin_width:,} steps, "
+             f"{int(assez.sum())} kept)")
     sous = f"{int(n.sum())} deaths"
     if ecartees:
         sous += f" — {ecartees} cohorts under {min_n} dropped"
