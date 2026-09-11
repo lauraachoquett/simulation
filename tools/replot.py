@@ -37,22 +37,49 @@ from simulation.utils.plots import (
 _NUM = re.compile(r"chunk_(\d+)\.npz$")
 
 
-def load_history(data_dir):
-    """Concatène les .npz de chunks dans l'ordre NUMÉRIQUE.
+def load_history(*data_dirs):
+    """Concatène les .npz de chunks dans l'ordre NUMÉRIQUE, sur un ou plusieurs
+    dossiers.
 
     Le tri lexicographique placerait chunk_100 avant chunk_9 ; les noms sont
     zero-paddés à 5 chiffres, mais on ne s'y fie pas — un run repris ou un
     renommage suffirait à casser l'ordre, et une série d'historique dans le
     désordre ne se voit pas sur la figure.
-    """
-    fichiers = sorted(glob.glob(os.path.join(data_dir, "chunk_*.npz")),
-                      key=lambda p: int(_NUM.search(os.path.basename(p)).group(1)))
-    if not fichiers:
-        raise SystemExit(f"aucun chunk_*.npz dans {data_dir}")
 
-    morceaux = {}
+    Plusieurs dossiers : un run repris vit dans un dossier neuf, et sa suite doit
+    se recoller à l'originale. Un chunk présent des deux côtés n'est gardé
+    QU'UNE fois, et c'est le DERNIER dossier donné qui l'emporte — d'où l'ordre
+    chronologique. Sans ce dédoublonnage la période commune serait tracée deux
+    fois et l'axe des pas ne correspondrait plus à rien.
+
+    Une série absente d'un des dossiers fait échouer le chargement plutôt que de
+    produire des séries de longueurs différentes, qui se décaleraient entre elles
+    sans que la figure le montre.
+    """
+    par_chunk = {}
+    for d in data_dirs:
+        for f in glob.glob(os.path.join(d, "chunk_*.npz")):
+            m = _NUM.search(os.path.basename(f))
+            if m:
+                par_chunk[int(m.group(1))] = f       # le dernier dossier gagne
+    if not par_chunk:
+        raise SystemExit(f"aucun chunk_*.npz dans {', '.join(data_dirs)}")
+
+    chunks = sorted(par_chunk)
+    fichiers = [par_chunk[c] for c in chunks]
+
+    morceaux, cles_vues = {}, None
     for f in fichiers:
         with np.load(f) as z:
+            if cles_vues is None:
+                cles_vues = set(z.files)
+            elif set(z.files) != cles_vues:
+                manque = cles_vues.symmetric_difference(z.files)
+                raise SystemExit(
+                    f"{os.path.basename(f)} n'a pas les mêmes séries que les "
+                    f"précédents ({sorted(manque)}). Les dossiers ne viennent pas "
+                    "de la même version du code ; les tracer ensemble décalerait "
+                    "les séries entre elles.")
             for cle in z.files:
                 morceaux.setdefault(cle, []).append(z[cle])
 
@@ -62,26 +89,46 @@ def load_history(data_dir):
         axe = 1 if cle == "mean_life" else 0
         hist[cle] = np.concatenate(vals, axis=axe)
     hist["_n_chunks"] = len(fichiers)
-    hist["_premier"] = int(_NUM.search(os.path.basename(fichiers[0])).group(1))
+    hist["_premier"] = chunks[0]
+    trous = [c for c in range(chunks[0], chunks[-1] + 1) if c not in par_chunk]
+    if trous:
+        print(f"[replot] {len(trous)} chunk(s) manquant(s) entre {chunks[0]} et "
+              f"{chunks[-1]} : l'axe des pas les ignore, la serie est donc "
+              f"comprimee a cet endroit (ex. {trous[:5]})")
+    hist["_chunks"] = chunks
     return hist
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("exp_dir", help="dossier d'expérience (contenant data/ et config.json)")
+    ap.add_argument("exp_dirs", nargs="+", metavar="EXP_DIR",
+                    help="dossier(s) d'expérience contenant data/ et config.json. "
+                         "Plusieurs : les séries sont recollées, dans l'ORDRE "
+                         "CHRONOLOGIQUE — un chunk présent des deux côtés est "
+                         "pris dans le dernier dossier donné")
     ap.add_argument("--out", default=None,
-                    help="sous-dossier de sortie (défaut : fig/, écrase les figures du run)")
+                    help="dossier de sortie ; ses figures vont dans <out>/fig. "
+                         "Défaut : le dossier du run, donc ses figures sont "
+                         "écrasées. À donner pour une fusion, qui n'appartient "
+                         "à aucun des runs")
     ap.add_argument("--n-target", type=int, default=0,
                     help="réduire à ~N points ; 0 = pleine résolution (défaut)")
     args = ap.parse_args(argv)
 
-    exp_dir = args.exp_dir
-    data_dir = os.path.join(exp_dir, "data")
-    hist = load_history(data_dir)
+    exp_dir = args.exp_dirs[0]
+    hist = load_history(*[os.path.join(d, "data") for d in args.exp_dirs])
 
+    # config et journal de permutations viennent du PREMIER dossier : c'est lui
+    # qui porte l'ordre initial des canaux, dont depend la lecture de tout le
+    # reste. Le journal d'une reprise ne contient que ses propres permutations.
     cfg, _ = load_config(exp_dir)
     shuffle_log = load_shuffle_log(exp_dir)
+    for d in args.exp_dirs[1:]:
+        for e in load_shuffle_log(d):
+            if not any(abs(e["step"] - v["step"]) < 1 for v in shuffle_log):
+                shuffle_log.append(e)
+    shuffle_log.sort(key=lambda e: e["step"])
     initial_order_ids = [r.id for r in BASE_RESOURCES]
 
     pop = hist["population"]
@@ -89,11 +136,15 @@ def main(argv=None):
     chunk_size = len(pop) // hist["_n_chunks"]
     start_step = hist["_premier"] * chunk_size
 
-    print(f"{hist['_n_chunks']} chunks, {len(pop)} steps, début à {start_step}")
+    print(f"{hist['_n_chunks']} chunks ({hist['_chunks'][0]} a "
+          f"{hist['_chunks'][-1]}), {len(pop)} steps, debut a {start_step}"
+          + (f", {len(args.exp_dirs)} dossiers" if len(args.exp_dirs) > 1 else ""))
 
-    # Sortie : par défaut fig/, comme le run. `--out` permet de comparer côte à
-    # côte les figures agrégées du run et celles à pleine résolution.
-    cible = exp_dir if args.out is None else os.path.join(exp_dir, "_replot")
+    # Sortie : par défaut le dossier du run, donc ses figures sont remplacées.
+    # `--out` prend un CHEMIN et l'utilise tel quel -- il etait auparavant lu
+    # puis ignore au profit d'un "_replot" en dur, ce qui rendait impossible de
+    # ranger ailleurs les figures d'une fusion.
+    cible = exp_dir if args.out is None else args.out
     if args.out is not None:
         os.makedirs(os.path.join(cible, "fig"), exist_ok=True)
 
