@@ -195,24 +195,14 @@ def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
                  f"({n_reels if n_reels is not None else len(p)} genomes)",
                  fontsize=13)
 
-    # Correspondance canal -> identite, en encart. Les sommets du triangle sont
-    # des IDENTITES, donc une permutation ne fait rien bouger du decor : sans cet
-    # encart, rien a l'image ne dit CE QUI a change.
-    lignes = [f"c{k} = {label_of(r.id)}" for k, r in enumerate(resources)]
-    ax.text(0.985, 0.985, "channel map\n" + "\n".join(lignes),
-            transform=ax.transAxes, va="top", ha="right", fontsize=9,
-            family="monospace", zorder=9,
-            bbox=dict(boxstyle="round,pad=0.45",
-                      facecolor="#FFF3F0" if shuffle_actif else "white",
-                      edgecolor="#C1121F" if shuffle_actif else "0.75",
-                      linewidth=2.0 if shuffle_actif else .8))
+    # Pas d'encart canal -> identite : la frise du bas porte la meme information,
+    # et en continu plutot qu'au seul instant courant.
     if shuffle_actif:
-        # dans les axes et non au-dessus : a 1.002 le bandeau recouvrait le titre
-        ax.text(0.5, 0.965, "CHANNEL PERMUTATION", transform=ax.transAxes,
-                ha="center", va="top", fontsize=12.5, weight="bold",
-                color="#C1121F", zorder=9,
-                bbox=dict(boxstyle="round,pad=0.32", facecolor="#FFF3F0",
-                          edgecolor="#C1121F", linewidth=1.4))
+        # coin haut gauche : centre il recouvrait le sommet "good", et au-dessus
+        # des axes il recouvrait le titre. Le coin est le seul endroit vide.
+        ax.text(0.02, 0.99, "CHANNEL\nPERMUTATION", transform=ax.transAxes,
+                ha="left", va="top", fontsize=12, weight="bold",
+                color="#C1121F", linespacing=1.15, zorder=9)
 
     # Frise : une bande par CANAL, coloree selon l'identite qu'il porte. Des
     # traits verticaux diraient qu'une permutation a lieu, pas CE QUI change --
