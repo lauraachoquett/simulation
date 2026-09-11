@@ -180,7 +180,7 @@ def main():
     lignes = -(-k // cols)
     petit = k > 6
     fig, axes = plt.subplots(lignes, cols,
-                             figsize=(3.9 * cols, 3.3 * lignes),
+                             figsize=(3.9 * cols, max(3.3 * lignes, 4.4)),
                              squeeze=False, sharex=True, sharey=True,
                              constrained_layout=True)
     for ax in axes.ravel()[k:]:
@@ -220,20 +220,20 @@ def main():
             ax.tick_params(labelsize=8)
 
     barre = fig.colorbar(im, ax=axes, fraction=.025)
-    barre.set_label("Fraction of the genomes in that panel\n"
-                    f"(power scale \u03b3={a.gamma:g}, clipped at the "
-                    f"{100*a.clip:.0f}th percentile)", fontsize=9)
+    barre.set_label("Fraction of genomes in panel", fontsize=9)
 
+    echelle = (f"colour: power \u03b3={a.gamma:g}, "
+               f"clipped at p{100*a.clip:.0f}")
     if petit:
         fig.suptitle("Potential offspring against lifespan, over time"
-                     f"   —   steps shown as ranges, {len(age)} genomes total",
+                     f"   —   {len(age)} genomes total   —   {echelle}",
                      fontsize=12)
     else:
         fig.suptitle("Potential offspring against lifespan, over time\n"
                      f"{len(age)} genomes — {nuls} with none "
                      f"({100*nuls/len(age):.0f} %)"
                      + (f" — {hors} above {r_max}, off scale" if hors else "")
-                     + " — shared colour scale",
+                     + f" — shared scale, {echelle}",
                      fontsize=12.5)
 
     sortie = a.out or os.path.join(a.source, "fig", "repro_vs_age.png")
