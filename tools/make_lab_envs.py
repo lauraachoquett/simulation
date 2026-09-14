@@ -32,11 +32,11 @@ import numpy as np
 import jax.numpy as jnp
 from jax import random
 
-from simulation.data_class import (Config, BASE_RESOURCES, color_of, label_of,
-                                   resolve_model, ressource_la_plus_lente)
-from simulation.lab_env import (DOSSIER_ENVS, HIGH_RES_COUNTS, LOW_RES_COUNTS,
-                                DEFAUT_COUNT, HIGH_RES_GROWTH_SCALE)
-from simulation.update_env import resources_growth
+from EcoEvoJax.source.agent import metaRNNPolicyState_bcppr
+from simulation.data_class import color_of, label_of, resolve_model
+from simulation.lab_env import (DOSSIER_ENVS, vmap_over_agents_env_lab_high_res,
+                                vmap_over_agents_env_lab_low_res)
+from simulation.tools.preview_lab_env import grille_de_depart
 
 
 # Arene et quantite de reference : celles des env de lab actuels, pour que les
@@ -180,75 +180,47 @@ def fabrique(nom, seed, n_low):
     return config(np.random.default_rng(graine_de(f"{nom}_s{seed}")))
 
 
-def _reconstruite(cfg, counts, pre_growth, echelle, graine):
-    """La grille de ressources d'un env de lab, SANS passer par le modele.
+class ModeleFactice:
+    """De quoi traverser init_state_lab sans construire de reseau.
 
-    Reprend le tirage puis la pre-croissance de init_state_lab, dans le meme
-    ordre de consommation des cles -- c'est cet ordre, et non le tirage seul,
-    qui fixe la grille. Les comptes et le facteur de croissance sont relus dans
-    lab_env plutot que recopies, pour que l'etalon suive tout changement.
+    La grille ne depend pas du modele : grille_de_depart lit `out.grid[0, 0]`,
+    journalise au pas 0, donc la grille que init_state_lab vient de poser --
+    aucun agent n'a encore agi. Le modele n'y sert qu'a dimensionner un tableau
+    de poids (num_params) et a remplir l'etat RNN (reset_b), ni l'un ni l'autre
+    ne touchant aux ressources.
+
+    On garde donc le VRAI chemin de code -- launch_env_* avec ses remplacements
+    de cfg, puis init_state_lab -- qui est ce qui empeche l'etalon de deriver,
+    sans trainer EcoEvoJax, flax et la pile de trace derriere un outil qui
+    dessine des grilles.
     """
-    lent = ressource_la_plus_lente(cfg.resources)
-    res = tuple(
-        r.replace(init_number_of_resources=counts.get(label_of(r.id), DEFAUT_COUNT),
-                  prob_factor=lent.prob_factor * echelle,
-                  pop_res_prob=lent.pop_res_prob * echelle)
-        for r in cfg.resources)
-    cfg = cfg._replace(grid_length=COTE, pre_growth_step=pre_growth, resources=res)
+    num_params = 4
 
-    key = random.PRNGKey(graine)
-    key, subkey_grid = random.split(key)
+    def reset_b(self, x):
+        n = x.shape[0]
+        return metaRNNPolicyState_bcppr(
+            lstm_h=jnp.zeros((n, 2)), lstm_c=jnp.zeros((n, 2)),
+            keys=random.split(random.PRNGKey(0), n))
 
-    murs = jnp.zeros((COTE, COTE), dtype=jnp.int32)
-    murs = murs.at[0, :].set(1).at[:, 0].set(1).at[-1, :].set(1).at[:, -1].set(1)
-
-    ids = [r.id for r in res]
-    keys_pos = random.split(subkey_grid, max(ids) + 1)
-    grille = jnp.zeros((len(res), COTE, COTE), dtype=jnp.int32)
-    for k, r in enumerate(res):
-        pos = random.randint(keys_pos[r.id], (r.init_number_of_resources, 2), 0, COTE)
-        grille = grille.at[k, pos[:, 0], pos[:, 1]].set(1)
-    grille = jnp.where(murs[None] == 1, 0, grille)
-
-    key, *_ = random.split(key, 3)              # sk_pos, sk_or : consommees
-    key, key_env = random.split(key)
-    grille, _ = jax.lax.fori_loop(
-        0, pre_growth,
-        lambda i, c: resources_growth(c, cfg, crowd_brake=False),
-        (grille, key_env))
-    return np.asarray(jnp.where(murs[None] == 1, 0, grille)).sum(axis=0)
+    def get_actions(self, state, params, policy_states):
+        # logits nuls : la politique n'a aucun effet sur la grille du pas 0
+        return jnp.zeros((state.agents.energy.shape[0], 4)), policy_states
 
 
 def reference(cfg, graine):
-    """Les env high_res et low_res d'aujourd'hui.
+    """Les environnements high_res et low_res d'aujourd'hui.
 
-    Par le VRAI chemin de code quand la pile lourde s'importe (c'est le cas sur
-    le cluster) : grille_de_depart les lit par log_grid, donc l'etalon suit
-    launch_env_* sans effort. Quand elle ne s'importe pas -- plotly, moviepy et
-    consorts manquent souvent en local -- on retombe sur la reconstruction
-    ci-dessus, et la vignette le DIT : un etalon reconstruit ne doit jamais
-    passer pour une lecture.
+    Lus par le VRAI chemin de code (`launch_env_*` avec log_grid) et non
+    reconstruits : l'etalon suit donc tout changement de ces lanceurs sans
+    effort. Les wrappers VMAP, pas les lanceurs bruts -- grille_de_depart
+    appelle fn(params, key_env, key_sim, model, cfg), l'ordre des vmap_*, alors
+    que launch_env_* prend (..., cfg, model). Se tromper la ne donne pas une
+    erreur d'arite mais un AttributeError sur cfg._replace.
     """
-    try:
-        # Les wrappers VMAP, pas les lanceurs bruts : grille_de_depart appelle
-        # fn(params, key_env, key_sim, model, cfg) -- l'ordre des vmap_* -- alors
-        # que launch_env_* prend (..., cfg, model). Se tromper ici donne un
-        # AttributeError sur cfg._replace, pas une erreur d'arite.
-        from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
-                                        vmap_over_agents_env_lab_low_res)
-        from simulation.run import build_model
-        from simulation.tools.preview_lab_env import grille_de_depart
-        model = build_model(cfg)
-        return [(f"{nom} (current)", grille_de_depart(fn, cfg, model, graine)[0].sum(axis=0))
-                for nom, fn in (("high_res", vmap_over_agents_env_lab_high_res),
-                                ("low_res", vmap_over_agents_env_lab_low_res))]
-    except ImportError as e:
-        print(f"  [info] pile lourde indisponible ({e.name} manquant) : etalon "
-              "reconstruit, sans passer par launch_env_*.")
-        return [("high_res (rebuilt)",
-                 _reconstruite(cfg, HIGH_RES_COUNTS, 200, HIGH_RES_GROWTH_SCALE, graine)),
-                ("low_res (rebuilt)",
-                 _reconstruite(cfg, LOW_RES_COUNTS, 50, 1.0, graine))]
+    return [(f"{nom} (current)",
+             grille_de_depart(fn, cfg, ModeleFactice(), graine)[0].sum(axis=0))
+            for nom, fn in (("high_res", vmap_over_agents_env_lab_high_res),
+                            ("low_res",  vmap_over_agents_env_lab_low_res))]
 
 
 def vignette(ax, grille, titre, ident):
