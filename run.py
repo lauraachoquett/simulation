@@ -25,6 +25,7 @@ from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABEL
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
 from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
 from simulation.simulation_data.core import simulation_data
+from simulation.lab_env import env_file_pour
 
 import argparse
 import multiprocessing as mp
@@ -180,6 +181,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
                            resume_chunk=int(chunk_id))
         print(f"[reprise] depuis {resume_exp} au chunk {chunk_id} "
               f"-> premier chunk calcule : {start_chunk}")
+    # L'environnement de test peut etre choisi tout seul par env_file_pour (a une
+    # ressource). On ecrit le chemin RESOLU dans la config : sans ca, un rejeu ne
+    # saurait pas sur quel etalon les genomes ont ete notes.
+    cfg = cfg._replace(
+        lab_env_high_res=env_file_pour(cfg, "high_res") or "",
+        lab_env_low_res =env_file_pour(cfg, "low_res")  or "")
+    if cfg.lab_env_high_res or cfg.lab_env_low_res:
+        print(f"[lab] env figes : high_res={cfg.lab_env_high_res or '-'} "
+              f"low_res={cfg.lab_env_low_res or '-'}")
+
     save_config(cfg,subkeys, exp_dir)
     start_step = start_chunk * cfg.chunk_size
 
@@ -394,6 +405,10 @@ CLI_PARAMS = [
     (("--min-energy-repr",), "min_energy_repr",             float),
     (("--start-energy",), "starting_energy",                float),
     (("--energy-to-die",), "energy_to_die",                 float),
+    # Environnements de test figes (cf. tools/make_lab_envs). Vides -> la regle
+    # automatique de env_file_pour.
+    (("--lab-env-high",), "lab_env_high_res",                str),
+    (("--lab-env-low",),  "lab_env_low_res",                 str),
 ]
 
 # booleens : --dumb / --no-dumb, defaut pris sur le Config

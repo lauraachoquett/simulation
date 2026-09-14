@@ -1,4 +1,6 @@
 import os
+from functools import lru_cache
+
 import numpy as np
 import jax
 from jax import random,vmap
@@ -14,7 +16,86 @@ import matplotlib.pyplot as plt
 
 
 
-def init_state_lab(key, cfg, model,agent_params):
+# Environnements de test figes. Les .npy vivent a cote du code et non dans le
+# repertoire courant : un job de cluster demarre ou il veut, et un chemin
+# relatif au cwd se perdrait en silence.
+DOSSIER_ENVS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lab_envs")
+
+
+def resout_chemin(chemin):
+    """Un chemin tel quel s'il existe, sinon relatif a DOSSIER_ENVS."""
+    if os.path.isabs(chemin) or os.path.exists(chemin):
+        return chemin
+    return os.path.join(DOSSIER_ENVS, chemin)
+
+
+@lru_cache(maxsize=None)
+def charge_grille(chemin):
+    """(n_ids, L, L) int8, indexe par IDENTITE de ressource.
+
+    Cachee pour deux raisons. Le fichier n'est lu qu'une fois, et surtout : la
+    fonction est appelee SOUS jit, ou le tableau rendu devient une constante du
+    jaxpr. Le chemin etant statique, changer de fichier declenche bien une
+    recompilation -- et garder le meme n'en declenche aucune.
+    """
+    reel = resout_chemin(chemin)
+    if not os.path.exists(reel):
+        raise FileNotFoundError(
+            f"environnement de lab introuvable : {chemin} (cherche a {reel}). "
+            "Le produire avec `python -m simulation.tools.make_lab_envs --save`.")
+    plan = np.load(reel)
+    print(f"[lab] env fige : {reel}  {plan.shape}  {int(plan.sum())} cases",
+          flush=True)
+    return plan
+
+
+def grille_figee(chemin, cfg):
+    """(n_types, L, L) : le fichier remis dans l'ordre des CANAUX.
+
+    Le fichier est indexe par identite, la grille par canal. Passer par
+    `r.id` tient le meme invariant que le tirage aleatoire juste en dessous :
+    une ressource occupe les memes cases quelle que soit la permutation des
+    canaux, sans quoi baseline et config permutee ne seraient pas comparables.
+    """
+    plan = charge_grille(chemin)
+    attendu = (cfg.grid_length, cfg.grid_length)
+    if tuple(plan.shape[1:]) != attendu:
+        raise ValueError(
+            f"{chemin} : grille {tuple(plan.shape[1:])}, attendu {attendu}. "
+            "Ces environnements sont dessines pour une arene precise.")
+    ids = [r.id for r in cfg.resources]
+    if max(ids) >= plan.shape[0]:
+        raise ValueError(
+            f"{chemin} : porte {plan.shape[0]} identite(s), mais la config "
+            f"demande l'identite {max(ids)}.")
+    return jnp.stack([jnp.asarray(plan[i], dtype=jnp.int32) for i in ids])
+
+
+def env_file_pour(cfg, quel):
+    """Le .npy a charger pour l'env `quel`, ou None pour le tirage aleatoire.
+
+    Ne fige que le cas a UNE ressource : au-dela aucun environnement n'a ete
+    dessine, et le tirage reste la seule source.
+    """
+    if len(cfg.resources) != 1:
+        return None
+    choisi = {"high_res": cfg.lab_env_high_res,
+              "low_res":  cfg.lab_env_low_res}[quel]
+    # `or None` et non `or ""` : init_state_lab teste `is not None`, et une
+    # chaine vide serait prise pour un chemin.
+    return choisi or DEFAUTS_ENVS.get(quel) or None
+
+
+# Env retenus par defaut a UNE ressource : y mettre le nom du .npy choisi dans
+# fig/lab_envs_catalogue.png (ex. "patch4x10_s2.npy"), une fois produit par
+# `python -m simulation.tools.make_lab_envs --save <nom>`.
+#
+# Tant qu'ils sont vides, rien ne change : le tirage aleatoire reste le
+# comportement, a une ressource comme au-dela.
+DEFAUTS_ENVS = {"high_res": "", "low_res": ""}
+
+
+def init_state_lab(key, cfg, model,agent_params, env_file=None):
     # 1. Grille de ressources
     key, subkey_grid = random.split(key)
     
@@ -30,18 +111,26 @@ def init_state_lab(key, cfg, model,agent_params):
     counts = tuple(r.init_number_of_resources for r in cfg.resources) #STATIQUE
     n_types = len(counts)
 
-    # Le tirage des positions est indexe par l'IDENTITE de la ressource, pas par
-    # le canal : une meme ressource doit occuper les memes cases quelle que soit
-    # la permutation des canaux (rotation du lab, shuffle_resources), sinon
-    # baseline et config permutee ne sont pas comparables.
-    ids = [r.id for r in cfg.resources]                    # canal -> identite
-    keys_pos = random.split(subkey_grid, max(ids) + 1)
+    # subkey_grid est consommee meme quand la grille vient d'un fichier : le
+    # reste du flux de cles (position et orientation de l'agent) doit rester
+    # identique, sinon changer d'environnement deplacerait aussi l'agent et on
+    # ne saurait plus a quoi attribuer un ecart.
+    fige = env_file is not None
+    if fige:
+        grid_resources = grille_figee(env_file, cfg)
+    else:
+        # Le tirage des positions est indexe par l'IDENTITE de la ressource, pas par
+        # le canal : une meme ressource doit occuper les memes cases quelle que soit
+        # la permutation des canaux (rotation du lab, shuffle_resources), sinon
+        # baseline et config permutee ne sont pas comparables.
+        ids = [r.id for r in cfg.resources]                    # canal -> identite
+        keys_pos = random.split(subkey_grid, max(ids) + 1)
 
-    grid_resources = jnp.zeros((n_types, cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
-    for k, r in enumerate(cfg.resources):                  # cfg statique -> boucle deroulee
-        pos_k = random.randint(keys_pos[r.id], (r.init_number_of_resources, 2),
-                               0, cfg.grid_length)
-        grid_resources = grid_resources.at[k, pos_k[:, 0], pos_k[:, 1]].set(1)
+        grid_resources = jnp.zeros((n_types, cfg.grid_length, cfg.grid_length), dtype=jnp.int32)
+        for k, r in enumerate(cfg.resources):                  # cfg statique -> boucle deroulee
+            pos_k = random.randint(keys_pos[r.id], (r.init_number_of_resources, 2),
+                                   0, cfg.grid_length)
+            grid_resources = grid_resources.at[k, pos_k[:, 0], pos_k[:, 1]].set(1)
 
     # on éteint les murs (broadcast du plan (L,L) sur l'axe type)
     grid_resources = jnp.where(grid_walls[None] == 1, 0, grid_resources)
@@ -94,17 +183,22 @@ def init_state_lab(key, cfg, model,agent_params):
 
     key, key_env = jax.random.split(key)
 
-    init_carry = (grid_resources, key_env)
+    # Un environnement fige saute la pre-croissance : le fichier EST la grille,
+    # et la faire pousser en diluerait justement la structure qu'on a dessinee.
+    if fige:
+        grid_resources_grown_bis = grid_resources
+    else:
+        init_carry = (grid_resources, key_env)
 
-    grid_resources_grown, _ = jax.lax.fori_loop(
-        0,
-        cfg.pre_growth_step,
-        # pas de frein pendant la pre-croissance (cf. init_state)
-        lambda i, carry: resources_growth(carry, cfg, crowd_brake=False),
-        init_carry
-    )
-    
-    grid_resources_grown_bis = jnp.where(grid_walls[None] == 1, 0, grid_resources_grown)
+        grid_resources_grown, _ = jax.lax.fori_loop(
+            0,
+            cfg.pre_growth_step,
+            # pas de frein pendant la pre-croissance (cf. init_state)
+            lambda i, carry: resources_growth(carry, cfg, crowd_brake=False),
+            init_carry
+        )
+
+        grid_resources_grown_bis = jnp.where(grid_walls[None] == 1, 0, grid_resources_grown)
     
     grid = jnp.concatenate([
         grid_resources_grown_bis,          # (n_types, L, L)  
@@ -149,9 +243,9 @@ def rotations_for(resources):
 
 
 
-@partial(jax.jit, static_argnames=['cfg','model'])
-def launch_lab_env(agent_params,key_env,key_sim,cfg,model): 
-    state = init_state_lab(key_env,cfg, model,agent_params)
+@partial(jax.jit, static_argnames=['cfg','model','env_file'])
+def launch_lab_env(agent_params,key_env,key_sim,cfg,model,env_file=None): 
+    state = init_state_lab(key_env,cfg, model,agent_params, env_file=env_file)
     # import jax
     # jax.debug.print("inj ok ? {b}", b=jnp.allclose(state.agents.params[1], agent_params))
     key, subkey = jax.random.split(key_sim)
@@ -164,6 +258,10 @@ def launch_lab_env(agent_params,key_env,key_sim,cfg,model):
 # stocks de l'env high_res, par IDENTITE de ressource. Expose pour que les plots
 # puissent afficher le plafond disponible sans redupliquer ces valeurs.
 HIGH_RES_COUNTS = {"good": 40, "medium": 40, "poison": 40}
+# idem pour l'env pauvre. Expose et non ecrit dans launch_env_low_res : c'est la
+# seule source de ces comptes, que tools/make_lab_envs relit pour caler ses
+# candidats low_res.
+LOW_RES_COUNTS = {"good": 3, "medium": 2, "poison": 10}
 # Nombre initial pour une identite absente des tables ci-dessus : les tables
 # sont indexees par NOM, et une 4e ressource n'y figure pas.
 DEFAUT_COUNT = 40
@@ -206,7 +304,8 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
         for r in cfg.resources
     ))
     cfg = cfg._replace(resources=rotate_resources(cfg.resources, rot))
-    return launch_lab_env(agent_params, key_env, key_sim, cfg, model)
+    return launch_lab_env(agent_params, key_env, key_sim, cfg, model,
+                          env_file=env_file_pour(cfg, "high_res"))
     
 def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     
@@ -228,7 +327,8 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
                   pop_res_prob=4*poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
         for r in cfg.resources
     ))
-    state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
+    state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model,
+                                   env_file=env_file_pour(cfg, "high_res"))
     return state,outputs
     
 def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
@@ -241,14 +341,14 @@ def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
         pre_growth_step = 50,
         log_obs=True,          # idem
     )
-    count_by_id = {"good": 3, "medium": 2, "poison": 10}
-    
-    
+    count_by_id = LOW_RES_COUNTS
+
     cfg = cfg._replace(resources=tuple(
         r.replace(init_number_of_resources=count_by_id.get(label_of(r.id), DEFAUT_COUNT))
         for r in cfg.resources
     ))
-    state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model)
+    state,outputs = launch_lab_env(agent_params,key_env,key_sim,cfg,model,
+                                   env_file=env_file_pour(cfg, "low_res"))
     return state,outputs    
 
 

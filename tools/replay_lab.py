@@ -37,7 +37,8 @@ import numpy as np
 from jax import random
 
 from simulation.data_class import label_of
-from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
+from simulation.lab_env import (env_file_pour,
+                                vmap_over_agents_env_lab_high_res,
                                 vmap_over_agents_env_lab_low_res,
                                 vmap_over_agents_env_lab_high_res_with_clones)
 from simulation.run import build_model
@@ -76,6 +77,22 @@ def resources_au_pas(cfg, exp_dir, step):
     i = sum(1 for e in log if e["step"] < int(step))
     par_id = {r.id: r for r in cfg.resources}
     return tuple(par_id[int(k)] for k in ordres[i])
+
+
+def avertit_env_fige(cfg, exp_dir):
+    """Prevenir quand le rejeu va jouer un env que le run d'origine n'a pas vu.
+
+    Les config.json anterieurs aux environnements figes ne nomment aucun
+    fichier, et la regle automatique s'applique alors au rejeu. On ne peut pas
+    le deviner a leur place -- mais on peut refuser de le faire en silence.
+    """
+    if len(cfg.resources) != 1:
+        return
+    nomme = {"high_res": cfg.lab_env_high_res, "low_res": cfg.lab_env_low_res}
+    for quel, actif in ((q, env_file_pour(cfg, q)) for q in nomme):
+        if actif and not nomme[quel]:
+            print(f"  [attention] {exp_dir} ne nomme aucun env {quel} : le rejeu "
+                  f"utilisera {actif}, que le run d'origine n'a pas forcement joue.")
 
 
 def par_lots(fn, params, key_env, cles, model, cfg, batch):
@@ -193,6 +210,7 @@ def main():
     for exp_dir in a.exp_dirs:
         print(f"\n=== {exp_dir}")
         cfg, _ = load_config(exp_dir)
+        avertit_env_fige(cfg, exp_dir)
         if a.lab_time_steps:
             cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
         model = build_model(cfg)

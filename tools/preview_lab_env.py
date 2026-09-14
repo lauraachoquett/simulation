@@ -29,7 +29,6 @@ from jax import random
 from simulation.data_class import Config, BASE_RESOURCES, label_of, color_of, resolve_model
 from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
                                 vmap_over_agents_env_lab_low_res)
-from simulation.run import build_model
 from simulation.utils.utils_sim import load_config
 
 
@@ -118,6 +117,11 @@ def config_par_defaut():
 
 
 def main():
+    # Import tardif : run.py tire toute la pile de trace (plotly, moviepy), que
+    # les postes locaux n'ont pas toujours. Les helpers de ce module restent
+    # ainsi importables ailleurs sans elle.
+    from simulation.run import build_model
+
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4, 5],
                    help="graines a comparer (defaut %(default)s)")

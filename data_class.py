@@ -175,6 +175,12 @@ class Config(NamedTuple):
     # entre eux melangeait la difference des genomes a celle de l'etalon.
     lab_seed : int = 1        # cf. tools/preview_lab_env : graine retenue
 
+    # Environnements de test figes, a UNE ressource (cf. tools/make_lab_envs).
+    # Vides -> le defaut de lab_env.DEFAUTS_ENVS, lui-meme vide tant qu'aucun
+    # env n'a ete retenu : le tirage aleatoire reste alors le comportement.
+    lab_env_high_res : str = ""
+    lab_env_low_res : str = ""
+
     # Tracabilite d'une reprise. Une reprise cree un dossier NEUF, donc sans ces
     # deux champs rien dans le config.json ne dit d'ou elle repart -- et les
     # figures d'un run repris sont inlisibles sans savoir quelle moitie vient

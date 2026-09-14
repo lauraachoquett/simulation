@@ -2,7 +2,13 @@
 """
 
 
-from moviepy import VideoFileClip
+# moviepy 2 expose VideoFileClip a la racine, moviepy 1 dans .editor. Le
+# cluster a la 2, les postes locaux souvent la 1 : sans ce repli, tout outil qui
+# remonte jusqu'ici (preview_lab_env, make_lab_envs) est inutilisable en local.
+try:
+    from moviepy import VideoFileClip
+except ImportError:
+    from moviepy.editor import VideoFileClip
 
 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 from IPython.display import HTML, display, clear_output
