@@ -35,6 +35,7 @@ class StepLog(NamedTuple):
     obs :      jax.Array
     consumed_res: jax.Array   # (n_types,) -> unités retirées de la grille PENDANT ce step
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
+    saw_agents: jax.Array  # (N,) -> COMBIEN de congeneres dans la vue, SOI EXCLU
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
     figurant:  jax.Array   # (N,) -> 1 pour les congeneres inertes (cf. n_figurants)
@@ -183,6 +184,18 @@ def run_simulation_chunk(state,model,keys, cfg):
         # exactement la reevaluation intra-vie qu'on veut mesurer.
         croyance_maj = jnp.where(ate_res_step, rewards[:, None], agents.croyance)
         saw_res_step = (state.obs[..., :n_types] > 0).sum(axis=(1, 2))       # (N, n_types)
+
+        # Voisins dans le champ de vision, SOI EXCLU. Deux precautions :
+        #  - maximum(.,0) : get_single_obs remplit le hors-grille avec -1, qu'une
+        #    somme brute compterait en negatif au bord de l'arene ;
+        #  - on somme les VALEURS et non les cases occupees, parce que
+        #    grid_agents est construit par .add() -- deux agents sur une meme
+        #    case doivent compter pour deux.
+        # L'agent est au centre de sa propre vue et figure dans grid_agents des
+        # qu'il est vivant : on retranche donc sa propre presence.
+        saw_agents_step = jnp.maximum(
+            jnp.maximum(state.obs[..., n_types], 0).sum(axis=(1, 2))
+            - state.agents.alive, 0)                                     # (N,)
 
 
         # ------- 3. Environment dynamic -------
@@ -342,6 +355,7 @@ def run_simulation_chunk(state,model,keys, cfg):
             obs = state.obs if cfg.log_obs else jnp.zeros((0,), dtype=state.obs.dtype),
             consumed_res = consumed_per_type,
             saw_res = saw_res_step,
+            saw_agents = saw_agents_step,
             ate_res = ate_res_step,
             is_oracle = state.agents.is_oracle,
             figurant = (figurant.astype(jnp.int32) if cfg.n_figurants

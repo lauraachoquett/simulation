@@ -921,6 +921,15 @@ class LabMixin:
             cum_repro = np.cumsum(repro.astype(np.float64), axis=0)
             repro_par_vie = window_sum(cum_repro, birth_row - 1, death_row)
  
+            # 5bis) Voisinage : nombre moyen de congeneres en vue par pas vecu.
+            # Meme fenetre et meme technique que la consommation. Vaut 0 par
+            # construction dans un env a un seul agent, ce qui en fait aussi un
+            # controle : une valeur non nulle y signalerait une erreur de canal.
+            voisins = np.asarray(getattr(outputs, "saw_agents",
+                                         np.zeros_like(rew)), dtype=float)
+            cum_vois = np.cumsum(voisins, axis=0)
+            voisinage = window_sum(cum_vois, birth_row - 1, death_row) / (age + 1)
+
             # 6) Mouvement (grandeur "par transition") -> fenêtre [birth_row, death_row-1]
             delta = pos[1:] - pos[:-1]                                  # (T-1, N, 2)
             mag   = np.sqrt((delta ** 2).sum(axis=-1))                 # (T-1, N)
@@ -1020,6 +1029,7 @@ class LabMixin:
                 "mean_rew":   mean_rew,    # consommation moyenne / pas
                 "total_move": total_move,  # distance parcourue
                 "mean_speed": mean_speed,  # mouvement moyen / pas
+                "voisinage":  voisinage,   # congeneres en vue / pas vecu
                 "wall_death": wall_death,  # True = mort par mur ; False si survivant
                 "energy_end": energy_end,  # énergie au dernier pas vivant
                 "died":       died,        # True = mort, False = survivant (censuré)
@@ -1159,7 +1169,7 @@ class LabMixin:
         génome (même ordre que agent_params / key_sim).
         """
         keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                "died", "greediness", "adapt_score", "adapt_gain"]
+                "died", "greediness", "adapt_score", "adapt_gain", "voisinage"]
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)
@@ -1206,7 +1216,7 @@ class LabMixin:
  
         # sans mur letal, wall_death vaut 0 partout : panneau vide et trompeur
         metrics = ["age", "mean_rew", "mean_speed", "energy_end",
-                   "greediness", "adapt_score", "adapt_gain"]
+                   "greediness", "adapt_score", "adapt_gain", "voisinage"]
         if self.cfg.letal_wall:
             metrics.insert(4, "wall_death")
         labels  = {"age": "lifespan (steps)", "mean_rew": "consumption /step",
@@ -1214,7 +1224,8 @@ class LabMixin:
                    "wall_death": "fraction wall deaths",
                    "greediness": "greediness G = Cr/Tr",
                    "adapt_score": "adaptation (de eaten - seen)",
-                   "adapt_gain": "net gain /hungry step"}
+                   "adapt_gain": "net gain /hungry step",
+                   "voisinage": "neighbours in view /step"}
  
         table = {}
         for k in metrics:

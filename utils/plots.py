@@ -2612,7 +2612,8 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
                "mean_speed": "Movement /step", "energy_end": "Final energy",
                "wall_death": "Fraction wall deaths",
                "greediness": "Greediness  G = Cr/Tr",
-               "adapt_gain": "Net gain / hungry step"}
+               "adapt_gain": "Net gain / hungry step",
+               "voisinage": "Neighbours in view / step"}
     # Union sur TOUS les chunks, pas seulement le premier : une metrique ajoutee
     # en cours de run n'existe que dans les fichiers recents, et se caler sur
     # P[0] la ferait disparaitre a jamais. _get rend NaN sur les chunks qui ne
