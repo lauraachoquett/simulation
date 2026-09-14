@@ -336,6 +336,67 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     print(f"Figure saved: {sortie}")
 
 
+def trace_html(scores, env, colonnes, part, titre, sortie,
+               couleur=None, nom_couleur="chunk"):
+    """La meme PCA en 3D interactive, dans un fichier HTML.
+
+    Complement du PNG, pas remplacement : en PCA toute l'information est dans
+    les coordonnees, donc une vue 3D n'ajoute rien sur l'ensemble des plans 2D.
+    Ce qu'elle apporte est perceptif -- la rotation donne la parallaxe, donc
+    leve l'ambiguite de profondeur d'une projection figee. A utiliser pour
+    CHERCHER la structure ; pour la montrer, le PNG reste le bon format.
+
+    Meme patron que genealogy.plot_clade_pca_html, qui fait deja cela sur les
+    genotypes.
+    """
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        print("  [info] plotly absent : pas de version interactive")
+        return
+    if scores.shape[1] < 3:
+        print("  [info] moins de 3 composantes : pas de version 3D")
+        return
+
+    fig = go.Figure()
+    noms = sorted(set(env.tolist())) if env is not None else [None]
+    formes = ("circle", "square", "diamond", "cross", "x", "circle-open")
+    for i, nom in enumerate(noms):
+        m = slice(None) if nom is None else (env == nom)
+        marqueur = dict(size=3.2, opacity=.75,
+                        symbol=formes[i % len(formes)])
+        if couleur is not None:
+            marqueur.update(color=couleur[m], colorscale="Viridis",
+                            showscale=(i == 0),
+                            colorbar=dict(title=nom_couleur))
+        fig.add_trace(go.Scatter3d(
+            x=scores[m, 0], y=scores[m, 1], z=scores[m, 2], mode="markers",
+            marker=marqueur, name=nom or "genomes"))
+
+    fig.update_layout(
+        title=f"{titre} — var. {100*part[0]:.0f}/{100*part[1]:.0f}/"
+              f"{100*part[2]:.0f} %",
+        scene=dict(xaxis_title=f"PC1 ({100*part[0]:.0f} %)",
+                   yaxis_title=f"PC2 ({100*part[1]:.0f} %)",
+                   zaxis_title=f"PC3 ({100*part[2]:.0f} %)"),
+        legend=dict(title="environment"))
+    os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
+    fig.write_html(sortie)
+    print(f"Interactive saved: {sortie}")
+
+
+def trace_html_sur(*args, **kw):
+    """trace_html, mais un echec n'emporte pas la passe.
+
+    Les PNG sont deja ecrits quand on arrive ici, et les groupes suivants
+    restent a traiter : une surprise d'API plotly ne doit pas les faire perdre.
+    """
+    try:
+        trace_html(*args, **kw)
+    except Exception as e:
+        print(f"  [info] version interactive abandonnee ({type(e).__name__}: {e})")
+
+
 def deplacement_par_genome(scores, env, genome, chunk):
     """De combien un MEME genome bouge-t-il d'un environnement a l'autre ?
 
@@ -375,6 +436,11 @@ def main():
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--html", action="store_true",
+                   help="ecrire AUSSI une version 3D interactive (plotly) a "
+                        "cote du PNG. A ouvrir dans un navigateur : la rotation "
+                        "leve l'ambiguite de profondeur d'une projection figee. "
+                        "Pour explorer ; le PNG reste ce qui s'imprime")
     p.add_argument("--3d", dest="trois_d", action="store_true",
                    help="nuage en PC1-PC2-PC3 au lieu du plan. A lire avec la "
                         "part de variance : une 3e composante a 8 %% n'ajoute "
@@ -527,6 +593,11 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
           + titre_suffixe,
           os.path.join(fig_dir, fichier),
           couleur=couleur, nom_couleur=nom_couleur, trois_d=a.trois_d)
+    if a.html:
+        trace_html_sur(scores, env, colonnes, part,
+                   ("Lab phenotypes" + titre_suffixe).strip(),
+                   os.path.join(fig_dir, os.path.splitext(fichier)[0] + ".html"),
+                   couleur=couleur, nom_couleur=nom_couleur or "chunk")
 
 
 if __name__ == "__main__":
