@@ -100,7 +100,7 @@ def filtre(fichiers, motifs):
             if any(fnmatch.fnmatch(t[0], m) for m in motifs)]
 
 
-def charge(fichiers, noms, extra=None):
+def charge(fichiers, noms, extra=None, survivants=False):
     """(X, chunk, env, genome, colonnes, extra), tous environnements empiles.
 
     `extra` est une colonne lue SANS entrer dans la PCA -- de quoi colorer le
@@ -120,12 +120,21 @@ def charge(fichiers, noms, extra=None):
             d.close()
             continue
         bloc = np.stack([np.asarray(d[n], float) for n in colonnes], axis=1)
+        garde = slice(None)
+        if survivants and "died" in d.files:
+            # PC1 est massivement l'axe de mortalite : mourir tot tire ensemble
+            # age, energy_end et repro_rate, et ecrase les axes comportementaux.
+            # Restreindre aux survivants retire ce facteur commun au lieu de le
+            # laisser dominer.
+            garde = np.asarray(d["died"]) < 0.5
+            bloc = bloc[garde]
         lignes.append(bloc)
         chunks.append(np.full(len(bloc), chunk))
         envs.append(np.full(len(bloc), env, dtype=object))
-        genomes.append(np.asarray(d["genome"]) if "genome" in d.files
-                       else np.arange(len(bloc)))
-        sup.append(np.asarray(d[extra], float) if extra and extra in d.files
+        g = (np.asarray(d["genome"]) if "genome" in d.files
+             else np.arange(len(d[colonnes[0]])))
+        genomes.append(g[garde])
+        sup.append((np.asarray(d[extra], float)[garde]) if extra and extra in d.files
                    else np.full(len(bloc), np.nan))
         d.close()
     if not lignes:
@@ -258,10 +267,17 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     # Le barycentre de chaque environnement, en noir : c'est l'ecart entre eux
     # qui dit si le contexte deplace le comportement.
     cmap = plt.get_cmap("tab10")
+    poignees = []
     for i, nom in enumerate(noms):
         m = env == nom
-        ax.scatter(scores[m, 0].mean(), scores[m, 1].mean(), marker="X", s=210,
-                   color=cmap(i % 10), edgecolors="black", linewidths=1.3, zorder=5)
+        h = ax.scatter(scores[m, 0].mean(), scores[m, 1].mean(), marker="X", s=210,
+                       color=cmap(i % 10), edgecolors="black", linewidths=1.3,
+                       zorder=5, label=nom)
+        poignees.append(h)
+    # Avec --color, la legende des environnements a cede la place a la barre de
+    # couleur : sans celle-ci les croix seraient des marques anonymes.
+    if couleur is not None and poignees:
+        ax.legend(handles=poignees, fontsize=8, loc="best", title="centroid")
     ax.set_xlabel(f"PC1 ({100*part[0]:.0f} %)")
     ax.set_ylabel(f"PC2 ({100*part[1]:.0f} %)")
     ax.set_title("Phenotype space, one point per genome per environment\n"
@@ -337,6 +353,11 @@ def main():
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--survivants", action="store_true",
+                   help="ne garder que les agents vivants a la fin (died = 0). "
+                        "PC1 est sinon massivement l'axe de MORTALITE -- mourir "
+                        "tot tire ensemble age, energy_end et repro_rate -- et "
+                        "ecrase les axes comportementaux")
     p.add_argument("--large", action="store_true",
                    help="UNE LIGNE PAR GENOME, colonnes = mesures x "
                         "environnements (sa norme de reaction). En format long "
@@ -415,7 +436,8 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
     `par_chunk` colore par chunk au lieu de colorer par environnement : dans une
     PCA a un seul environnement, la couleur par environnement serait uniforme.
     """
-    X, chunk, env, genome, colonnes, sup = charge(fichiers, a.vars, a.color)
+    X, chunk, env, genome, colonnes, sup = charge(fichiers, a.vars, a.color,
+                                                 survivants=a.survivants)
     if X is None:
         print("  rien a analyser")
         return
