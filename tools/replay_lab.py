@@ -306,6 +306,17 @@ def main():
         cle = random.PRNGKey(graine_lab + 1)
         print(f"env de lab : graine {graine_lab}")
 
+        # Le cout memoire d'un lot est domine par `obs`, journalise dans tous
+        # les env de lab (la greediness le lit). Le dire, parce que --batch est
+        # le seul levier qui compte : la duree du rollout est sequentielle, donc
+        # agrandir le lot ne coute presque rien en temps mais borne en memoire.
+        cote = 2 * cfg.agent_view + 1
+        par_genome = cfg.lab_time_steps * 5 * cote * cote * (len(cfg.resources) + 2) * 4
+        print(f"obs ~ {par_genome/1e6:.1f} Mo/genome (5 slots), "
+              f"--batch {a.batch} ~ {a.batch*par_genome/1e9:.1f} Go. "
+              f"Augmenter --batch tant que la carte suit : le scan sur "
+              f"{cfg.lab_time_steps} pas est sequentiel, pas le lot.")
+
         sd = simulation_data(cfg, 0, 1)
 
         for chunk, _ in ckpts:
