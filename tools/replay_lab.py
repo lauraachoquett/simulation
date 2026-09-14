@@ -111,17 +111,37 @@ def avertit_env_fige(cfg, exp_dir):
 
 
 def par_lots(fn, params, key_env, cles, model, cfg, batch):
-    """`fn` sur tous les genomes, par lots, recolles sur l'axe 0.
+    """`fn` sur tous les genomes, par lots de taille CONSTANTE, recolles sur l'axe 0.
+
+    Deux points de conception.
+
+    Taille constante, quitte a completer le dernier lot avec des genomes
+    factices aussitot jetes : `launch_lab_env` est jitte, et sous vmap la taille
+    du lot fait partie de la forme d'entree. Un lot plus court est donc une
+    seconde forme, donc une recompilation du scan -- et comme le nombre de
+    survivants change d'un checkpoint a l'autre, le reste change aussi, ce qui
+    donnait une recompilation PAR CHECKPOINT. Le scan etant limite par la
+    latence et non par le debit, les genomes de remplissage ne coutent presque
+    rien la ou la compilation coute beaucoup.
 
     numpy et non jnp pour le recollage : les sorties quittent de toute facon la
     carte pour l'agregation, et les garder en jnp ferait tenir tout le run en
     memoire GPU -- ce qu'on cherche precisement a eviter.
     """
+    n = len(params)
     morceaux = []
-    for deb in range(0, len(params), batch):
-        _, out = fn(params[deb:deb + batch], key_env, cles[deb:deb + batch],
-                    model, cfg)
-        morceaux.append(jax.tree_util.tree_map(np.asarray, out))
+    for deb in range(0, n, batch):
+        fin = min(deb + batch, n)
+        p_lot, c_lot = params[deb:fin], cles[deb:fin]
+        manque = batch - (fin - deb)
+        if manque:
+            p_lot = jnp.concatenate([p_lot, jnp.repeat(p_lot[:1], manque, axis=0)])
+            c_lot = jnp.concatenate([c_lot, jnp.repeat(c_lot[:1], manque, axis=0)])
+        _, out = fn(p_lot, key_env, c_lot, model, cfg)
+        out = jax.tree_util.tree_map(np.asarray, out)
+        if manque:                                   # jeter le remplissage
+            out = jax.tree_util.tree_map(lambda x: x[:fin - deb], out)
+        morceaux.append(out)
     if len(morceaux) == 1:
         return morceaux[0]
     return jax.tree_util.tree_map(lambda *xs: np.concatenate(xs, axis=0),
