@@ -62,9 +62,15 @@ VARS_DEFAUT = ("age", "mean_rew", "mean_speed", "energy_end",
 # melanger aux env sociaux ferait de PC1 un axe "y a-t-il quelqu'un", ce qui est
 # vrai mais tautologique -- voisinage vaut 0 par construction d'un cote.
 GROUPES = {
-    "solo":   ("alone_*", "lowres"),
-    "social": ("clones_*", "figurants_*"),
+    "solo":      ("alone_*", "lowres"),
+    "clones":    ("clones_*",),
+    "figurants": ("figurants_*",),
 }
+
+# Une forme par environnement. La couleur etant prise par une variable continue
+# (--color), la forme est ce qui reste pour distinguer les contextes : sans elle
+# on voit un degrade sans savoir d'ou vient chaque point.
+MARQUEURS = ("o", "s", "^", "D", "v", "P", "X", "*")
 
 
 def lab_data_de(chemin):
@@ -237,60 +243,76 @@ def shuffles_en_chunks(exp_dir, chunk_size):
 
 
 def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
-          couleur=None, nom_couleur=None):
-    """Un plan, tous les environnements.
+          couleur=None, nom_couleur=None, trois_d=False):
+    """Un plan (ou un volume) commun a tous les environnements du groupe.
 
-    Couleur par ENVIRONNEMENT et non par chunk : la question posee ici est
-    "chaque contexte occupe-t-il une region propre", et un degrade temporel la
-    masquerait. `--color` bascule sur n'importe quelle colonne si besoin.
+    Environnement par FORME, variable continue par COULEUR : les deux
+    informations coexistent, la ou une legende de couleurs par environnement
+    interdisait d'en afficher une seconde.
     """
-    haut = max(5.8, 0.24 * len(colonnes))
-    fig, axs = plt.subplots(1, 3, figsize=(19, haut),
-                            gridspec_kw={"width_ratios": [2.3, 1.45, 1]})
-    ax = axs[0]
+    n_comp = min(3 if trois_d else 2, scores.shape[1])
+    trois_d = trois_d and n_comp >= 3
+    haut = max(6.0, 0.24 * len(colonnes))
+    fig = plt.figure(figsize=(19, haut))
+    gs = fig.add_gridspec(1, 3, width_ratios=[2.3, 1.45, 1])
+    ax = fig.add_subplot(gs[0], projection="3d") if trois_d else fig.add_subplot(gs[0])
+
     noms = sorted(set(env.tolist())) if env is not None else []
-    if couleur is not None:
-        sc = ax.scatter(scores[:, 0], scores[:, 1], c=couleur, cmap="viridis",
-                        s=14, alpha=.5, linewidths=0)
-        fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.04)
-    elif noms:
-        cmap = plt.get_cmap("tab10")
+    cmap = plt.get_cmap("tab10")
+    sc, poignees = None, []
+
+    def points(m, **kw):
+        xs = [scores[m, k] for k in range(n_comp)]
+        return ax.scatter(*xs, **kw)
+
+    if noms:
         for i, nom in enumerate(noms):
             m = env == nom
-            ax.scatter(scores[m, 0], scores[m, 1], s=14, alpha=.45,
-                       linewidths=0, color=cmap(i % 10), label=nom)
-        ax.legend(fontsize=8, markerscale=1.8, loc="best", title="environment")
+            mk = MARQUEURS[i % len(MARQUEURS)]
+            if couleur is not None:
+                sc = points(m, c=couleur[m], cmap="viridis", marker=mk,
+                            s=20, alpha=.6, linewidths=0)
+                poignees.append(plt.Line2D([], [], marker=mk, ls="", ms=7,
+                                           color="#555555", label=nom))
+            else:
+                points(m, color=cmap(i % 10), marker=mk, s=18, alpha=.5,
+                       linewidths=0, label=nom)
+        # barycentre de chaque environnement : c'est l'ecart entre eux qui dit
+        # si le contexte deplace le comportement
+        for i, nom in enumerate(noms):
+            m = env == nom
+            c = [scores[m, k].mean() for k in range(n_comp)]
+            ax.scatter(*c, marker=MARQUEURS[i % len(MARQUEURS)], s=230,
+                       color=cmap(i % 10), edgecolors="black", linewidths=1.5,
+                       zorder=6)
+        ax.legend(handles=poignees or None, fontsize=8, loc="best",
+                  title="environment", markerscale=1.3)
     else:
-        ax.scatter(scores[:, 0], scores[:, 1], s=16, alpha=.5, linewidths=0,
-                   color="#1D3557")
+        sc = points(slice(None), c=couleur, cmap="viridis", s=18, alpha=.55,
+                    linewidths=0) if couleur is not None else \
+             points(slice(None), color="#1D3557", s=18, alpha=.55, linewidths=0)
+    if sc is not None and couleur is not None:
+        fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.035, pad=.10)
 
-    # Le barycentre de chaque environnement, en noir : c'est l'ecart entre eux
-    # qui dit si le contexte deplace le comportement.
-    cmap = plt.get_cmap("tab10")
-    poignees = []
-    for i, nom in enumerate(noms):
-        m = env == nom
-        h = ax.scatter(scores[m, 0].mean(), scores[m, 1].mean(), marker="X", s=210,
-                       color=cmap(i % 10), edgecolors="black", linewidths=1.3,
-                       zorder=5, label=nom)
-        poignees.append(h)
-    # Avec --color, la legende des environnements a cede la place a la barre de
-    # couleur : sans celle-ci les croix seraient des marques anonymes.
-    if couleur is not None and poignees:
-        ax.legend(handles=poignees, fontsize=8, loc="best", title="centroid")
     ax.set_xlabel(f"PC1 ({100*part[0]:.0f} %)")
     ax.set_ylabel(f"PC2 ({100*part[1]:.0f} %)")
-    ax.set_title("Phenotype space, one point per genome per environment\n"
-                 "X: per-environment centroid" if noms else
-                 "Phenotype space, one point per genome\n"
-                 "coordinates: all measures in all environments", fontsize=10)
-    ax.grid(alpha=.25)
+    if trois_d:
+        ax.set_zlabel(f"PC3 ({100*part[2]:.0f} %)")
+        ax.view_init(elev=18, azim=-58)
+    else:
+        ax.grid(alpha=.25)
+    ax.set_title("Phenotype space, one point per genome"
+                 + ("" if noms else " (all measures, all environments)")
+                 + "\nlarge markers: per-environment centroid", fontsize=10)
 
     # --- charges : sans elles les axes ne veulent rien dire ---
-    ax = axs[1]
+    ax = fig.add_subplot(gs[1])
     y = np.arange(len(colonnes))
-    ax.barh(y - .2, axes[0], height=.38, color="#1D3557", label="PC1")
-    ax.barh(y + .2, axes[1], height=.38, color="#E76F51", label="PC2")
+    larg = .8 / n_comp
+    couleurs_pc = ("#1D3557", "#E76F51", "#2A9D8F")
+    for k in range(n_comp):
+        ax.barh(y + (k - (n_comp - 1) / 2) * larg, axes[k], height=larg * .92,
+                color=couleurs_pc[k], label=f"PC{k+1}")
     ax.set_yticks(y)
     ax.set_yticklabels(colonnes, fontsize=8 if len(colonnes) > 12 else 9)
     ax.axvline(0, color="black", lw=.9)
@@ -298,7 +320,7 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     ax.legend(fontsize=8); ax.grid(alpha=.25, axis="x")
 
     # --- variance expliquee ---
-    ax = axs[2]
+    ax = fig.add_subplot(gs[2])
     k = np.arange(1, len(part) + 1)
     ax.bar(k, 100 * part, color="#8D99AE")
     ax.plot(k, 100 * np.cumsum(part), "o-", color="#1D3557", ms=4)
@@ -353,6 +375,10 @@ def main():
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--3d", dest="trois_d", action="store_true",
+                   help="nuage en PC1-PC2-PC3 au lieu du plan. A lire avec la "
+                        "part de variance : une 3e composante a 8 %% n'ajoute "
+                        "pas grand-chose et rend la lecture plus difficile")
     p.add_argument("--survivants", action="store_true",
                    help="ne garder que les agents vivants a la fin (died = 0). "
                         "PC1 est sinon massivement l'axe de MORTALITE -- mourir "
@@ -489,6 +515,10 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
     couleur, nom_couleur = None, a.color
     if a.color is not None and not a.large:
         couleur = sup
+    elif a.color is not None and a.large:
+        print("  [info] --color ignore en format large : une ligne y couvre "
+              "tous les environnements, la variable n'y a pas de valeur unique")
+        couleur, nom_couleur = chunk.astype(float), "chunk"
     elif par_chunk or a.large:
         couleur, nom_couleur = chunk.astype(float), "chunk"
     trace(scores, chunk, env, colonnes, axes, part,
@@ -496,7 +526,7 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
            "Lab phenotypes — one PCA across all environments, fixed axes")
           + titre_suffixe,
           os.path.join(fig_dir, fichier),
-          couleur=couleur, nom_couleur=nom_couleur)
+          couleur=couleur, nom_couleur=nom_couleur, trois_d=a.trois_d)
 
 
 if __name__ == "__main__":
