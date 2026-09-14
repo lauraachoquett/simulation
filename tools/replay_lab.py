@@ -165,6 +165,16 @@ def tracer(sortie):
     # fusion rien d'autre ne l'a fait avant
     os.makedirs(os.path.join(sortie, "fig"), exist_ok=True)
     plot_lab_metrics(exp_dir=sortie)
+    # une figure par geometrie supplementaire. Les suffixes sont decouverts sur
+    # disque -- le rejeu n'a ainsi pas besoin de connaitre les noms choisis pour
+    # le run -- et dedoublonnes : il y a un fichier par chunk et par geometrie.
+    suffixes = set()
+    for f in glob.glob(os.path.join(sortie, "lab_data", "chunk_*_env_*_summary.json")):
+        m = re.fullmatch(r"chunk_\d+_(env_.+)_summary\.json", os.path.basename(f))
+        if m:
+            suffixes.add(m.group(1))
+    for suf in sorted(suffixes):
+        plot_lab_metrics(exp_dir=sortie, suffix=suf)
     plot_lab_exploration(exp_dir=sortie)
     plot_alone_vs_clones(exp_dir=sortie)
     # l'env a figurants n'est pas toujours joue : plot_alone_vs_clones sort en
@@ -282,6 +292,16 @@ def main():
 
             agg, summary = sd.data_lab_env(out_high, resources=res)
             sd._save_lab_data(agg, summary, sortie)
+
+            # geometries supplementaires : memes genomes, memes cles, une serie
+            # par disposition de la ressource
+            for nom_env in cfg.lab_envs_high_res:
+                stem = os.path.splitext(os.path.basename(nom_env))[0]
+                cfg_g = cfg_c._replace(lab_env_high_res=nom_env)
+                out_g = par_lots(vmap_over_agents_env_lab_high_res,
+                                 params, key_env, cles, model, cfg_g, a.batch)
+                agg_g, sum_g = sd.data_lab_env(out_g, resources=res)
+                sd._save_lab_data(agg_g, sum_g, sortie, suffix=f"env_{stem}")
 
             agg_low, summary_low = sd.data_lab_env_low_res(out_low)
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")

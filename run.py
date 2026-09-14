@@ -470,6 +470,12 @@ def parse_cli(cfg):
     # prob_factor et delta_energy vivent dans les ResourceConfig, pas dans
     # Config : ils ne peuvent pas passer par CLI_PARAMS, qui ne sait ecrire que
     # des champs plats. Ils sont appliques a la main plus bas.
+    # tuple et non liste : Config doit rester hachable pour jit(static_argnames)
+    p.add_argument("--lab-envs", dest="lab_envs_high_res", nargs="+", default=None,
+                   metavar="NPY",
+                   help="geometries supplementaires pour high_res : les memes "
+                        "genomes sont evalues dans chacune a chaque evaluation "
+                        "de lab (ex. scatter40_s0.npy patch1x40_s0.npy)")
     p.add_argument("--pf", "--prob-factor", dest="prob_factor", type=float,
                    nargs="+", default=None, metavar="V",
                    help="prob_factor : une valeur pour toutes les ressources, "
@@ -499,6 +505,9 @@ def parse_cli(cfg):
     maj["model_version"] = args.model_version
     maj["shuffle_version"] = args.shuffle_version
     maj["init_scale"] = args.init_scale
+    if args.lab_envs_high_res is not None:
+        # tuple : Config doit rester hachable pour jit(static_argnames=['cfg'])
+        maj["lab_envs_high_res"] = tuple(args.lab_envs_high_res)
 
     lettres = args.ablate.lower()
     inconnues = sorted(set(lettres) - set(ABLATIONS))

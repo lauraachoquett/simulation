@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 
-from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, vmap_over_agents_env_lab_high_res_with_figurants, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation.lab_env import launch_env_high_res, env_file_pour, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, vmap_over_agents_env_lab_high_res_with_figurants, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
@@ -373,6 +373,28 @@ class LabMixin:
                 submit_video(outputs_to_numpy(agent_slice(vid_high, b)), vid, 20, 10,
                             self.cfg.resources,
                             label=f"high_res_chunk_{self.chunk_idx}_lab_{b}")
+
+            # ============ 1bis) GEOMETRIES SUPPLEMENTAIRES ============
+            # Les MEMES genomes, memes cles, dans d'autres dispositions de la
+            # ressource (semis, amas, gros amas). Seule la geometrie change --
+            # toutes les grilles portent le meme nombre de cases -- donc un ecart
+            # entre deux series dit ce que la population sait exploiter, et non
+            # ce qu'on lui a donne. Une figure par geometrie, series separees.
+            for nom in self.cfg.lab_envs_high_res:
+                stem = os.path.splitext(os.path.basename(nom))[0]
+                cfg_g = cfg_m._replace(lab_env_high_res=nom)
+                if env_file_pour(cfg_g, "high_res") is None:
+                    print(f"[lab] geometrie {stem} ignoree : les env figes ne sont "
+                          f"definis qu'a une ressource "
+                          f"({len(self.cfg.resources)} ici)")
+                    continue
+                _, out_g2 = vmap_over_agents_env_lab_high_res(
+                    agent_params, key_env, key_sim, model, cfg_g)
+                agg_g, summary_g = self.data_lab_env(outputs_lab=out_g2)
+                self._save_lab_data(agg_g, summary_g, exp_dir, suffix=f"env_{stem}")
+                # figure PROPRE a cette geometrie : plot_lab_metrics filtre par
+                # suffixe exact et ecrit lab_metrics_evolution_env_<nom>.png
+                plot_lab_metrics(exp_dir=exp_dir, suffix=f"env_{stem}")
 
             # ============ 2) LOW_RES (exploration) ============
             final_state, outputs_low = vmap_over_agents_env_lab_low_res(
