@@ -273,6 +273,11 @@ def main():
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--par-env", action="store_true",
+                   help="une PCA SEPAREE par environnement, avec ses propres "
+                        "axes, au lieu d'un plan commun. Decrit mieux la "
+                        "variation interne d'un contexte, mais les positions ne "
+                        "sont plus comparables d'une figure a l'autre")
     a = p.parse_args()
 
     data_dir = lab_data_de(a.source)
@@ -292,14 +297,39 @@ def main():
     print(f"donnees : {data_dir}")
     print(f"{len(trouves)} environnement(s) : {', '.join(trouves)}")
 
+    fig_dir = a.out or os.path.join(a.source, "fig")
+    if a.par_env:
+        # Une PCA PAR environnement, axes propres a chacun. Utile pour decrire
+        # la variation interne d'un contexte -- mais les positions ne sont alors
+        # plus comparables d'une figure a l'autre, les axes ayant tourne. Pour
+        # comparer des environnements, c'est le mode par defaut qu'il faut.
+        for nom in trouves:
+            print(f"\n=== {nom}")
+            sous = [t for t in fichiers if t[0] == nom]
+            analyse(sous, a, fig_dir, titre_suffixe=f"   [{nom}]",
+                    fichier=f"pca_phenotypes_{nom}.png", par_chunk=True)
+        return
+
+    analyse(fichiers, a, fig_dir,
+            titre_suffixe="", fichier="pca_phenotypes_all_envs.png")
+
+
+def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
+    """Une PCA sur l'ensemble donne, plus sa figure.
+
+    `par_chunk` colore par chunk au lieu de colorer par environnement : dans une
+    PCA a un seul environnement, la couleur par environnement serait uniforme.
+    """
     X, chunk, env, genome, colonnes, sup = charge(fichiers, a.vars, a.color)
     if X is None:
-        raise SystemExit("Rien a analyser")
+        print("  rien a analyser")
+        return
     X, chunk, env, genome, colonnes, sup = prepare(
         X, chunk, env, genome, colonnes, sup)
     if X.shape[0] < 3 or X.shape[1] < 2:
-        raise SystemExit(f"{X.shape[0]} genomes x {X.shape[1]} mesures : "
-                         "pas de quoi faire une PCA")
+        print(f"  {X.shape[0]} genomes x {X.shape[1]} mesures : "
+              "pas de quoi faire une PCA, saute")
+        return
 
     scores, axes, part, _, _ = pca(X)
     # Regle usuelle : au moins ~10 observations par variable. En dessous les axes
@@ -332,11 +362,17 @@ def main():
               f"PC1 {inter[0]:.2f}  PC2 {inter[1]:.2f}")
         print("  (rapport proche de 1 -> le contexte deplace autant que le genotype)")
 
-    fig_dir = a.out or os.path.join(a.source, "fig")
+    couleur, nom_couleur = None, a.color
+    if a.color is not None:
+        couleur = sup
+    elif par_chunk:
+        couleur, nom_couleur = chunk.astype(float), "chunk"
     trace(scores, chunk, env, colonnes, axes, part,
-          "Lab phenotypes — one PCA across all environments, fixed axes",
-          os.path.join(fig_dir, "pca_phenotypes_all_envs.png"),
-          couleur=None if a.color is None else sup, nom_couleur=a.color)
+          ("Lab phenotypes — PCA, fixed axes" if par_chunk else
+           "Lab phenotypes — one PCA across all environments, fixed axes")
+          + titre_suffixe,
+          os.path.join(fig_dir, fichier),
+          couleur=couleur, nom_couleur=nom_couleur)
 
 
 if __name__ == "__main__":
