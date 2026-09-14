@@ -30,6 +30,7 @@ import argparse
 import glob
 import os
 import re
+import time
 
 import jax
 import jax.numpy as jnp
@@ -381,9 +382,17 @@ def main():
                                      chemin, fps=20, scale=10, resources=res)
                     print(f"    video {chemin}", flush=True)
 
+            def etape(nom, fn, cfg_x):
+                """Un rollout, chronometre. Les etapes silencieuses donnaient
+                l'impression que seules celles qui impriment un tableau
+                (compare_alone_vs_clones) etaient jouees."""
+                t = time.time()
+                out = par_lots(fn, params, key_env, cles, model, cfg_x, a.batch)
+                print(f"    {nom:<26} {time.time()-t:6.1f} s", flush=True)
+                return out
+
             # low_res : hors des geometries, il a sa propre grille
-            out_low = par_lots(vmap_over_agents_env_lab_low_res,
-                               params, key_env, cles, model, cfg_c, a.batch)
+            out_low = etape("low_res", vmap_over_agents_env_lab_low_res, cfg_c)
             agg_low, summary_low = sd.data_lab_env_low_res(out_low)
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
             # le MEME jeu de colonnes que les autres env : data_lab_env_low_res
@@ -403,8 +412,8 @@ def main():
                 marque = f"_{stem}" if geo else ""     # suffixe des fichiers pheno
                 cfg_g = cfg_c if geo is None else cfg_c._replace(lab_env_high_res=geo)
 
-                out_high = par_lots(vmap_over_agents_env_lab_high_res,
-                                    params, key_env, cles, model, cfg_g, a.batch)
+                out_high = etape(f"alone {stem}".strip(),
+                                 vmap_over_agents_env_lab_high_res, cfg_g)
                 agg, summary = sd.data_lab_env(out_high, resources=res)
                 sd._save_lab_data(agg, summary, sortie, suffix=sfx)
                 # un phenotype par GENOME : c'est ce que lit pca_phenotypes, et
@@ -413,8 +422,8 @@ def main():
                 sd._save_pheno(pg_h, sortie, f"alone{marque}")
                 video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem)
 
-                out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
-                                   params, key_env, cles, model, cfg_g, a.batch)
+                out_clo = etape(f"clones {stem}".strip(),
+                                vmap_over_agents_env_lab_high_res_with_clones, cfg_g)
                 pg_c = sd.data_lab_env_grouped(out_clo, resources=res)
                 sd._save_pheno(pg_c, sortie, f"clones{marque}")
                 sd.compare_alone_vs_clones(out_high, out_clo, sortie,
@@ -424,8 +433,9 @@ def main():
                       "clones", stem)
 
                 if cfg.lab_figurants:
-                    out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
-                                       params, key_env, cles, model, cfg_g, a.batch)
+                    out_fig = etape(f"figurants {stem}".strip(),
+                                    vmap_over_agents_env_lab_high_res_with_figurants,
+                                    cfg_g)
                     pg_f = sd.data_lab_env_grouped(out_fig, resources=res)
                     sd._save_pheno(pg_f, sortie, f"figurants{marque}")
                     sd.compare_alone_vs_clones(out_high, out_fig, sortie,
