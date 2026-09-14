@@ -266,22 +266,6 @@ LOW_RES_COUNTS = {"good": 3, "medium": 2, "poison": 10}
 # sont indexees par NOM, et une 4e ressource n'y figure pas.
 DEFAUT_COUNT = 40
 
-# Facteur applique aux taux de croissance dans l'env de test.
-#
-# Il n'y a pas de mortalite des ressources : la croissance ne s'arrete que sur
-# les cases occupees, donc le seul equilibre est la grille pleine. Aux taux de
-# la sim principale l'env de lab passe de 18% a 39% d'occupation en 1000 pas et
-# sature a 97% -- il n'est pas stationnaire, il est croissant, et la
-# distribution des observations derive tout au long du rollout.
-#
-# On ralentit donc la repousse pour qu'elle compense approximativement ce qu'UN
-# agent consomme, plutot que de la depasser d'un facteur 5 a 10. A 0.1 la derive
-# sans agent tombe a +22 cases sur 1000 pas (+18%), contre +190 (+119%) a 1.0.
-#
-# Compensation APPROXIMATIVE : la consommation depend de la condition testee
-# (un agent a memoire intacte mange plus de poison en debut de vie qu'un agent
-# ablate), donc aucune valeur unique ne stabilise les deux exactement. Verifier
-# la stationnarite sur les donnees plutot que de s'y fier.
 HIGH_RES_GROWTH_SCALE = 0.1
 
 
@@ -289,7 +273,7 @@ def launch_env_high_res(agent_params, key_env, key_sim, cfg, model, rot=0):
     cfg = cfg._replace(
         grid_length=30,
         n_agents_max=2,
-        reproduction_on=True,
+        reproduction_on=False,
         resources_growth=False,
         pre_growth_step=200,
         log_obs=True,          
@@ -313,7 +297,7 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
     cfg = cfg._replace(
         grid_length=30,
         n_agents_max=5,
-        reproduction_on = True,
+        reproduction_on = False,
         resources_growth=False,
         pre_growth_step = 200,
         log_obs=True,          # idem
