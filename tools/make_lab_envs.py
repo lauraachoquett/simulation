@@ -230,13 +230,18 @@ def reference(cfg, graine):
     passer pour une lecture.
     """
     try:
-        from simulation.lab_env import launch_env_high_res, launch_env_low_res
+        # Les wrappers VMAP, pas les lanceurs bruts : grille_de_depart appelle
+        # fn(params, key_env, key_sim, model, cfg) -- l'ordre des vmap_* -- alors
+        # que launch_env_* prend (..., cfg, model). Se tromper ici donne un
+        # AttributeError sur cfg._replace, pas une erreur d'arite.
+        from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
+                                        vmap_over_agents_env_lab_low_res)
         from simulation.run import build_model
         from simulation.tools.preview_lab_env import grille_de_depart
         model = build_model(cfg)
         return [(f"{nom} (current)", grille_de_depart(fn, cfg, model, graine)[0].sum(axis=0))
-                for nom, fn in (("high_res", launch_env_high_res),
-                                ("low_res", launch_env_low_res))]
+                for nom, fn in (("high_res", vmap_over_agents_env_lab_high_res),
+                                ("low_res", vmap_over_agents_env_lab_low_res))]
     except ImportError as e:
         print(f"  [info] pile lourde indisponible ({e.name} manquant) : etalon "
               "reconstruit, sans passer par launch_env_*.")
