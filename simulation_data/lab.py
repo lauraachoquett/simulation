@@ -1207,7 +1207,10 @@ class LabMixin:
         """
         keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
                 "died", "greediness", "adapt_score", "adapt_gain", "voisinage",
-                "repro_rate"]
+                "repro_rate",
+                # delai avant la 1re ressource : NaN pour qui n'a jamais mange,
+                # d'ou ever_ate a cote pour distinguer "lent" de "jamais"
+                "t_explore", "ever_ate"]
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)

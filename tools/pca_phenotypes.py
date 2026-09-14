@@ -54,7 +54,7 @@ import numpy as np
 # exploser. adapt_gain aussi : sans ressource a Delta e negatif il se confond
 # avec mean_rew.
 VARS_DEFAUT = ("age", "mean_rew", "mean_speed", "energy_end",
-               "greediness", "repro_rate", "voisinage")
+               "greediness", "repro_rate", "voisinage", "t_explore")
 
 # Regroupements par defaut de --groupes. La coupure est SOLITAIRE / SOCIAL et
 # non high_res / low_res : low_res n'a qu'un agent vivant (n_agents_max=2, cf.
@@ -135,6 +135,37 @@ def charge(fichiers, noms, extra=None):
             np.concatenate(sup))
 
 
+def pivot(X, chunk, env, genome, colonnes):
+    """Une ligne par (chunk, genome), une colonne par (environnement, mesure).
+
+    C'est le phenotype au sens large : la NORME DE REACTION du genome, ce qu'il
+    fait dans chacun des contextes. Deux raisons de preferer ce format au format
+    long.
+
+    D'abord l'independance : en format long le meme genome fournit une ligne par
+    environnement, donc les lignes sont correlees et la PCA melange la variation
+    ENTRE genomes avec la variation ENTRE contextes, sans moyen de les separer.
+
+    Ensuite le sens : un genome bon partout et un genome bon seulement en amas
+    deviennent ici deux directions distinctes de l'espace, alors qu'en format
+    long ils se confondent avec deux nuages qui se recouvrent.
+
+    Prix a payer : un genome doit avoir une valeur valide dans TOUS les
+    environnements pour fournir une ligne.
+    """
+    envs = sorted(set(env.tolist()))
+    cles = sorted({(int(c), int(g)) for c, g in zip(chunk, genome)})
+    rang = {k: i for i, k in enumerate(cles)}
+    p = len(colonnes)
+    W = np.full((len(cles), len(envs) * p), np.nan)
+    for j, e in enumerate(envs):
+        m = np.flatnonzero(env == e)
+        for r in m:
+            W[rang[(int(chunk[r]), int(genome[r]))], j * p:(j + 1) * p] = X[r]
+    noms = [f"{e}:{n}" for e in envs for n in colonnes]
+    return W, np.array([k[0] for k in cles]), noms
+
+
 def prepare(X, chunk, env, genome, colonnes, sup):
     """Retire les colonnes constantes et les lignes a NaN, en le disant.
 
@@ -156,10 +187,19 @@ def prepare(X, chunk, env, genome, colonnes, sup):
     ok = np.isfinite(X).all(axis=1)
     perdus = int((~ok).sum())
     if perdus:
-        print(f"  [attention] {perdus} genomes sur {len(X)} "
-              f"({100*perdus/len(X):.0f} %) ecartes pour NaN. Ce ne sont pas des "
-              "lignes quelconques : greediness est indefinie quand l'agent n'a "
-              "jamais vu de ressource.")
+        # nommer les colonnes responsables : en format large une seule d'entre
+        # elles peut eliminer la majorite des lignes, et la retirer avec --vars
+        # vaut souvent mieux que de perdre les genomes
+        coupables = [(colonnes[j], int((~np.isfinite(X[:, j])).sum()))
+                     for j in range(X.shape[1])]
+        coupables = sorted([c for c in coupables if c[1]],
+                           key=lambda c: -c[1])[:4]
+        detail = ", ".join(f"{n} ({k})" for n, k in coupables)
+        print(f"  [attention] {perdus} lignes sur {len(X)} "
+              f"({100*perdus/len(X):.0f} %) ecartees pour NaN. Colonnes en "
+              f"cause : {detail}. Ce ne sont pas des lignes quelconques -- "
+              "greediness est indefinie quand l'agent n'a jamais vu de "
+              "ressource, t_explore quand il n'a jamais mange.")
     return X[ok], chunk[ok], env[ok], genome[ok], colonnes, sup[ok]
 
 
@@ -195,21 +235,25 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     "chaque contexte occupe-t-il une region propre", et un degrade temporel la
     masquerait. `--color` bascule sur n'importe quelle colonne si besoin.
     """
-    fig, axs = plt.subplots(1, 3, figsize=(19, 5.8),
-                            gridspec_kw={"width_ratios": [2.3, 1.25, 1]})
+    haut = max(5.8, 0.24 * len(colonnes))
+    fig, axs = plt.subplots(1, 3, figsize=(19, haut),
+                            gridspec_kw={"width_ratios": [2.3, 1.45, 1]})
     ax = axs[0]
-    noms = sorted(set(env.tolist()))
+    noms = sorted(set(env.tolist())) if env is not None else []
     if couleur is not None:
         sc = ax.scatter(scores[:, 0], scores[:, 1], c=couleur, cmap="viridis",
                         s=14, alpha=.5, linewidths=0)
         fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.04)
-    else:
+    elif noms:
         cmap = plt.get_cmap("tab10")
         for i, nom in enumerate(noms):
             m = env == nom
             ax.scatter(scores[m, 0], scores[m, 1], s=14, alpha=.45,
                        linewidths=0, color=cmap(i % 10), label=nom)
         ax.legend(fontsize=8, markerscale=1.8, loc="best", title="environment")
+    else:
+        ax.scatter(scores[:, 0], scores[:, 1], s=16, alpha=.5, linewidths=0,
+                   color="#1D3557")
 
     # Le barycentre de chaque environnement, en noir : c'est l'ecart entre eux
     # qui dit si le contexte deplace le comportement.
@@ -221,7 +265,9 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     ax.set_xlabel(f"PC1 ({100*part[0]:.0f} %)")
     ax.set_ylabel(f"PC2 ({100*part[1]:.0f} %)")
     ax.set_title("Phenotype space, one point per genome per environment\n"
-                 "X: per-environment centroid", fontsize=10)
+                 "X: per-environment centroid" if noms else
+                 "Phenotype space, one point per genome\n"
+                 "coordinates: all measures in all environments", fontsize=10)
     ax.grid(alpha=.25)
 
     # --- charges : sans elles les axes ne veulent rien dire ---
@@ -229,7 +275,8 @@ def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
     y = np.arange(len(colonnes))
     ax.barh(y - .2, axes[0], height=.38, color="#1D3557", label="PC1")
     ax.barh(y + .2, axes[1], height=.38, color="#E76F51", label="PC2")
-    ax.set_yticks(y); ax.set_yticklabels(colonnes, fontsize=9)
+    ax.set_yticks(y)
+    ax.set_yticklabels(colonnes, fontsize=8 if len(colonnes) > 12 else 9)
     ax.axvline(0, color="black", lw=.9)
     ax.set_title("Loadings", fontsize=10)
     ax.legend(fontsize=8); ax.grid(alpha=.25, axis="x")
@@ -290,6 +337,14 @@ def main():
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--large", action="store_true",
+                   help="UNE LIGNE PAR GENOME, colonnes = mesures x "
+                        "environnements (sa norme de reaction). En format long "
+                        "-- le defaut -- le meme genome fournit une ligne par "
+                        "environnement, donc les lignes sont correlees et la "
+                        "PCA melange variation entre genomes et variation entre "
+                        "contextes. Exige une valeur valide dans TOUS les "
+                        "environnements")
     p.add_argument("--groupes", action="store_true",
                    help="un plan par groupe : `solo` (alone_* et lowres) et "
                         "`social` (clones_* et figurants_*). Les axes sont "
@@ -364,8 +419,14 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
     if X is None:
         print("  rien a analyser")
         return
-    X, chunk, env, genome, colonnes, sup = prepare(
-        X, chunk, env, genome, colonnes, sup)
+    if a.large:
+        X, chunk, colonnes = pivot(X, chunk, env, genome, colonnes)
+        env = genome = sup = np.zeros(len(X))
+        env = None
+    X, chunk, env2, genome, colonnes, sup = prepare(
+        X, chunk, env if env is not None else np.zeros(len(X), dtype=object),
+        genome if not a.large else np.zeros(len(X)), colonnes, sup)
+    env = None if a.large else env2
     if X.shape[0] < 3 or X.shape[1] < 2:
         print(f"  {X.shape[0]} genomes x {X.shape[1]} mesures : "
               "pas de quoi faire une PCA, saute")
@@ -387,13 +448,14 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
         detail = ", ".join(f"{colonnes[j]} {axes[i][j]:+.2f}" for j in ordre)
         print(f"    PC{i+1} porte surtout : {detail}")
 
-    print("\n  barycentre par environnement (PC1, PC2) :")
-    for nom in sorted(set(env.tolist())):
-        m = env == nom
-        print(f"    {nom:<28} ({scores[m,0].mean():+6.2f}, "
-              f"{scores[m,1].mean():+6.2f})   n={int(m.sum())}")
+    if env is not None:
+        print("\n  barycentre par environnement (PC1, PC2) :")
+        for nom in sorted(set(env.tolist())):
+            m = env == nom
+            print(f"    {nom:<28} ({scores[m,0].mean():+6.2f}, "
+                  f"{scores[m,1].mean():+6.2f})   n={int(m.sum())}")
 
-    d = deplacement_par_genome(scores, env, genome, chunk)
+    d = None if a.large else deplacement_par_genome(scores, env, genome, chunk)
     if d is not None:
         intra, inter = d
         print(f"\n  dispersion d'un MEME genome entre environnements : "
@@ -403,9 +465,9 @@ def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
         print("  (rapport proche de 1 -> le contexte deplace autant que le genotype)")
 
     couleur, nom_couleur = None, a.color
-    if a.color is not None:
+    if a.color is not None and not a.large:
         couleur = sup
-    elif par_chunk:
+    elif par_chunk or a.large:
         couleur, nom_couleur = chunk.astype(float), "chunk"
     trace(scores, chunk, env, colonnes, axes, part,
           ("Lab phenotypes — PCA, fixed axes" if par_chunk else
