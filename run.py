@@ -421,6 +421,7 @@ CLI_FLAGS = [
     (("--weights",), "track_weights"),
     (("--repro",),   "reproduction_on"),
     (("--growth",),  "resources_growth"),
+    (("--figurants",), "lab_figurants"),
 ]
 
 

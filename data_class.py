@@ -173,6 +173,15 @@ class Config(NamedTuple):
     # decouplage, subkey_env_lab derivait de PRNGKey(args.seed) : deux runs de
     # graines differentes etaient mesures dans deux labs differents, et l'ecart
     # entre eux melangeait la difference des genomes a celle de l'etalon.
+    # Congeneres inertes dans un env de test : actions aleatoires, aucune
+    # consommation, energie gelee. Ils occupent les DERNIERS slots. A 0 (defaut)
+    # rien ne change -- pas meme le flux de cles aleatoires.
+    n_figurants : int = 0
+    # Jouer l'env de test a figurants a chaque evaluation de lab. Un rollout de
+    # plus par evaluation : laisse a False quand la question sociale n'est pas
+    # celle qu'on mesure.
+    lab_figurants : bool = False
+
     lab_seed : int = 1        # cf. tools/preview_lab_env : graine retenue
 
     # Environnements de test figes, a UNE ressource (cf. tools/make_lab_envs).

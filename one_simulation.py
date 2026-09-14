@@ -37,6 +37,7 @@ class StepLog(NamedTuple):
     saw_res:   jax.Array   # (N, n_types) -> COMBIEN de cases de ce type dans la vue
     ate_res:   jax.Array   # (N, n_types) -> ce type a-t-il été consommé PENDANT ce step ?
     is_oracle: jax.Array   # (N,) -> 1 pour les envahisseurs
+    figurant:  jax.Array   # (N,) -> 1 pour les congeneres inertes (cf. n_figurants)
     repro_ready: jax.Array # (N,) -> le seuil de reproduction est atteint A CE PAS,
                            #        AVANT le plafond de places libres et avant
                            #        cfg.reproduction_on. Compte donc les naissances
@@ -61,6 +62,15 @@ def run_simulation_chunk(state,model,keys, cfg):
         grid_walls     = grid[n_types + 1] 
 
         key_env, key_action, key_respawn, key_mut = random.split(subkey, 4)
+
+        # Figurants : congeneres presents mais inertes. Ils bougent au hasard, ne
+        # consomment rien et ne perdent pas d'energie -- ils ne fournissent que le
+        # stimulus social, sans toucher a la ressource. Masque POSITIONNEL et non
+        # champ d'AgentState : ils ne naissent ni ne meurent, leur identite ne
+        # bouge donc jamais d'un pas a l'autre.
+        figurant = (jnp.arange(cfg.n_agents_max)
+                    >= cfg.n_agents_max - cfg.n_figurants) if cfg.n_figurants else None
+        pas_figurant = (1 - figurant.astype(jnp.int32)) if cfg.n_figurants else 1
         res = jax.tree.map(lambda *xs: jnp.stack(xs), *cfg.resources) # Resource parameters
 
         # ------- 1. Evaluate alive agents and energy : -------
@@ -124,6 +134,14 @@ def run_simulation_chunk(state,model,keys, cfg):
             prend = (agents.is_oracle > 0) if not cfg.oracle_agent else jnp.ones_like(agents.is_oracle, bool)
             acts_idx = jnp.where(prend, a_oracle, acts_idx)
 
+        if cfg.n_figurants:
+            # fold_in et non un 5e split : ajouter une cle a random.split(subkey, 4)
+            # decalerait TOUT le flux aleatoire, et les runs sans figurants ne
+            # seraient plus reproductibles a l'identique.
+            a_hasard = random.randint(random.fold_in(key_action, 1),
+                                      (cfg.n_agents_max,), 0, cfg.output_dim)
+            acts_idx = jnp.where(figurant, a_hasard, acts_idx)
+
         actions_id = jax.nn.one_hot(acts_idx, cfg.output_dim)
 
         acts = jnp.argmax(actions_id, axis=1)
@@ -132,17 +150,32 @@ def run_simulation_chunk(state,model,keys, cfg):
         pos = agents.position
         
         if cfg.letal_wall :
-            survives_int = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,survives_int)
-            reproduces = jnp.where(grid_walls[pos[:, 0], pos[:, 1]]==1,0,reproduces)
+            dans_mur = grid_walls[pos[:, 0], pos[:, 1]] == 1
+            if cfg.n_figurants:
+                # Le figurant ne meurt pas au mur : sa politique est aleatoire,
+                # donc il finit toujours par y entrer -- mesure ici, deux des
+                # trois disparaissaient avant la fin du rollout, et le stimulus
+                # social avec eux. Sa survie n'a de toute facon aucun sens : il
+                # n'est pas un sujet.
+                dans_mur = dans_mur & ~figurant
+            survives_int = jnp.where(dans_mur,0,survives_int)
+            reproduces = jnp.where(dans_mur,0,reproduces)
         
 
         # Compute intern energy : resource consumption - energy decay
         local_resources = grid_resources[:, pos[:, 0], pos[:, 1]].T
         gain = local_resources @ res.delta_energy
-        rewards = survives_int * gain
+        rewards = survives_int * gain * pas_figurant
         new_energy = jnp.minimum(energies + rewards - cfg.energy_decay * jnp.where(acts==0, cfg.factor_energy_decay_not_moving,1) * survives_int, cfg.energy_max)
 
         ate_res_step = (local_resources > 0) & (survives_int[:, None] > 0)   # (N, n_types)
+        if cfg.n_figurants:
+            # energie gelee : sans ca le figurant meurt vers le pas 366 (l'energie
+            # de depart divisee par la decroissance, plus time_to_die) et le
+            # stimulus disparait pendant 9/10 du rollout.
+            new_energy = jnp.where(figurant, energies, new_energy)
+            ate_res_step = ate_res_step & ~figurant[:, None]
+            reproduces = reproduces & ~figurant
 
         # Ce que l'agent APPREND de sa bouchee. Les trois delta_energy etant
         # distincts, une seule suffit a identifier le canal goute. La croyance
@@ -156,7 +189,7 @@ def run_simulation_chunk(state,model,keys, cfg):
         # Agents consume resources on the grid
         # Use max() instead of set() to avoid non-determinism with repeated indices on GPU
         consumed = jnp.zeros((cfg.grid_length, cfg.grid_length), dtype=grid_resources.dtype) # (L, L)
-        consumed = consumed.at[pos[:, 0], pos[:, 1]].max(survives_int)     # (L, L)
+        consumed = consumed.at[pos[:, 0], pos[:, 1]].max(survives_int * pas_figurant)     # (L, L)
 
         consumed_per_type = (grid_resources * consumed[None]).sum(axis=(1, 2))   # (n_types,)
 
@@ -311,6 +344,8 @@ def run_simulation_chunk(state,model,keys, cfg):
             saw_res = saw_res_step,
             ate_res = ate_res_step,
             is_oracle = state.agents.is_oracle,
+            figurant = (figurant.astype(jnp.int32) if cfg.n_figurants
+                        else jnp.zeros((cfg.n_agents_max,), dtype=jnp.int32)),
             repro_ready = reproduces & (survives_int > 0),
         )
         

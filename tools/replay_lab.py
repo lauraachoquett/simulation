@@ -40,7 +40,8 @@ from simulation.data_class import label_of
 from simulation.lab_env import (env_file_pour,
                                 vmap_over_agents_env_lab_high_res,
                                 vmap_over_agents_env_lab_low_res,
-                                vmap_over_agents_env_lab_high_res_with_clones)
+                                vmap_over_agents_env_lab_high_res_with_clones,
+                                vmap_over_agents_env_lab_high_res_with_figurants)
 from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
@@ -166,6 +167,14 @@ def tracer(sortie):
     plot_lab_metrics(exp_dir=sortie)
     plot_lab_exploration(exp_dir=sortie)
     plot_alone_vs_clones(exp_dir=sortie)
+    # l'env a figurants n'est pas toujours joue : plot_alone_vs_clones sort en
+    # silence s'il ne trouve aucun fichier de cette famille
+    plot_alone_vs_clones(
+        exp_dir=sortie, tag="alone_vs_figurants",
+        prefixes=("alone", "figurants"), labels=("alone", "with inert peers"),
+        titre="Focal agent alone vs among inert peers "
+              "(random policy, no consumption, frozen energy)",
+        fname="lab_alone_vs_figurants_evolution.png")
     print(f"Figures dans {os.path.join(sortie, 'fig')}")
 
 
@@ -278,6 +287,12 @@ def main():
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
 
             sd.compare_alone_vs_clones(out_high, out_clo, sortie)
+
+            if cfg.lab_figurants:
+                out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
+                                   params, key_env, cles, model, cfg_c, a.batch)
+                sd.compare_alone_vs_clones(out_high, out_fig, sortie,
+                                           condition="figurants")
 
         if not a.merge:
             tracer(sortie)

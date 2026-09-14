@@ -23,7 +23,7 @@ import jax
 import jax.numpy as jnp
 from jax import random, vmap
 
-from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
+from simulation.lab_env import launch_env_high_res, vmap_over_agents_env_lab_high_res,vmap_over_agents_env_lab_low_res,vmap_over_agents_env_lab_high_res_with_clones, vmap_over_agents_env_lab_high_res_with_figurants, rotate_resources, vmap_over_agents_env_lab_adapt, rotations_for, vmap_mutate
 from simulation.utils.plots import (plot_memory_gain_hist, plot_metric_pairs, plot_food_simplex, plot_replay_top_gain, plot_evolvability, EVO_METRIQUES, plot_lab_metrics, plot_lab_exploration,
                             plot_alone_vs_clones, plot_lab_energy,plot_energy_response,
                             plot_eaten_by_type_boxplot, plot_prob_eat_over_life_by_type)
@@ -408,6 +408,28 @@ class LabMixin:
                 submit_video(outputs_to_numpy(agent_slice(vid_clones, b)), vid, 20, 10,
                             self.cfg.resources,
                             label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
+
+            # ============ 3bis) FIGURANTS (effet social SANS depletion) ============
+            # Meme protocole que les clones, mais les pairs ne consomment rien :
+            # l'ecart avec le temoin seul ne peut donc plus venir de la ressource
+            # qu'ils auraient prise. C'est ce bras-la qui repond a "la presence de
+            # congeneres fait-elle manger davantage", que l'env clones confond
+            # avec la depletion.
+            if self.cfg.lab_figurants:
+                final_state, outputs_fig = vmap_over_agents_env_lab_high_res_with_figurants(
+                    agent_params, key_env, key_sim, model, cfg_m)
+                self.compare_alone_vs_clones(outputs_high, outputs_fig, exp_dir,
+                                             condition="figurants")
+                self._plot_energy(outputs_fig, exp_dir, "high_res_figurants",
+                                  "lab_4 — high_res with inert peers")
+
+                vid_fig = rollout_video(vmap_over_agents_env_lab_high_res_with_figurants)
+                for b in range(N_FILM):
+                    vid = os.path.join(exp_dir, "videos", "high_res_figurants",
+                                    f"high_res_figurants_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                    submit_video(outputs_to_numpy(agent_slice(vid_fig, b)), vid, 20, 10,
+                                self.cfg.resources,
+                                label=f"figurants_chunk_{self.chunk_idx}_lab_{b}")
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
             # A une seule ressource aucune permutation n'existe : l'experience
@@ -814,6 +836,18 @@ class LabMixin:
             died  = np.concatenate([np.ones(d_row.shape, bool),
                                     np.zeros(s_slot.shape, bool)])       # True = mort
  
+            # Les figurants ne sont pas des sujets : politique aleatoire, energie
+            # gelee, aucune consommation. Les laisser ici les ferait moyenner avec
+            # l'agent teste dans data_lab_env_grouped, ce qui noierait exactement
+            # le signal qu'on mesure.
+            fig_flag = np.asarray(getattr(outputs, "figurant",
+                                          np.zeros(alive.shape[1], dtype=int)))
+            if fig_flag.ndim == 2:                      # (T, N) -> constant dans le temps
+                fig_flag = fig_flag[0]
+            if fig_flag.any():
+                garde = fig_flag[slot] == 0
+                t_row, slot, died = t_row[garde], slot[garde], died[garde]
+
             if t_row.size == 0:
                 return None
  
@@ -1100,15 +1134,22 @@ class LabMixin:
     # =================================================================
     #  MODIFIÉ — B) EFFET DES PAIRS (env clones)
     # =================================================================
-    def compare_alone_vs_clones(self, outputs_alone, outputs_clones, exp_dir):
-        """Compare, PAR GÉNOME, le comportement SEUL (high_res) vs EN GROUPE
-        (clones). Les deux rollouts partagent agent_params/key_env/key_sim dans
+    def compare_alone_vs_clones(self, outputs_alone, outputs_clones, exp_dir,
+                                condition="clones"):
+        """Compare, PAR GÉNOME, le comportement SEUL (high_res) vs EN GROUPE.
+        Les deux rollouts partagent agent_params/key_env/key_sim dans
         le même ordre -> tableaux alignés par génome -> comparaison APPARIÉE :
  
-            delta[g] = comportement_clones[g] - comportement_seul[g]
+            delta[g] = comportement_en_groupe[g] - comportement_seul[g]
  
         La médiane de delta isole l'effet des pairs à génome fixé (élimine la
-        variance inter-génomes)."""
+        variance inter-génomes).
+
+        `condition` nomme le bras de droite et indexe la famille de fichiers :
+        "clones" (pairs identiques qui CONSOMMENT) ou "figurants" (congeneres
+        inertes). Les deux repondent a des questions differentes -- le premier
+        melange depletion et effet social, le second ne garde que le social --
+        et doivent donc rester deux series distinctes."""
         a = self.data_lab_env_grouped(outputs_alone)
         c = self.data_lab_env_grouped(outputs_clones)
  
@@ -1130,16 +1171,17 @@ class LabMixin:
             delta = c[k][mask] - a[k][mask]
             row = {"n": int(mask.sum())}
             row.update(_dispersion(a[k][mask], "alone",  empty=float("nan")))
-            row.update(_dispersion(c[k][mask], "clones", empty=float("nan")))
+            row.update(_dispersion(c[k][mask], condition, empty=float("nan")))
             row.update(_dispersion(delta,      "delta",  empty=float("nan")))
             table[k] = row
  
         # affichage : médianes + IQR de l'effet apparié
-        print(f"\n--- Lab chunk {self.chunk_idx} | ALONE vs CLONES (peers effect) ---")
-        print(f"  {'metric':<22}{'alone':>10}{'clones':>10}{'Δ median':>11}{'Δ IQR':>20}")
+        print(f"\n--- Lab chunk {self.chunk_idx} | ALONE vs {condition.upper()} "
+              "(peers effect) ---")
+        print(f"  {'metric':<22}{'alone':>10}{condition:>10}{'Δ median':>11}{'Δ IQR':>20}")
         for k in metrics:
             r = table[k]
-            print(f"  {labels[k]:<22}{r['alone_p50']:>10.3f}{r['clones_p50']:>10.3f}"
+            print(f"  {labels[k]:<22}{r['alone_p50']:>10.3f}{r[condition + '_p50']:>10.3f}"
                   f"{r['delta_p50']:>11.3f}"
                   f"{'[' + format(r['delta_p25'], '.3f') + ', ' + format(r['delta_p75'], '.3f') + ']':>20}")
  
@@ -1147,10 +1189,19 @@ class LabMixin:
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_alone_vs_clones.json"), "w") as f:
+        tag = f"alone_vs_{condition}"
+        with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_{tag}.json"), "w") as f:
             json.dump(payload, f, indent=2)
  
-        plot_alone_vs_clones(exp_dir=exp_dir)
+        if condition == "clones":
+            plot_alone_vs_clones(exp_dir=exp_dir)
+        else:
+            plot_alone_vs_clones(
+                exp_dir=exp_dir, tag=tag, prefixes=("alone", condition),
+                labels=("alone", "with inert peers"),
+                titre="Focal agent alone vs among inert peers "
+                      "(random policy, no consumption, frozen energy)",
+                fname=f"lab_{tag}_evolution.png")
         return table
 
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",

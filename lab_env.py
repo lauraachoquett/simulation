@@ -331,6 +331,46 @@ def launch_env_high_res_with_clones(agent_params,key_env,key_sim,cfg,model):
                                    env_file=env_file_pour(cfg, "high_res"))
     return state,outputs
     
+def launch_env_high_res_with_figurants(agent_params, key_env, key_sim, cfg, model):
+    """L'agent teste entoure de congeneres INERTES.
+
+    Trois figurants a politique aleatoire, qui ne consomment rien et ne perdent
+    pas d'energie. Ils sont indiscernables d'un vrai congenere pour l'agent
+    teste -- le canal "agents" de l'observation est binaire -- mais ils ne
+    prelevent aucune ressource et ne genent pas le deplacement (rien ne bloque
+    les collisions, cf. agent_mov.update_agent_position).
+
+    Ce qui distingue cet env de celui des clones : la ressource n'est pas
+    partagee. L'env clones confond deux mecanismes de sens contraires -- la
+    depletion mecanique, qui fait baisser la greediness, et l'eventuelle
+    eagerness sociale, qui la fait monter. Ici seule reste la seconde.
+
+    Parametres de ressource IDENTIQUES a high_res, et non quadruples comme dans
+    l'env clones : un seul agent consomme, donc la grille de depart doit etre la
+    meme que celle du temoin seul, sinon la comparaison appariee porte aussi sur
+    une difference d'abondance.
+    """
+    cfg = cfg._replace(
+        grid_length=30,
+        n_agents_max=5,        # slot 0 force mort, slot 1 teste, slots 2-4 figurants
+        n_agents_init=4,       # explicite : ne pas dependre du n_agents_init du run
+        n_figurants=3,
+        reproduction_on=False,
+        resources_growth=False,
+        pre_growth_step=200,
+        log_obs=True,
+    )
+    poison = ressource_la_plus_lente(cfg.resources)
+    cfg = cfg._replace(resources=tuple(
+        r.replace(init_number_of_resources=HIGH_RES_COUNTS.get(label_of(r.id), DEFAUT_COUNT),
+                  prob_factor=poison.prob_factor * HIGH_RES_GROWTH_SCALE,
+                  pop_res_prob=poison.pop_res_prob * HIGH_RES_GROWTH_SCALE)
+        for r in cfg.resources
+    ))
+    return launch_lab_env(agent_params, key_env, key_sim, cfg, model,
+                          env_file=env_file_pour(cfg, "high_res"))
+
+
 def launch_env_low_res(agent_params,key_env,key_sim,cfg,model):
     ### Low resources
     cfg = cfg._replace(
@@ -401,6 +441,9 @@ def vmap_over_agents_env_lab_low_res(list_agents_param,key_env,key_sim,model,cfg
 
 def vmap_over_agents_env_lab_high_res_with_clones(list_agents_param,key_env,key_sim,model,cfg):
     return vmap(launch_env_high_res_with_clones,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
+
+def vmap_over_agents_env_lab_high_res_with_figurants(list_agents_param,key_env,key_sim,model,cfg):
+    return vmap(launch_env_high_res_with_figurants,in_axes=(0,None,0,None,None))(list_agents_param,key_env,key_sim,cfg,model)
 
 def vmap_over_agents_env_lab_adapt(list_agents_param, key_env, key_sim, model, cfg):
     return vmap(launch_adaptation_env, in_axes=(0, None, 0, None, None))(
