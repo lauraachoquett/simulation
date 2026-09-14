@@ -225,6 +225,18 @@ def main():
                         "vit dans un autre dossier. Passer les experiences dans "
                         "l'ordre CHRONOLOGIQUE -- sur un numero de chunk present "
                         "des deux cotes, la derniere donnee l'emporte")
+    # Surcharges : un run anterieur a ces options n'en porte rien dans son
+    # config.json, donc load_config rend les defauts du Config -- pas de
+    # figurants, pas de geometries. Sans ces deux options il faudrait relancer
+    # la simulation pour mesurer ce qu'on peut mesurer sur ses checkpoints.
+    p.add_argument("--figurants", dest="lab_figurants",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="jouer (ou non) l'env a congeneres inertes, quoi qu'en "
+                        "dise la config du run")
+    p.add_argument("--lab-envs", dest="lab_envs", nargs="+", default=None,
+                   metavar="NPY",
+                   help="geometries de ressource a tester, quoi qu'en dise la "
+                        "config du run (defaut : celles qu'elle nomme)")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
@@ -240,6 +252,14 @@ def main():
         avertit_env_fige(cfg, exp_dir)
         if a.lab_time_steps:
             cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
+        if a.lab_figurants is not None:
+            cfg = cfg._replace(lab_figurants=a.lab_figurants)
+        if a.lab_envs is not None:
+            cfg = cfg._replace(lab_envs=tuple(a.lab_envs))
+        if cfg.lab_envs and len(cfg.resources) != 1:
+            print(f"  [attention] {len(cfg.lab_envs)} geometrie(s) demandee(s) "
+                  f"mais {len(cfg.resources)} ressources : elles seront ignorees, "
+                  "les environnements figes ne sont definis qu'a une ressource.")
         model = build_model(cfg)
         if a.merge:
             sortie = a.out or os.path.join(a.exp_dirs[0], "replay_merge")
