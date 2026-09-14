@@ -1206,7 +1206,8 @@ class LabMixin:
         génome (même ordre que agent_params / key_sim).
         """
         keys = ["age", "mean_rew", "mean_speed", "energy_end", "wall_death",
-                "died", "greediness", "adapt_score", "adapt_gain", "voisinage"]
+                "died", "greediness", "adapt_score", "adapt_gain", "voisinage",
+                "repro_rate"]
         B = outputs_lab.alive.shape[0]
         per_genome = {k: np.full(B, np.nan) for k in keys}
         n_peers    = np.zeros(B, dtype=int)

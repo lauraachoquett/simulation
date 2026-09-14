@@ -355,6 +355,9 @@ def main():
                                params, key_env, cles, model, cfg_c, a.batch)
             agg_low, summary_low = sd.data_lab_env_low_res(out_low)
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
+            # le MEME jeu de colonnes que les autres env : data_lab_env_low_res
+            # n'en garde que cinq, insuffisant pour une analyse commune
+            sd._save_pheno(sd.data_lab_env_grouped(out_low), sortie, "lowres")
             video(vmap_over_agents_env_lab_low_res, cfg_c, "low_res")
 
             # Une condition par geometrie, toutes de meme rang. Liste vide ->
@@ -366,26 +369,37 @@ def main():
             for geo in geometries:
                 stem = os.path.splitext(os.path.basename(geo))[0] if geo else ""
                 sfx = f"env_{stem}" if geo else ""
+                marque = f"_{stem}" if geo else ""     # suffixe des fichiers pheno
                 cfg_g = cfg_c if geo is None else cfg_c._replace(lab_env_high_res=geo)
 
                 out_high = par_lots(vmap_over_agents_env_lab_high_res,
                                     params, key_env, cles, model, cfg_g, a.batch)
                 agg, summary = sd.data_lab_env(out_high, resources=res)
                 sd._save_lab_data(agg, summary, sortie, suffix=sfx)
+                # un phenotype par GENOME : c'est ce que lit pca_phenotypes, et
+                # ce qui aligne la ligne b sur le meme genome d'un env a l'autre
+                pg_h = sd.data_lab_env_grouped(out_high, resources=res)
+                sd._save_pheno(pg_h, sortie, f"alone{marque}")
                 video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem)
 
                 out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
                                    params, key_env, cles, model, cfg_g, a.batch)
+                pg_c = sd.data_lab_env_grouped(out_clo, resources=res)
+                sd._save_pheno(pg_c, sortie, f"clones{marque}")
                 sd.compare_alone_vs_clones(out_high, out_clo, sortie,
-                                           condition="clones", suffix=sfx)
+                                           condition="clones", suffix=sfx,
+                                           a=pg_h, c=pg_c)
                 video(vmap_over_agents_env_lab_high_res_with_clones, cfg_g,
                       "clones", stem)
 
                 if cfg.lab_figurants:
                     out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
                                        params, key_env, cles, model, cfg_g, a.batch)
+                    pg_f = sd.data_lab_env_grouped(out_fig, resources=res)
+                    sd._save_pheno(pg_f, sortie, f"figurants{marque}")
                     sd.compare_alone_vs_clones(out_high, out_fig, sortie,
-                                               condition="figurants", suffix=sfx)
+                                               condition="figurants", suffix=sfx,
+                                               a=pg_h, c=pg_f)
                     video(vmap_over_agents_env_lab_high_res_with_figurants, cfg_g,
                           "figurants", stem)
 
