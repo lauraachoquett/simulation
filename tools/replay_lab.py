@@ -47,7 +47,8 @@ from simulation.simulation_data.core import simulation_data
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
                                     plot_alone_vs_clones)
 from simulation.utils.utils_sim import (load_config, load_checkpoint,
-                                        load_shuffle_log)
+                                        load_shuffle_log, VideoPayload)
+from simulation.utils.utils_video import save_chunk_video
 
 
 def checkpoints_de(exp_dir):
@@ -78,6 +79,19 @@ def resources_au_pas(cfg, exp_dir, step):
     i = sum(1 for e in log if e["step"] < int(step))
     par_id = {r.id: r for r in cfg.resources}
     return tuple(par_id[int(k)] for k in ordres[i])
+
+
+def payload_video(out, b, stride=1):
+    """Les cinq champs que save_chunk_video lit, pour le genome b.
+
+    On decoupe le genome AVANT de rapatrier : le pytree complet porte aussi
+    `obs`, journalise dans tous les env de lab, qui pese plus que tout le reste
+    reuni et que la video n'utilise pas.
+    """
+    take = lambda x: np.asarray(x[b][::stride])
+    return VideoPayload(grid=take(out.grid), position=take(out.position),
+                        born_step=take(out.born_step), alive=take(out.alive),
+                        step=take(out.step))
 
 
 def avertit_env_fige(cfg, exp_dir):
@@ -237,6 +251,12 @@ def main():
                    metavar="NPY",
                    help="geometries de ressource a tester, quoi qu'en dise la "
                         "config du run (defaut : celles qu'elle nomme)")
+    p.add_argument("--video", type=int, default=0, metavar="N",
+                   help="filmer les N premiers genomes de CHAQUE env et de "
+                        "chaque geometrie (defaut 0 = aucune video). Un rollout "
+                        "separe avec log_grid : garder N petit")
+    p.add_argument("--video-stride", type=int, default=1, metavar="S",
+                   help="une frame sur S (defaut %(default)s)")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
@@ -311,11 +331,31 @@ def main():
             print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
                   f"canaux [{canaux}]", flush=True)
 
+            def video(fn, cfg_x, nom_env, sous=""):
+                """Rollout SEPARE avec log_grid : celui de mesure ne journalise
+                pas la grille (2,7 Go a 3000 pas) et c'est elle que la video
+                dessine. Memes params et memes cles que la mesure, donc les N
+                premiers genomes y refont trait pour trait leur trajectoire."""
+                if not a.video:
+                    return
+                k = min(a.video, len(params))
+                _, out_v = fn(params[:k], key_env, cles[:k], model,
+                              cfg_x._replace(log_grid=True))
+                d = os.path.join(sortie, "videos", nom_env, sous)
+                os.makedirs(d, exist_ok=True)
+                for b in range(k):
+                    chemin = os.path.join(
+                        d, f"{nom_env}_chunk_{chunk}_lab_{b}.mp4")
+                    save_chunk_video(payload_video(out_v, b, a.video_stride),
+                                     chemin, fps=20, scale=10, resources=res)
+                    print(f"    video {chemin}", flush=True)
+
             # low_res : hors des geometries, il a sa propre grille
             out_low = par_lots(vmap_over_agents_env_lab_low_res,
                                params, key_env, cles, model, cfg_c, a.batch)
             agg_low, summary_low = sd.data_lab_env_low_res(out_low)
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
+            video(vmap_over_agents_env_lab_low_res, cfg_c, "low_res")
 
             # Une condition par geometrie, toutes de meme rang. Liste vide ->
             # une seule condition sans suffixe, c'est-a-dire le comportement
@@ -332,17 +372,22 @@ def main():
                                     params, key_env, cles, model, cfg_g, a.batch)
                 agg, summary = sd.data_lab_env(out_high, resources=res)
                 sd._save_lab_data(agg, summary, sortie, suffix=sfx)
+                video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem)
 
                 out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
                                    params, key_env, cles, model, cfg_g, a.batch)
                 sd.compare_alone_vs_clones(out_high, out_clo, sortie,
                                            condition="clones", suffix=sfx)
+                video(vmap_over_agents_env_lab_high_res_with_clones, cfg_g,
+                      "clones", stem)
 
                 if cfg.lab_figurants:
                     out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
                                        params, key_env, cles, model, cfg_g, a.batch)
                     sd.compare_alone_vs_clones(out_high, out_fig, sortie,
                                                condition="figurants", suffix=sfx)
+                    video(vmap_over_agents_env_lab_high_res_with_figurants, cfg_g,
+                          "figurants", stem)
 
         if not a.merge:
             tracer(sortie)
