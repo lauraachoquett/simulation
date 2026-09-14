@@ -37,28 +37,34 @@ def lab_data_de(chemin):
 
 
 def charge(data_dir, chunk_size):
-    """(age, repro, step) concatenes sur tous les chunks.
+    """{geometrie: (age, repro, step)}, "" pour la serie sans geometrie.
 
-    Les fichiers `_lowres` sont ecartes : l'env low_res ne porte pas repro_ready
-    et mesure l'exploration, pas la fecondite.
+    Le motif accepte `chunk_N.npz` et `chunk_N_env_<geo>.npz`, et ecarte donc
+    _lowres (l'env low_res ne porte pas repro_ready, il mesure l'exploration et
+    non la fecondite) comme _adapt_* et _pheno_*.
+
+    Une entree par geometrie : depuis que la simulation en joue plusieurs, il
+    n'existe plus de serie non suffixee, et une lecture qui n'attend que
+    `chunk_N.npz` ne trouve plus rien du tout.
     """
-    age, repro, step = [], [], []
+    par_geo = {}
     for f in sorted(glob.glob(os.path.join(data_dir, "chunk_*.npz"))):
-        base = os.path.basename(f)
-        m = re.fullmatch(r"chunk_(\d+)\.npz", base)       # exclut _lowres, _adapt_*
+        m = re.fullmatch(r"chunk_(\d+)(?:_env_(.+))?\.npz", os.path.basename(f))
         if not m:
             continue
         d = np.load(f)
         if "repro_ready" not in d.files:
+            d.close()
             continue
+        geo = m.group(2) or ""
+        a, r, s_ = par_geo.setdefault(geo, ([], [], []))
         n = len(d["age"])
-        age.append(np.asarray(d["age"], float))
-        repro.append(np.asarray(d["repro_ready"], float))
-        step.append(np.full(n, int(m.group(1)) * chunk_size, float))
+        a.append(np.asarray(d["age"], float))
+        r.append(np.asarray(d["repro_ready"], float))
+        s_.append(np.full(n, int(m.group(1)) * chunk_size, float))
         d.close()
-    if not age:
-        return None
-    return (np.concatenate(age), np.concatenate(repro), np.concatenate(step))
+    return {g: tuple(np.concatenate(v) for v in trois)
+            for g, trois in par_geo.items()}
 
 
 def court(v):
@@ -88,6 +94,11 @@ def main():
     p.add_argument("source", help="dossier de fusion, d'experience, ou lab_data")
     p.add_argument("-o", "--out", default=None,
                    help="fichier de sortie (defaut <source>/fig/repro_vs_age.png)")
+    p.add_argument("--pas", type=int, default=None, metavar="N",
+                   help="largeur des tranches en PAS de simulation (ex. 200000). "
+                        "Tranches comparables entre elles et entre experiences, "
+                        "contrairement a --tranches dont la duree depend de la "
+                        "cadence des checkpoints. Les tranches vides sont retirees")
     p.add_argument("--tranches", type=int, default=6,
                    help="nombre de vignettes, decoupees en tranches de PAS "
                         "d'effectif egal (defaut %(default)s)")
@@ -128,22 +139,40 @@ def main():
         chunk_size = 1000
         print("[info] chunk_size non trouve, 1000 suppose (--chunk-size pour forcer)")
 
-    d = charge(data_dir, chunk_size)
-    if d is None:
+    series = charge(data_dir, chunk_size)
+    if not series:
         print(f"{data_dir} : aucun fichier ne porte repro_ready. Ces donnees "
               "sont anterieures a son ajout, il faut rejouer le lab.")
         return
-    age, repro, step = d
+
+    for geo, (age, repro, step) in sorted(series.items()):
+        trace_serie(a, age, repro, step, geo)
+
+
+def trace_serie(a, age, repro, step, geo):
+    """Une figure pour une geometrie. `geo` vide = serie sans geometrie."""
+    titre_geo = f"   [{geo}]" if geo else ""
+    print(f"\n=== {geo or 'reference'}")
     nuls = int((repro == 0).sum())
     print(f"{len(age)} genomes, {len(np.unique(step))} instants, "
           f"{nuls} a zero descendant ({100*nuls/len(age):.0f} %)")
 
-    # Tranches a EFFECTIF egal et non a duree egale : les checkpoints ne sont pas
-    # forcement reguliers, et une tranche vide ferait une vignette blanche.
-    pas_uniques = np.unique(step)
-    k = min(a.tranches, len(pas_uniques))
-    bornes = np.quantile(step, np.linspace(0, 1, k + 1))
-    bornes[0] -= 1                               # inclure le premier instant
+    if a.pas:
+        # Tranches de LARGEUR FIXE en pas de simulation : comparables entre
+        # elles et entre experiences, contrairement aux tranches a effectif egal
+        # dont la duree depend de la cadence des checkpoints. Les tranches vides
+        # sont retirees plus bas, sinon elles donneraient des vignettes blanches.
+        bornes = np.arange(0, step.max() + a.pas, a.pas, dtype=float)
+        bornes = bornes[bornes <= step.max() + a.pas]
+        bornes[0] -= 1
+    else:
+        # Tranches a EFFECTIF egal et non a duree egale : les checkpoints ne sont
+        # pas forcement reguliers, et une tranche vide ferait une vignette blanche.
+        pas_uniques = np.unique(step)
+        k = min(a.tranches, len(pas_uniques))
+        bornes = np.quantile(step, np.linspace(0, 1, k + 1))
+        bornes[0] -= 1                           # inclure le premier instant
+    k = len(bornes) - 1
 
     r_max = (a.repro_max if a.repro_max is not None
              else int(max(np.ceil(np.quantile(repro, 0.99)), 1)))
@@ -157,10 +186,15 @@ def main():
     grilles = []
     for i in range(k):
         m = (step > bornes[i]) & (step <= bornes[i + 1])
+        if not m.any():        # tranche vide : une vignette blanche n'apprend rien
+            continue
         h, _, _ = np.histogram2d(age[m], repro[m], bins=[bx, by])
         grilles.append((h / max(m.sum(), 1), int(m.sum()),
-                        step[m].min() if m.any() else 0,
-                        step[m].max() if m.any() else 0))
+                        step[m].min(), step[m].max(), bornes[i], bornes[i + 1]))
+    k = len(grilles)
+    if not k:
+        print("  aucune tranche non vide")
+        return
     # Plafond au quantile des cases NON VIDES, pas au maximum : une seule case
     # tres peuplee -- le paquet a zero descendant, souvent -- compressait tout le
     # reste dans le pale. Et echelle en racine : les densites s'etalent sur deux
@@ -186,12 +220,12 @@ def main():
     for ax in axes.ravel()[k:]:
         ax.axis("off")
 
-    for i, (h, n, s0, s1) in enumerate(grilles):
+    for i, (h, n, s0, s1, b0, b1) in enumerate(grilles):
         ax = axes[i // cols][i % cols]
         im = ax.pcolormesh(bx, by, np.where(h.T > 0, h.T, np.nan), cmap=cmap,
                            norm=norm, shading="flat")
         # mediane par casier d'age : la tendance, sur les valeurs exactes
-        m = (step > bornes[i]) & (step <= bornes[i + 1])
+        m = (step > b0) & (step <= b1)
         centres, med = [], []
         for j in range(len(bx) - 1):
             sel = m & (age >= bx[j]) & (age < bx[j + 1])
@@ -225,18 +259,22 @@ def main():
     echelle = (f"colour: power \u03b3={a.gamma:g}, "
                f"clipped at p{100*a.clip:.0f}")
     if petit:
-        fig.suptitle("Potential offspring against lifespan, over time"
+        fig.suptitle(f"Potential offspring against lifespan, over time{titre_geo}"
                      f"   —   {len(age)} genomes total   —   {echelle}",
                      fontsize=12)
     else:
-        fig.suptitle("Potential offspring against lifespan, over time\n"
+        fig.suptitle(f"Potential offspring against lifespan, over time{titre_geo}\n"
                      f"{len(age)} genomes — {nuls} with none "
                      f"({100*nuls/len(age):.0f} %)"
                      + (f" — {hors} above {r_max}, off scale" if hors else "")
                      + f" — shared scale, {echelle}",
                      fontsize=12.5)
 
-    sortie = a.out or os.path.join(a.source, "fig", "repro_vs_age.png")
+    suffixe = f"_{geo}" if geo else ""
+    sortie = a.out or os.path.join(a.source, "fig", f"repro_vs_age{suffixe}.png")
+    if a.out and geo:        # plusieurs geometries dans un seul --out
+        base, ext = os.path.splitext(a.out)
+        sortie = f"{base}{suffixe}{ext}"
     os.makedirs(os.path.dirname(sortie) or ".", exist_ok=True)
     fig.savefig(sortie, dpi=150)
     plt.close(fig)
