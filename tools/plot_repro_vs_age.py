@@ -173,6 +173,16 @@ def trace_serie(a, age, repro, step, geo):
         bornes = np.quantile(step, np.linspace(0, 1, k + 1))
         bornes[0] -= 1                           # inclure le premier instant
     k = len(bornes) - 1
+    # Dire l'etendue reelle et le decoupage : une tranche unique vient presque
+    # toujours d'un --pas plus large que la duree couverte, ou d'un chunk_size
+    # mal devine -- deux causes invisibles autrement.
+    print(f"  pas de simulation : {step.min():.0f} a {step.max():.0f} "
+          f"(chunk_size deduit), {k} tranche(s) de "
+          + (f"{a.pas}" if a.pas else "effectif egal"))
+    if a.pas and k <= 1:
+        print(f"  [attention] une seule tranche : --pas {a.pas} couvre toute "
+              f"l'etendue ({step.max()-step.min():.0f} pas). En prendre un plus "
+              "petit, ou verifier --chunk-size.")
 
     r_max = (a.repro_max if a.repro_max is not None
              else int(max(np.ceil(np.quantile(repro, 0.99)), 1)))
