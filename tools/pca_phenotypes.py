@@ -34,6 +34,7 @@ La PCA est faite par SVD numpy et non par sklearn : cinq lignes, un resultat
 identique, et une dependance de moins pour un outil qui doit tourner partout.
 """
 import argparse
+import fnmatch
 import glob
 import json
 import os
@@ -54,6 +55,16 @@ import numpy as np
 # avec mean_rew.
 VARS_DEFAUT = ("age", "mean_rew", "mean_speed", "energy_end",
                "greediness", "repro_rate", "voisinage")
+
+# Regroupements par defaut de --groupes. La coupure est SOLITAIRE / SOCIAL et
+# non high_res / low_res : low_res n'a qu'un agent vivant (n_agents_max=2, cf.
+# launch_env_low_res), il appartient donc au meme monde que les alone_*. Les
+# melanger aux env sociaux ferait de PC1 un axe "y a-t-il quelqu'un", ce qui est
+# vrai mais tautologique -- voisinage vaut 0 par construction d'un cote.
+GROUPES = {
+    "solo":   ("alone_*", "lowres"),
+    "social": ("clones_*", "figurants_*"),
+}
 
 
 def lab_data_de(chemin):
@@ -81,6 +92,12 @@ def familles(data_dir):
         if m:
             out.append((m.group(2), int(m.group(1)), f))
     return sorted(out)
+
+
+def filtre(fichiers, motifs):
+    """Garde les environnements correspondant a un motif (glob ou nom exact)."""
+    return [t for t in fichiers
+            if any(fnmatch.fnmatch(t[0], m) for m in motifs)]
 
 
 def charge(fichiers, noms, extra=None):
@@ -265,14 +282,22 @@ def main():
     p.add_argument("--vars", nargs="+", default=list(VARS_DEFAUT),
                    help=f"mesures retenues (defaut : {' '.join(VARS_DEFAUT)})")
     p.add_argument("--envs", nargs="+", default=None, metavar="ENV",
-                   help="restreindre a ces environnements (ex. alone_scatter40_s0 "
-                        "lowres). Defaut : tous ceux trouves")
+                   help="restreindre a ces environnements. Motifs glob acceptes "
+                        "(ex. 'alone_*' lowres). Defaut : tous ceux trouves")
     p.add_argument("--color", default=None, metavar="COL",
                    help="colonne du npz servant a colorer le nuage, SANS entrer "
                         "dans la PCA. Defaut : une couleur par environnement. "
                         "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
                         "arrive des que la mortalite tire toutes les mesures "
                         "ensemble")
+    p.add_argument("--groupes", action="store_true",
+                   help="un plan par groupe : `solo` (alone_* et lowres) et "
+                        "`social` (clones_* et figurants_*). Les axes sont "
+                        "communs a l'interieur d'un groupe, donc ses "
+                        "environnements y sont comparables")
+    p.add_argument("--nom", default=None, metavar="NOM",
+                   help="nom du fichier de sortie, pour un groupement ad hoc "
+                        "fait a la main avec --envs")
     p.add_argument("--par-env", action="store_true",
                    help="une PCA SEPAREE par environnement, avec ses propres "
                         "axes, au lieu d'un plan commun. Decrit mieux la "
@@ -290,7 +315,7 @@ def main():
             "Ces fichiers sont ecrits depuis l'ajout de _save_pheno : refaire "
             "la passe de rejeu pour les produire.")
     if a.envs:
-        fichiers = [t for t in fichiers if t[0] in set(a.envs)]
+        fichiers = filtre(fichiers, a.envs)
         if not fichiers:
             raise SystemExit(f"Aucun environnement parmi {a.envs}")
     trouves = sorted({e for e, _, _ in fichiers})
@@ -298,6 +323,21 @@ def main():
     print(f"{len(trouves)} environnement(s) : {', '.join(trouves)}")
 
     fig_dir = a.out or os.path.join(a.source, "fig")
+    if a.groupes:
+        # Un plan par groupe : les axes sont communs A L'INTERIEUR d'un groupe,
+        # donc les environnements y sont comparables entre eux -- ce qui n'est
+        # pas le cas d'une figure a l'autre.
+        for nom, motifs in GROUPES.items():
+            sous = filtre(fichiers, motifs)
+            if not sous:
+                print(f"\n=== {nom} : aucun environnement, saute")
+                continue
+            noms = sorted({e for e, _, _ in sous})
+            print(f"\n=== {nom} : {', '.join(noms)}")
+            analyse(sous, a, fig_dir, titre_suffixe=f"   [{nom}]",
+                    fichier=f"pca_phenotypes_{nom}.png")
+        return
+
     if a.par_env:
         # Une PCA PAR environnement, axes propres a chacun. Utile pour decrire
         # la variation interne d'un contexte -- mais les positions ne sont alors
@@ -310,8 +350,8 @@ def main():
                     fichier=f"pca_phenotypes_{nom}.png", par_chunk=True)
         return
 
-    analyse(fichiers, a, fig_dir,
-            titre_suffixe="", fichier="pca_phenotypes_all_envs.png")
+    analyse(fichiers, a, fig_dir, titre_suffixe=f"   [{a.nom}]" if a.nom else "",
+            fichier=f"pca_phenotypes_{a.nom or 'all_envs'}.png")
 
 
 def analyse(fichiers, a, fig_dir, titre_suffixe, fichier, par_chunk=False):
