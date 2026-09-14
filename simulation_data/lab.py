@@ -1055,7 +1055,13 @@ class LabMixin:
         keys = ["age", "total_rew", "mean_rew", "total_move",
                 "mean_speed", "energy_end", "wall_death", "died",
                 "greediness", "adapt_score", "adapt_gain",
-                "repro_ready", "repro_rate"]
+                "repro_ready", "repro_rate",
+                # par agent aussi, pas seulement en resume : ce sont les
+                # colonnes qu'une analyse multivariee (tools/pca_phenotypes)
+                # croise avec le reste. greed_Tr / greed_Cr disent si un G bas
+                # vient du denominateur (peu d'occasions) ou du numerateur
+                # (occasions ratees) -- la distinction que la mediane de G perd.
+                "voisinage", "greed_Tr", "greed_Cr"]
         agg = {k: [] for k in keys}
  
         B = outputs_lab.alive.shape[0]          # nb d'environnements = nb d'agents testés
