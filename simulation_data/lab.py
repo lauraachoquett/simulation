@@ -356,47 +356,10 @@ class LabMixin:
                                  key_sim[:N_FILM], model, cfg or cfg_v)
                 return out
 
-            # ============ 1) HIGH_RES (agent seul) ============
-            final_state, outputs_high = vmap_over_agents_env_lab_high_res(
-                agent_params, key_env, key_sim, model, cfg_m)
-            agg, summary = self.data_lab_env(outputs_lab=outputs_high)
-            self._save_lab_data(agg, summary, exp_dir)
-
-            plot_lab_metrics(exp_dir=exp_dir)
-            self._plot_energy(outputs_high, exp_dir, "high_res",
-                            "lab_1 — high_res (agent alone)")
-
-            vid_high = rollout_video(vmap_over_agents_env_lab_high_res)
-            for b in range(min(2, N_FILM)):
-                vid = os.path.join(exp_dir, "videos", "high",
-                                f"high_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                submit_video(outputs_to_numpy(agent_slice(vid_high, b)), vid, 20, 10,
-                            self.cfg.resources,
-                            label=f"high_res_chunk_{self.chunk_idx}_lab_{b}")
-
-            # ============ 1bis) GEOMETRIES SUPPLEMENTAIRES ============
-            # Les MEMES genomes, memes cles, dans d'autres dispositions de la
-            # ressource (semis, amas, gros amas). Seule la geometrie change --
-            # toutes les grilles portent le meme nombre de cases -- donc un ecart
-            # entre deux series dit ce que la population sait exploiter, et non
-            # ce qu'on lui a donne. Une figure par geometrie, series separees.
-            for nom in self.cfg.lab_envs_high_res:
-                stem = os.path.splitext(os.path.basename(nom))[0]
-                cfg_g = cfg_m._replace(lab_env_high_res=nom)
-                if env_file_pour(cfg_g, "high_res") is None:
-                    print(f"[lab] geometrie {stem} ignoree : les env figes ne sont "
-                          f"definis qu'a une ressource "
-                          f"({len(self.cfg.resources)} ici)")
-                    continue
-                _, out_g2 = vmap_over_agents_env_lab_high_res(
-                    agent_params, key_env, key_sim, model, cfg_g)
-                agg_g, summary_g = self.data_lab_env(outputs_lab=out_g2)
-                self._save_lab_data(agg_g, summary_g, exp_dir, suffix=f"env_{stem}")
-                # figure PROPRE a cette geometrie : plot_lab_metrics filtre par
-                # suffixe exact et ecrit lab_metrics_evolution_env_<nom>.png
-                plot_lab_metrics(exp_dir=exp_dir, suffix=f"env_{stem}")
-
-            # ============ 2) LOW_RES (exploration) ============
+            # ============ LOW_RES (exploration) ============
+            # Hors de la boucle des geometries : low_res pose une autre question
+            # -- trouver la ressource quand elle est rare -- et a sa propre
+            # grille (lab_env_low_res), pas une des dispositions a 40 cases.
             final_state, outputs_low = vmap_over_agents_env_lab_low_res(
                 agent_params, key_env, key_sim, model, cfg_m)
             agg_low, summary_low = self.data_lab_env_low_res(outputs_low)
@@ -404,7 +367,7 @@ class LabMixin:
 
             plot_lab_exploration(exp_dir=exp_dir)
             self._plot_energy(outputs_low, exp_dir, "low_res",
-                            "lab_2 — low_res (exploration)")
+                            "low_res (exploration)")
 
             vid_low = rollout_video(vmap_over_agents_env_lab_low_res)
             for b in range(N_FILM):
@@ -414,44 +377,103 @@ class LabMixin:
                             self.cfg.resources,
                             label=f"low_res_chunk_{self.chunk_idx}_lab_{b}")
 
-            # ============ 3) CLONES (effet des pairs) ============
-            final_state, outputs_clones = vmap_over_agents_env_lab_high_res_with_clones(
-                agent_params, key_env, key_sim, model, cfg_m)
-            # comparaison APPARIÉE avec l'env high_res (mêmes génomes, même ordre) :
-            self.compare_alone_vs_clones(outputs_high, outputs_clones, exp_dir)
-            self._plot_energy(outputs_clones, exp_dir, "high_res_clones",
-                            "lab_3 — high_res with clones")
+            # ============ GEOMETRIES x CONDITIONS ============
+            # Les geometries sont des conditions de MEME RANG : aucune n'est une
+            # reference dont les autres seraient l'ecart. Chacune est jouee dans
+            # les trois conditions sociales -- seul, clones, figurants -- et la
+            # comparaison appariee se fait A L'INTERIEUR d'une geometrie, ce qui
+            # est le seul appariement qui ait un sens : comparer des clones en
+            # amas a un agent seul en semis melangerait les deux effets.
+            #
+            # Liste vide, ou plus d'une ressource : une seule condition, sans
+            # suffixe, et le comportement est exactement celui d'avant.
+            geometries = (None,)
+            if self.cfg.lab_envs:
+                if len(self.cfg.resources) == 1:
+                    geometries = tuple(self.cfg.lab_envs)
+                else:
+                    # le dire : la liste est renseignee et ne sert a rien, ce que
+                    # rien d'autre ne signalerait
+                    print(f"[lab] {len(self.cfg.lab_envs)} geometrie(s) ignoree(s) : "
+                          f"les environnements figes ne sont definis qu'a une "
+                          f"ressource ({len(self.cfg.resources)} ici)")
+            outputs_high = vid_high = None
 
-            # self.plot_energy_response_labs(outputs_high, outputs_low, outputs_clones, exp_dir)
-            vid_clones = rollout_video(vmap_over_agents_env_lab_high_res_with_clones)
-            for b in range(N_FILM):
-                vid = os.path.join(exp_dir, "videos", "high_res_clones",
-                                f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                submit_video(outputs_to_numpy(agent_slice(vid_clones, b)), vid, 20, 10,
-                            self.cfg.resources,
-                            label=f"clones_chunk_{self.chunk_idx}_lab_{b}")
+            for geo in geometries:
+                stem = os.path.splitext(os.path.basename(geo))[0] if geo else ""
+                sfx  = f"env_{stem}" if geo else ""
+                titre_geo = f" [{stem}]" if geo else ""
+                dossier = f"/{stem}" if geo else ""
+                cfg_g = cfg_m if geo is None else cfg_m._replace(lab_env_high_res=geo)
+                cfg_gv = cfg_v if geo is None else cfg_v._replace(lab_env_high_res=geo)
+                # ---- seul ----
+                _, out_h = vmap_over_agents_env_lab_high_res(
+                    agent_params, key_env, key_sim, model, cfg_g)
+                agg, summary = self.data_lab_env(outputs_lab=out_h)
+                self._save_lab_data(agg, summary, exp_dir, suffix=sfx)
+                plot_lab_metrics(exp_dir=exp_dir, suffix=sfx)
+                self._plot_energy(out_h, exp_dir, f"high_res{dossier}",
+                                  f"high_res (agent alone){titre_geo}")
+                plot_metric_pairs(self.data_lab_env_grouped(out_h), exp_dir,
+                                  self.chunk_idx,
+                                  titre=f"high_res (agent alone){titre_geo}")
 
-            # ============ 3bis) FIGURANTS (effet social SANS depletion) ============
-            # Meme protocole que les clones, mais les pairs ne consomment rien :
-            # l'ecart avec le temoin seul ne peut donc plus venir de la ressource
-            # qu'ils auraient prise. C'est ce bras-la qui repond a "la presence de
-            # congeneres fait-elle manger davantage", que l'env clones confond
-            # avec la depletion.
-            if self.cfg.lab_figurants:
-                final_state, outputs_fig = vmap_over_agents_env_lab_high_res_with_figurants(
-                    agent_params, key_env, key_sim, model, cfg_m)
-                self.compare_alone_vs_clones(outputs_high, outputs_fig, exp_dir,
-                                             condition="figurants")
-                self._plot_energy(outputs_fig, exp_dir, "high_res_figurants",
-                                  "lab_4 — high_res with inert peers")
-
-                vid_fig = rollout_video(vmap_over_agents_env_lab_high_res_with_figurants)
-                for b in range(N_FILM):
-                    vid = os.path.join(exp_dir, "videos", "high_res_figurants",
-                                    f"high_res_figurants_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
-                    submit_video(outputs_to_numpy(agent_slice(vid_fig, b)), vid, 20, 10,
+                vid_h = rollout_video(vmap_over_agents_env_lab_high_res, cfg_gv)
+                for b in range(min(2, N_FILM)):
+                    vid = os.path.join(exp_dir, "videos", f"high{dossier}",
+                                    f"high_res_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                    submit_video(outputs_to_numpy(agent_slice(vid_h, b)), vid, 20, 10,
                                 self.cfg.resources,
-                                label=f"figurants_chunk_{self.chunk_idx}_lab_{b}")
+                                label=f"high_res{titre_geo}_chunk_{self.chunk_idx}_lab_{b}")
+
+                # ---- clones : pairs identiques, qui CONSOMMENT ----
+                _, out_c = vmap_over_agents_env_lab_high_res_with_clones(
+                    agent_params, key_env, key_sim, model, cfg_g)
+                self.compare_alone_vs_clones(out_h, out_c, exp_dir,
+                                             condition="clones", suffix=sfx)
+                self._plot_energy(out_c, exp_dir, f"high_res_clones{dossier}",
+                                  f"high_res with clones{titre_geo}")
+
+                vid_c = rollout_video(vmap_over_agents_env_lab_high_res_with_clones, cfg_gv)
+                for b in range(N_FILM):
+                    vid = os.path.join(exp_dir, "videos", f"high_res_clones{dossier}",
+                                    f"high_res_clones_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                    submit_video(outputs_to_numpy(agent_slice(vid_c, b)), vid, 20, 10,
+                                self.cfg.resources,
+                                label=f"clones{titre_geo}_chunk_{self.chunk_idx}_lab_{b}")
+
+                # ---- figurants : pairs inertes, qui ne consomment RIEN ----
+                if self.cfg.lab_figurants:
+                    _, out_f = vmap_over_agents_env_lab_high_res_with_figurants(
+                        agent_params, key_env, key_sim, model, cfg_g)
+                    self.compare_alone_vs_clones(out_h, out_f, exp_dir,
+                                                 condition="figurants", suffix=sfx)
+                    self._plot_energy(out_f, exp_dir, f"high_res_figurants{dossier}",
+                                      f"high_res with inert peers{titre_geo}")
+
+                    vid_f = rollout_video(
+                        vmap_over_agents_env_lab_high_res_with_figurants, cfg_gv)
+                    for b in range(N_FILM):
+                        vid = os.path.join(exp_dir, "videos", f"high_res_figurants{dossier}",
+                                        f"high_res_figurants_video_chunk_{self.chunk_idx}_lab_{b}.mp4")
+                        submit_video(outputs_to_numpy(agent_slice(vid_f, b)), vid, 20, 10,
+                                    self.cfg.resources,
+                                    label=f"figurants{titre_geo}_chunk_{self.chunk_idx}_lab_{b}")
+
+                # ---- memoire coupee, DANS CETTE GEOMETRIE ----
+                # L'ablation au moment du test et non a l'evolution : memes
+                # genomes, memes cles, seul ablate_recurrence differe.
+                if self.cfg.lab_memory_ablation:
+                    _, out_abl = vmap_over_agents_env_lab_high_res(
+                        agent_params, key_env, key_sim, model,
+                        cfg_g._replace(ablate_recurrence=True))
+                    self.compare_memory(out_h, out_abl, exp_dir, suffix=sfx)
+
+                if geo is None:
+                    # seul cas ou les blocs a plusieurs ressources ci-dessous
+                    # tournent (simplex, adaptation) : ils ont alors une unique
+                    # condition a laquelle se rattacher
+                    outputs_high, vid_high = out_h, vid_h
 
             # ============ 4) ADAPTATION (rotations des canaux) ============
             # A une seule ressource aucune permutation n'existe : l'experience
@@ -472,23 +494,26 @@ class LabMixin:
             # le controle de l'adaptation intra-vie : si la baisse persiste sans
             # memoire, elle ne vient pas d'un apprentissage. Ablation au moment
             # du TEST et non a l'evolution, pour que la comparaison reste appariee.
-            outputs_adapt_abl = outputs_high_abl = None
-            if self.cfg.lab_memory_ablation:
+            # L'ablation sur high_res est faite dans la boucle des geometries,
+            # une par geometrie. Ne reste ici que le bras ADAPT, qui demande des
+            # rotations et n'existe donc qu'a plus d'une ressource.
+            outputs_adapt_abl = None
+            if self.cfg.lab_memory_ablation and rotations:
                 cfg_abl = cfg_m._replace(ablate_recurrence=True)   # grille non journalisee aussi
-                # seul le bras ADAPT demande des rotations ; la comparaison de
-                # memoire sur high_res, elle, tient a une seule ressource
-                if rotations:
-                    _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
-                        agent_params, key_env, key_sim, model, cfg_abl)
-                _, outputs_high_abl = vmap_over_agents_env_lab_high_res(
+                _, outputs_adapt_abl = vmap_over_agents_env_lab_adapt(
                     agent_params, key_env, key_sim, model, cfg_abl)
-                self.compare_memory(outputs_high, outputs_high_abl, exp_dir)
 
             # Controle apparie : lab_1 partage agent_params / key_env / key_sim et
             # le meme in_axes que l'env adapt -> l'index b designe le MEME genome
             # dans les deux, seule la permutation des canaux differe.
             if rotations:
                 vid_adapt = rollout_video(vmap_over_agents_env_lab_adapt)
+
+            # outputs_high n'est renseigne que pour la condition sans geometrie
+            # nommee -- c'est-a-dire des qu'il y a plus d'une ressource, seul cas
+            # ou simplex et adaptation ont un objet.
+            if outputs_high is None:
+                return
 
             eaten_baseline = self.eaten_by_type(outputs_high)
             baseline_ids   = [r.id for r in self.cfg.resources]
@@ -1157,7 +1182,7 @@ class LabMixin:
     #  MODIFIÉ — B) EFFET DES PAIRS (env clones)
     # =================================================================
     def compare_alone_vs_clones(self, outputs_alone, outputs_clones, exp_dir,
-                                condition="clones"):
+                                condition="clones", suffix=""):
         """Compare, PAR GÉNOME, le comportement SEUL (high_res) vs EN GROUPE.
         Les deux rollouts partagent agent_params/key_env/key_sim dans
         le même ordre -> tableaux alignés par génome -> comparaison APPARIÉE :
@@ -1171,7 +1196,11 @@ class LabMixin:
         "clones" (pairs identiques qui CONSOMMENT) ou "figurants" (congeneres
         inertes). Les deux repondent a des questions differentes -- le premier
         melange depletion et effet social, le second ne garde que le social --
-        et doivent donc rester deux series distinctes."""
+        et doivent donc rester deux series distinctes.
+
+        `suffix` indexe la GEOMETRIE : l'appariement se fait a l'interieur d'une
+        geometrie, jamais entre deux, sans quoi l'ecart melangerait l'effet des
+        pairs et celui de la disposition."""
         a = self.data_lab_env_grouped(outputs_alone)
         c = self.data_lab_env_grouped(outputs_clones)
  
@@ -1211,19 +1240,21 @@ class LabMixin:
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
         payload = {"chunk": self.chunk_idx + 1, "metrics": table}
-        tag = f"alone_vs_{condition}"
+        tag = (f"{suffix}_alone_vs_{condition}" if suffix
+               else f"alone_vs_{condition}")
         with open(os.path.join(data_dir, f"chunk_{self.chunk_idx}_{tag}.json"), "w") as f:
             json.dump(payload, f, indent=2)
  
-        if condition == "clones":
-            plot_alone_vs_clones(exp_dir=exp_dir)
-        else:
-            plot_alone_vs_clones(
-                exp_dir=exp_dir, tag=tag, prefixes=("alone", condition),
-                labels=("alone", "with inert peers"),
-                titre="Focal agent alone vs among inert peers "
-                      "(random policy, no consumption, frozen energy)",
-                fname=f"lab_{tag}_evolution.png")
+        geo = f"  [{suffix[4:]}]" if suffix.startswith("env_") else ""
+        titres = {"clones": "Focal agent alone vs among identical clones",
+                  "figurants": "Focal agent alone vs among inert peers "
+                               "(random policy, no consumption, frozen energy)"}
+        etiq = {"clones": "clones (median of peers)", "figurants": "with inert peers"}
+        plot_alone_vs_clones(
+            exp_dir=exp_dir, tag=tag, prefixes=("alone", condition),
+            labels=("alone", etiq.get(condition, condition)),
+            titre=titres.get(condition, f"Focal agent alone vs {condition}") + geo,
+            fname=f"lab_{tag}_evolution.png")
         return table
 
     def compare_memory(self, outputs_full, outputs_abl, exp_dir, suffix="",

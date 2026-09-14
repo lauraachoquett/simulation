@@ -176,15 +176,23 @@ def tracer(sortie):
     for suf in sorted(suffixes):
         plot_lab_metrics(exp_dir=sortie, suffix=suf)
     plot_lab_exploration(exp_dir=sortie)
-    plot_alone_vs_clones(exp_dir=sortie)
-    # l'env a figurants n'est pas toujours joue : plot_alone_vs_clones sort en
-    # silence s'il ne trouve aucun fichier de cette famille
-    plot_alone_vs_clones(
-        exp_dir=sortie, tag="alone_vs_figurants",
-        prefixes=("alone", "figurants"), labels=("alone", "with inert peers"),
-        titre="Focal agent alone vs among inert peers "
-              "(random policy, no consumption, frozen energy)",
-        fname="lab_alone_vs_figurants_evolution.png")
+    # Familles alone_vs_* decouvertes sur disque : elles portent le suffixe de
+    # geometrie, et figurants n'est pas toujours joue.
+    etiq = {"clones": "clones (median of peers)", "figurants": "with inert peers"}
+    tags = set()
+    for f in glob.glob(os.path.join(sortie, "lab_data", "chunk_*_alone_vs_*.json")):
+        m = re.fullmatch(r"chunk_\d+_((?:env_.+_)?alone_vs_(\w+))\.json",
+                         os.path.basename(f))
+        if m:
+            tags.add((m.group(1), m.group(2)))
+    for tag, cond in sorted(tags):
+        plot_alone_vs_clones(
+            exp_dir=sortie, tag=tag, prefixes=("alone", cond),
+            labels=("alone", etiq.get(cond, cond)),
+            titre=f"Focal agent alone vs {cond}"
+                  + (f"  [{tag[4:-len('_alone_vs_' + cond)]}]"
+                     if tag.startswith("env_") else ""),
+            fname=f"lab_{tag}_evolution.png")
     print(f"Figures dans {os.path.join(sortie, 'fig')}")
 
 
@@ -283,36 +291,38 @@ def main():
             print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
                   f"canaux [{canaux}]", flush=True)
 
-            out_high = par_lots(vmap_over_agents_env_lab_high_res,
-                                params, key_env, cles, model, cfg_c, a.batch)
+            # low_res : hors des geometries, il a sa propre grille
             out_low = par_lots(vmap_over_agents_env_lab_low_res,
                                params, key_env, cles, model, cfg_c, a.batch)
-            out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
-                               params, key_env, cles, model, cfg_c, a.batch)
-
-            agg, summary = sd.data_lab_env(out_high, resources=res)
-            sd._save_lab_data(agg, summary, sortie)
-
-            # geometries supplementaires : memes genomes, memes cles, une serie
-            # par disposition de la ressource
-            for nom_env in cfg.lab_envs_high_res:
-                stem = os.path.splitext(os.path.basename(nom_env))[0]
-                cfg_g = cfg_c._replace(lab_env_high_res=nom_env)
-                out_g = par_lots(vmap_over_agents_env_lab_high_res,
-                                 params, key_env, cles, model, cfg_g, a.batch)
-                agg_g, sum_g = sd.data_lab_env(out_g, resources=res)
-                sd._save_lab_data(agg_g, sum_g, sortie, suffix=f"env_{stem}")
-
             agg_low, summary_low = sd.data_lab_env_low_res(out_low)
             sd._save_lab_data(agg_low, summary_low, sortie, suffix="lowres")
 
-            sd.compare_alone_vs_clones(out_high, out_clo, sortie)
+            # Une condition par geometrie, toutes de meme rang. Liste vide ->
+            # une seule condition sans suffixe, c'est-a-dire le comportement
+            # d'avant.
+            geometries = (tuple(cfg.lab_envs)
+                          if len(cfg_c.resources) == 1 and cfg.lab_envs
+                          else (None,))
+            for geo in geometries:
+                stem = os.path.splitext(os.path.basename(geo))[0] if geo else ""
+                sfx = f"env_{stem}" if geo else ""
+                cfg_g = cfg_c if geo is None else cfg_c._replace(lab_env_high_res=geo)
 
-            if cfg.lab_figurants:
-                out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
-                                   params, key_env, cles, model, cfg_c, a.batch)
-                sd.compare_alone_vs_clones(out_high, out_fig, sortie,
-                                           condition="figurants")
+                out_high = par_lots(vmap_over_agents_env_lab_high_res,
+                                    params, key_env, cles, model, cfg_g, a.batch)
+                agg, summary = sd.data_lab_env(out_high, resources=res)
+                sd._save_lab_data(agg, summary, sortie, suffix=sfx)
+
+                out_clo = par_lots(vmap_over_agents_env_lab_high_res_with_clones,
+                                   params, key_env, cles, model, cfg_g, a.batch)
+                sd.compare_alone_vs_clones(out_high, out_clo, sortie,
+                                           condition="clones", suffix=sfx)
+
+                if cfg.lab_figurants:
+                    out_fig = par_lots(vmap_over_agents_env_lab_high_res_with_figurants,
+                                       params, key_env, cles, model, cfg_g, a.batch)
+                    sd.compare_alone_vs_clones(out_high, out_fig, sortie,
+                                               condition="figurants", suffix=sfx)
 
         if not a.merge:
             tracer(sortie)

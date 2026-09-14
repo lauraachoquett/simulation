@@ -88,6 +88,26 @@ BASE_RESOURCES = (
 )
 
 
+# Geometries de ressource testees au lab, a UNE ressource. Les noms sont ceux
+# des .npy produits par `python -m simulation.tools.make_lab_envs --save`, ranges
+# dans simulation/lab_envs/.
+#
+# Toutes de meme rang : chacune est jouee dans les trois conditions sociales
+# (seul, clones, figurants), et les comparaisons appariees se font A L'INTERIEUR
+# d'une geometrie. Toutes portent le meme nombre de cases, donc un ecart entre
+# deux series dit ce que la population sait exploiter, pas ce qu'on lui a donne.
+#
+# Vide -> une seule condition, le tirage aleatoire (ou lab_env_high_res s'il est
+# renseigne) : le comportement d'avant, inchange.
+#
+# Cout : un rollout par geometrie et par condition sociale, a chaque evaluation.
+LAB_ENVS = (
+    # "scatter40_s0.npy",
+    # "patch4x10_s0.npy",
+    # "patch1x40_s0.npy",
+)
+
+
 
 class Config(NamedTuple):
     grid_length : int
@@ -189,11 +209,11 @@ class Config(NamedTuple):
     # env n'a ete retenu : le tirage aleatoire reste alors le comportement.
     lab_env_high_res : str = ""
     lab_env_low_res : str = ""
-    # Geometries SUPPLEMENTAIRES pour high_res : les memes genomes sont evalues
-    # dans chacune a chaque evaluation de lab, en plus de lab_env_high_res qui
-    # reste la reference des comparaisons appariees (clones, figurants,
-    # ablation). Un rollout de plus par geometrie. Tuple -> Config hachable.
-    lab_envs_high_res : tuple = ()
+    # Geometries de ressource testees au lab. Toutes de MEME RANG : chacune est
+    # jouee dans les trois conditions sociales (seul, clones, figurants) et les
+    # comparaisons appariees se font a l'interieur d'une geometrie. Vide -> une
+    # seule condition, celle de lab_env_high_res. Voir LAB_ENVS ci-dessous.
+    lab_envs : tuple = LAB_ENVS
 
     # Tracabilite d'une reprise. Une reprise cree un dossier NEUF, donc sans ces
     # deux champs rien dans le config.json ne dit d'ou elle repart -- et les
