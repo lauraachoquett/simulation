@@ -102,9 +102,9 @@ BASE_RESOURCES = (
 #
 # Cout : un rollout par geometrie et par condition sociale, a chaque evaluation.
 LAB_ENVS = (
-    # "scatter40_s0.npy",
-    # "patch4x10_s0.npy",
-    # "patch1x40_s0.npy",
+    "scatter40_s0.npy",    # semis uniforme
+    "patch8x5_s0.npy",     # 8 petits amas
+    "blob1x40_s1.npy",     # un seul amas, a contour irregulier
 )
 
 
