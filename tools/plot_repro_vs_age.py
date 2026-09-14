@@ -27,10 +27,19 @@ import numpy as np
 
 
 def lab_data_de(chemin):
-    """Le dossier lab_data, qu'on donne la fusion, l'experience ou son replay."""
-    for candidat in (chemin,
+    """Le dossier lab_data, qu'on donne la fusion, l'experience ou son replay.
+
+    replay/ EN PREMIER, et c'est important : un dossier d'experience porte aussi
+    son propre lab_data, rempli par les evaluations faites PENDANT le run. Celles-ci
+    ne portent que sur les 50 premiers survivants, suivent la cadence de
+    lab_evaluation_freq et non celle des checkpoints, et ne portent pas les
+    suffixes de geometrie. Les prendre pour le rejeu donne une serie tout autre,
+    sans que rien ne le signale -- les numeros de chunk n'ont alors pas la meme
+    echelle, ce qui fait paraitre un decoupage en pas de simulation sans effet.
+    """
+    for candidat in (os.path.join(chemin, "replay", "lab_data"),
                      os.path.join(chemin, "lab_data"),
-                     os.path.join(chemin, "replay", "lab_data")):
+                     chemin):
         if glob.glob(os.path.join(candidat, "chunk_*.npz")):
             return candidat
     return None
@@ -94,6 +103,10 @@ def main():
     p.add_argument("source", help="dossier de fusion, d'experience, ou lab_data")
     p.add_argument("-o", "--out", default=None,
                    help="fichier de sortie (defaut <source>/fig/repro_vs_age.png)")
+    p.add_argument("--lab-data", dest="lab_data", default=None, metavar="DIR",
+                   help="forcer le dossier de donnees. Sans cela : "
+                        "<source>/replay/lab_data, puis <source>/lab_data, puis "
+                        "<source> lui-meme")
     p.add_argument("--pas", type=int, default=None, metavar="N",
                    help="largeur des tranches en PAS de simulation (ex. 200000). "
                         "Tranches comparables entre elles et entre experiences, "
@@ -123,10 +136,11 @@ def main():
                    help="pas par chunk (defaut : lu dans config.json, sinon 1000)")
     a = p.parse_args()
 
-    data_dir = lab_data_de(a.source)
+    data_dir = a.lab_data or lab_data_de(a.source)
     if data_dir is None:
         print(f"Aucun chunk_*.npz sous {a.source}")
         return
+    print(f"donnees : {data_dir}")
 
     chunk_size = a.chunk_size
     if chunk_size is None:
