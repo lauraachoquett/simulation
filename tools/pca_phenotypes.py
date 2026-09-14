@@ -75,9 +75,13 @@ def familles(data_dir):
     return {k: sorted(v) for k, v in out.items()}
 
 
-def charge(fichiers, noms):
-    """(X, chunk, colonnes) : une ligne par genome, une colonne par mesure."""
-    lignes, chunks, colonnes = [], [], None
+def charge(fichiers, noms, extra=None):
+    """(X, chunk, colonnes, extra) : une ligne par genome, une colonne par mesure.
+
+    `extra` est une colonne lue SANS entrer dans la PCA -- de quoi colorer le
+    nuage par une variable qu'on ne veut pas voir influencer les axes.
+    """
+    lignes, chunks, colonnes, sup = [], [], None, []
     for chunk, f in fichiers:
         d = np.load(f)
         dispo = [n for n in noms if n in d.files]
@@ -93,13 +97,16 @@ def charge(fichiers, noms):
         bloc = np.stack([np.asarray(d[n], float) for n in colonnes], axis=1)
         lignes.append(bloc)
         chunks.append(np.full(len(bloc), chunk))
+        sup.append(np.asarray(d[extra], float) if extra and extra in d.files
+                   else np.full(len(bloc), np.nan))
         d.close()
     if not lignes:
-        return None, None, None
-    return np.concatenate(lignes), np.concatenate(chunks), colonnes
+        return None, None, None, None
+    return (np.concatenate(lignes), np.concatenate(chunks), colonnes,
+            np.concatenate(sup))
 
 
-def prepare(X, chunk, colonnes):
+def prepare(X, chunk, colonnes, sup):
     """Retire les colonnes constantes et les lignes a NaN, en le disant.
 
     Les NaN ne sont pas repartis au hasard : greediness est indefinie pour un
@@ -124,7 +131,7 @@ def prepare(X, chunk, colonnes):
               f"({100*perdus/len(X):.0f} %) ecartes pour NaN. Ce ne sont pas des "
               "lignes quelconques : greediness est indefinie quand l'agent n'a "
               "jamais vu de ressource.")
-    return X[ok], chunk[ok], colonnes
+    return X[ok], chunk[ok], colonnes, sup[ok]
 
 
 def pca(X):
@@ -151,14 +158,16 @@ def shuffles_en_chunks(exp_dir, chunk_size):
     return sorted({int(e["step"]) // chunk_size for e in log})
 
 
-def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=()):
+def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=(),
+          couleur=None, nom_couleur="chunk"):
     fig, axs = plt.subplots(1, 3, figsize=(18, 5.6),
                             gridspec_kw={"width_ratios": [2.1, 1.25, 1]})
 
     # --- 1) le nuage, colore par chunk, et la trajectoire du barycentre ---
     ax = axs[0]
-    sc = ax.scatter(scores[:, 0], scores[:, 1], c=chunk, cmap="viridis",
-                    s=7, alpha=.35, linewidths=0)
+    c = chunk if couleur is None else couleur
+    sc = ax.scatter(scores[:, 0], scores[:, 1], c=c, cmap="viridis",
+                    s=16, alpha=.55, linewidths=0)
     uniq = np.unique(chunk)
     cx = np.array([scores[chunk == c, 0].mean() for c in uniq])
     cy = np.array([scores[chunk == c, 1].mean() for c in uniq])
@@ -177,10 +186,10 @@ def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=()):
                     arrowprops=dict(arrowstyle="-|>", color="black", lw=1.4))
     ax.set_xlabel(f"PC1 ({100*part[0]:.0f} %)")
     ax.set_ylabel(f"PC2 ({100*part[1]:.0f} %)")
-    ax.set_title("Phenotype space, one point per genome\n"
+    ax.set_title(f"Phenotype space, one point per genome (colour: {nom_couleur})\n"
                  "black: per-chunk centroid   red: channel shuffle", fontsize=10)
     ax.grid(alpha=.25)
-    fig.colorbar(sc, ax=ax, label="chunk", fraction=.04)
+    fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.04)
 
     # --- 2) les charges : sans elles les axes ne veulent rien dire ---
     ax = axs[1]
@@ -216,6 +225,11 @@ def main():
                    help="dossier de sortie (defaut <source>/fig)")
     p.add_argument("--vars", nargs="+", default=list(VARS_DEFAUT),
                    help=f"mesures retenues (defaut : {' '.join(VARS_DEFAUT)})")
+    p.add_argument("--color", default="chunk", metavar="COL",
+                   help="colonne du npz servant a colorer le nuage, SANS entrer "
+                        "dans la PCA (defaut chunk). `died` teste si PC1 n'est "
+                        "qu'un axe de survie, ce qui arrive des que la mortalite "
+                        "tire toutes les mesures ensemble")
     p.add_argument("--chunk-size", type=int, default=None,
                    help="pas par chunk, pour situer les permutations "
                         "(defaut : lu dans config.json, sinon 1000)")
@@ -244,15 +258,26 @@ def main():
     for geo, fichiers in sorted(fams.items()):
         nom = geo or "reference"
         print(f"\n=== {nom} : {len(fichiers)} chunk(s)")
-        X, chunk, colonnes = charge(fichiers, a.vars)
+        extra = None if a.color == "chunk" else a.color
+        X, chunk, colonnes, sup = charge(fichiers, a.vars, extra)
         if X is None:
             continue
-        X, chunk, colonnes = prepare(X, chunk, colonnes)
+        X, chunk, colonnes, sup = prepare(X, chunk, colonnes, sup)
         if X.shape[0] < 3 or X.shape[1] < 2:
             print(f"  [info] {X.shape[0]} genomes x {X.shape[1]} mesures : "
                   "pas de quoi faire une PCA, saute")
             continue
         scores, axes, part, _, _ = pca(X)
+        # Regle usuelle : au moins ~10 observations par variable. En dessous les
+        # axes sont pilotes par quelques points et ne se reproduisent pas d'un
+        # tirage a l'autre.
+        if X.shape[0] < 10 * X.shape[1]:
+            print(f"  [attention] {X.shape[0]} genomes pour {X.shape[1]} mesures "
+                  f"({X.shape[0]/X.shape[1]:.1f} par variable) : les axes sont "
+                  "instables. Relancer le rejeu avec plus de genomes (-n 0).")
+        if len(np.unique(chunk)) < 4:
+            print(f"  [attention] {len(np.unique(chunk))} chunk(s) : la "
+                  "trajectoire du barycentre ne dit rien d'une dynamique.")
         print(f"  {X.shape[0]} genomes x {X.shape[1]} mesures  "
               f"PC1 {100*part[0]:.0f} %  PC2 {100*part[1]:.0f} %  "
               f"(PC1+PC2 {100*part[:2].sum():.0f} %)")
@@ -265,7 +290,8 @@ def main():
               f"Lab phenotypes — PCA on pooled chunks, fixed axes"
               + (f"   [{geo}]" if geo else ""),
               os.path.join(fig_dir, f"pca_phenotypes{suffixe}.png"),
-              shuffles=shuffles)
+              shuffles=shuffles,
+              couleur=None if extra is None else sup, nom_couleur=a.color)
 
 
 if __name__ == "__main__":
