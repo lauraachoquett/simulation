@@ -364,6 +364,10 @@ class LabMixin:
                 agent_params, key_env, key_sim, model, cfg_m)
             agg_low, summary_low = self.data_lab_env_low_res(outputs_low)
             self._save_lab_data(agg_low, summary_low, exp_dir, suffix="lowres")
+            # le MEME jeu de colonnes que les autres env : data_lab_env_low_res
+            # n'en garde que cinq, insuffisant pour une analyse commune
+            self._save_pheno(self.data_lab_env_grouped(outputs_low),
+                             exp_dir, "lowres")
 
             plot_lab_exploration(exp_dir=exp_dir)
             self._plot_energy(outputs_low, exp_dir, "low_res",
@@ -403,6 +407,7 @@ class LabMixin:
                 stem = os.path.splitext(os.path.basename(geo))[0] if geo else ""
                 sfx  = f"env_{stem}" if geo else ""
                 titre_geo = f" [{stem}]" if geo else ""
+                marque = f"_{stem}" if geo else ""      # suffixe des fichiers pheno
                 dossier = f"/{stem}" if geo else ""
                 cfg_g = cfg_m if geo is None else cfg_m._replace(lab_env_high_res=geo)
                 cfg_gv = cfg_v if geo is None else cfg_v._replace(lab_env_high_res=geo)
@@ -414,8 +419,9 @@ class LabMixin:
                 plot_lab_metrics(exp_dir=exp_dir, suffix=sfx)
                 self._plot_energy(out_h, exp_dir, f"high_res{dossier}",
                                   f"high_res (agent alone){titre_geo}")
-                plot_metric_pairs(self.data_lab_env_grouped(out_h), exp_dir,
-                                  self.chunk_idx,
+                pg_h = self.data_lab_env_grouped(out_h)
+                self._save_pheno(pg_h, exp_dir, f"alone{marque}")
+                plot_metric_pairs(pg_h, exp_dir, self.chunk_idx,
                                   titre=f"high_res (agent alone){titre_geo}")
 
                 vid_h = rollout_video(vmap_over_agents_env_lab_high_res, cfg_gv)
@@ -429,8 +435,11 @@ class LabMixin:
                 # ---- clones : pairs identiques, qui CONSOMMENT ----
                 _, out_c = vmap_over_agents_env_lab_high_res_with_clones(
                     agent_params, key_env, key_sim, model, cfg_g)
+                pg_c = self.data_lab_env_grouped(out_c)
+                self._save_pheno(pg_c, exp_dir, f"clones{marque}")
                 self.compare_alone_vs_clones(out_h, out_c, exp_dir,
-                                             condition="clones", suffix=sfx)
+                                             condition="clones", suffix=sfx,
+                                             a=pg_h, c=pg_c)
                 self._plot_energy(out_c, exp_dir, f"high_res_clones{dossier}",
                                   f"high_res with clones{titre_geo}")
 
@@ -446,8 +455,11 @@ class LabMixin:
                 if self.cfg.lab_figurants:
                     _, out_f = vmap_over_agents_env_lab_high_res_with_figurants(
                         agent_params, key_env, key_sim, model, cfg_g)
+                    pg_f = self.data_lab_env_grouped(out_f)
+                    self._save_pheno(pg_f, exp_dir, f"figurants{marque}")
                     self.compare_alone_vs_clones(out_h, out_f, exp_dir,
-                                                 condition="figurants", suffix=sfx)
+                                                 condition="figurants", suffix=sfx,
+                                                 a=pg_h, c=pg_f)
                     self._plot_energy(out_f, exp_dir, f"high_res_figurants{dossier}",
                                       f"high_res with inert peers{titre_geo}")
 
@@ -825,6 +837,25 @@ class LabMixin:
             step=np.int64(self.chunk_idx * self.cfg.chunk_size),
             lab_time_steps=np.int64(self.cfg.lab_time_steps))
 
+    def _save_pheno(self, per_genome, exp_dir, tag):
+        """Un phenotype par GENOME, pour un environnement donne.
+
+        Par genome et non par evenement de fin de vie (ce que fait _agg_lab) :
+        c'est ce qui fait que la ligne b designe LE MEME genome d'un
+        environnement a l'autre, puisque tous partagent agent_params dans le
+        meme ordre. Sans cet alignement on ne peut pas demander si un genome se
+        comporte autrement selon le contexte -- seulement comparer des nuages.
+
+        Memes colonnes partout, low_res compris : data_lab_env_grouped ne depend
+        pas de l'environnement.
+        """
+        data_dir = os.path.join(exp_dir, "lab_data")
+        os.makedirs(data_dir, exist_ok=True)
+        d = {k: np.asarray(v) for k, v in per_genome.items()}
+        d["genome"] = np.arange(len(d["age"]))
+        np.savez_compressed(
+            os.path.join(data_dir, f"chunk_{self.chunk_idx}_pheno_{tag}.npz"), **d)
+
     def _save_lab_data(self, agg, summary, exp_dir, suffix=""):
         data_dir = os.path.join(exp_dir, "lab_data")
         os.makedirs(data_dir, exist_ok=True)
@@ -1198,7 +1229,7 @@ class LabMixin:
     #  MODIFIÉ — B) EFFET DES PAIRS (env clones)
     # =================================================================
     def compare_alone_vs_clones(self, outputs_alone, outputs_clones, exp_dir,
-                                condition="clones", suffix=""):
+                                condition="clones", suffix="", a=None, c=None):
         """Compare, PAR GÉNOME, le comportement SEUL (high_res) vs EN GROUPE.
         Les deux rollouts partagent agent_params/key_env/key_sim dans
         le même ordre -> tableaux alignés par génome -> comparaison APPARIÉE :
@@ -1217,8 +1248,11 @@ class LabMixin:
         `suffix` indexe la GEOMETRIE : l'appariement se fait a l'interieur d'une
         geometrie, jamais entre deux, sans quoi l'ecart melangerait l'effet des
         pairs et celui de la disposition."""
-        a = self.data_lab_env_grouped(outputs_alone)
-        c = self.data_lab_env_grouped(outputs_clones)
+        # `a` et `c` peuvent etre fournis : data_lab_env_grouped boucle sur les
+        # B genomes et domine le cout de cette fonction. L'appelant les a deja
+        # calcules pour les sauvegarder.
+        a = self.data_lab_env_grouped(outputs_alone) if a is None else a
+        c = self.data_lab_env_grouped(outputs_clones) if c is None else c
  
         # sans mur letal, wall_death vaut 0 partout : panneau vide et trompeur
         metrics = ["age", "mean_rew", "mean_speed", "energy_end",

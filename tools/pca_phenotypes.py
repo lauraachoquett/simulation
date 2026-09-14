@@ -3,10 +3,17 @@
     python -m simulation.tools.pca_phenotypes <exp_dir>
     python -m simulation.tools.pca_phenotypes <exp_dir> --vars age greediness voisinage
 
-Les axes sont ajustes UNE SEULE FOIS sur tous les chunks empiles, puis chaque
-chunk y est projete. C'est ce qui rend la trajectoire lisible : avec une PCA
+Les axes sont ajustes UNE SEULE FOIS sur TOUS les environnements et tous les
+chunks empiles, puis chaque sous-ensemble y est projete. C'est ce qui rend la trajectoire lisible : avec une PCA
 par chunk, les axes tourneraient d'une image a l'autre et un deplacement
 apparent ne voudrait rien dire.
+
+Un seul plan pour tous les environnements, et c'est le point : les fichiers
+`chunk_N_pheno_<env>.npz` portent UNE LIGNE PAR GENOME, et la ligne b designe le
+meme genome partout puisque tous les env partagent agent_params dans le meme
+ordre. On peut donc demander non seulement ou se situe chaque environnement,
+mais de combien un MEME genome s'y deplace -- ce qu'une PCA par environnement,
+avec ses axes propres, rendrait impossible a lire.
 
 La question visee n'est pas "quels axes de variation existent" mais "la
 population revient-elle quelque part". D'ou la trajectoire du barycentre et les
@@ -61,28 +68,29 @@ def lab_data_de(chemin):
 
 
 def familles(data_dir):
-    """{geometrie: [(chunk, fichier)]}, "" pour la serie sans geometrie.
+    """[(env, chunk, fichier)] : tous les phenotypes, tous environnements.
 
-    Le motif exige soit rien soit `_env_<nom>` : les suffixes _lowres et
-    _adapt_* sont donc ecartes d'eux-memes, et c'est voulu -- l'un ne porte pas
-    les memes colonnes, l'autre teste une permutation et pas un phenotype.
+    Ne lit QUE les `chunk_N_pheno_<env>.npz`, une ligne par genome. Les
+    `chunk_N.npz` de _agg_lab portent une ligne par evenement de fin de vie et
+    ne s'alignent donc pas d'un environnement a l'autre ; les _adapt_* testent
+    une permutation et pas un phenotype.
     """
-    out = {}
-    for f in glob.glob(os.path.join(data_dir, "chunk_*.npz")):
-        m = re.fullmatch(r"chunk_(\d+)(?:_env_(.+))?\.npz", os.path.basename(f))
+    out = []
+    for f in glob.glob(os.path.join(data_dir, "chunk_*_pheno_*.npz")):
+        m = re.fullmatch(r"chunk_(\d+)_pheno_(.+)\.npz", os.path.basename(f))
         if m:
-            out.setdefault(m.group(2) or "", []).append((int(m.group(1)), f))
-    return {k: sorted(v) for k, v in out.items()}
+            out.append((m.group(2), int(m.group(1)), f))
+    return sorted(out)
 
 
 def charge(fichiers, noms, extra=None):
-    """(X, chunk, colonnes, extra) : une ligne par genome, une colonne par mesure.
+    """(X, chunk, env, genome, colonnes, extra), tous environnements empiles.
 
     `extra` est une colonne lue SANS entrer dans la PCA -- de quoi colorer le
     nuage par une variable qu'on ne veut pas voir influencer les axes.
     """
-    lignes, chunks, colonnes, sup = [], [], None, []
-    for chunk, f in fichiers:
+    lignes, chunks, envs, genomes, colonnes, sup = [], [], [], [], None, []
+    for env, chunk, f in fichiers:
         d = np.load(f)
         dispo = [n for n in noms if n in d.files]
         if colonnes is None:
@@ -91,22 +99,26 @@ def charge(fichiers, noms, extra=None):
             if manquantes:
                 print(f"  [info] absentes de ces donnees : {', '.join(manquantes)}")
         elif dispo != colonnes:
-            print(f"  [info] chunk {chunk} : colonnes differentes, ignore")
+            print(f"  [info] {env} chunk {chunk} : colonnes differentes, ignore")
             d.close()
             continue
         bloc = np.stack([np.asarray(d[n], float) for n in colonnes], axis=1)
         lignes.append(bloc)
         chunks.append(np.full(len(bloc), chunk))
+        envs.append(np.full(len(bloc), env, dtype=object))
+        genomes.append(np.asarray(d["genome"]) if "genome" in d.files
+                       else np.arange(len(bloc)))
         sup.append(np.asarray(d[extra], float) if extra and extra in d.files
                    else np.full(len(bloc), np.nan))
         d.close()
     if not lignes:
-        return None, None, None, None
-    return (np.concatenate(lignes), np.concatenate(chunks), colonnes,
+        return (None,) * 6
+    return (np.concatenate(lignes), np.concatenate(chunks),
+            np.concatenate(envs), np.concatenate(genomes), colonnes,
             np.concatenate(sup))
 
 
-def prepare(X, chunk, colonnes, sup):
+def prepare(X, chunk, env, genome, colonnes, sup):
     """Retire les colonnes constantes et les lignes a NaN, en le disant.
 
     Les NaN ne sont pas repartis au hasard : greediness est indefinie pour un
@@ -131,7 +143,7 @@ def prepare(X, chunk, colonnes, sup):
               f"({100*perdus/len(X):.0f} %) ecartes pour NaN. Ce ne sont pas des "
               "lignes quelconques : greediness est indefinie quand l'agent n'a "
               "jamais vu de ressource.")
-    return X[ok], chunk[ok], colonnes, sup[ok]
+    return X[ok], chunk[ok], env[ok], genome[ok], colonnes, sup[ok]
 
 
 def pca(X):
@@ -158,40 +170,44 @@ def shuffles_en_chunks(exp_dir, chunk_size):
     return sorted({int(e["step"]) // chunk_size for e in log})
 
 
-def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=(),
-          couleur=None, nom_couleur="chunk"):
-    fig, axs = plt.subplots(1, 3, figsize=(18, 5.6),
-                            gridspec_kw={"width_ratios": [2.1, 1.25, 1]})
+def trace(scores, chunk, env, colonnes, axes, part, titre, sortie,
+          couleur=None, nom_couleur=None):
+    """Un plan, tous les environnements.
 
-    # --- 1) le nuage, colore par chunk, et la trajectoire du barycentre ---
+    Couleur par ENVIRONNEMENT et non par chunk : la question posee ici est
+    "chaque contexte occupe-t-il une region propre", et un degrade temporel la
+    masquerait. `--color` bascule sur n'importe quelle colonne si besoin.
+    """
+    fig, axs = plt.subplots(1, 3, figsize=(19, 5.8),
+                            gridspec_kw={"width_ratios": [2.3, 1.25, 1]})
     ax = axs[0]
-    c = chunk if couleur is None else couleur
-    sc = ax.scatter(scores[:, 0], scores[:, 1], c=c, cmap="viridis",
-                    s=16, alpha=.55, linewidths=0)
-    uniq = np.unique(chunk)
-    cx = np.array([scores[chunk == c, 0].mean() for c in uniq])
-    cy = np.array([scores[chunk == c, 1].mean() for c in uniq])
-    ax.plot(cx, cy, "-", color="black", lw=1.4, zorder=3, alpha=.8)
-    ax.scatter(cx, cy, c=uniq, cmap="viridis", s=95, edgecolors="black",
-               linewidths=1.1, zorder=4)
-    # les permutations, la ou elles tombent sur la trajectoire : c'est la
-    # perturbation dont on veut savoir si le nuage revient
-    for s in shuffles:
-        if s in uniq:
-            i = int(np.where(uniq == s)[0][0])
-            ax.scatter(cx[i], cy[i], marker="D", s=190, facecolors="none",
-                       edgecolors="#E63946", linewidths=2.0, zorder=5)
-    if len(uniq) > 1:
-        ax.annotate("", xy=(cx[-1], cy[-1]), xytext=(cx[-2], cy[-2]),
-                    arrowprops=dict(arrowstyle="-|>", color="black", lw=1.4))
+    noms = sorted(set(env.tolist()))
+    if couleur is not None:
+        sc = ax.scatter(scores[:, 0], scores[:, 1], c=couleur, cmap="viridis",
+                        s=14, alpha=.5, linewidths=0)
+        fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.04)
+    else:
+        cmap = plt.get_cmap("tab10")
+        for i, nom in enumerate(noms):
+            m = env == nom
+            ax.scatter(scores[m, 0], scores[m, 1], s=14, alpha=.45,
+                       linewidths=0, color=cmap(i % 10), label=nom)
+        ax.legend(fontsize=8, markerscale=1.8, loc="best", title="environment")
+
+    # Le barycentre de chaque environnement, en noir : c'est l'ecart entre eux
+    # qui dit si le contexte deplace le comportement.
+    cmap = plt.get_cmap("tab10")
+    for i, nom in enumerate(noms):
+        m = env == nom
+        ax.scatter(scores[m, 0].mean(), scores[m, 1].mean(), marker="X", s=210,
+                   color=cmap(i % 10), edgecolors="black", linewidths=1.3, zorder=5)
     ax.set_xlabel(f"PC1 ({100*part[0]:.0f} %)")
     ax.set_ylabel(f"PC2 ({100*part[1]:.0f} %)")
-    ax.set_title(f"Phenotype space, one point per genome (colour: {nom_couleur})\n"
-                 "black: per-chunk centroid   red: channel shuffle", fontsize=10)
+    ax.set_title("Phenotype space, one point per genome per environment\n"
+                 "X: per-environment centroid", fontsize=10)
     ax.grid(alpha=.25)
-    fig.colorbar(sc, ax=ax, label=nom_couleur, fraction=.04)
 
-    # --- 2) les charges : sans elles les axes ne veulent rien dire ---
+    # --- charges : sans elles les axes ne veulent rien dire ---
     ax = axs[1]
     y = np.arange(len(colonnes))
     ax.barh(y - .2, axes[0], height=.38, color="#1D3557", label="PC1")
@@ -201,7 +217,7 @@ def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=(),
     ax.set_title("Loadings", fontsize=10)
     ax.legend(fontsize=8); ax.grid(alpha=.25, axis="x")
 
-    # --- 3) variance expliquee ---
+    # --- variance expliquee ---
     ax = axs[2]
     k = np.arange(1, len(part) + 1)
     ax.bar(k, 100 * part, color="#8D99AE")
@@ -218,6 +234,29 @@ def trace(scores, chunk, colonnes, axes, part, titre, sortie, shuffles=(),
     print(f"Figure saved: {sortie}")
 
 
+def deplacement_par_genome(scores, env, genome, chunk):
+    """De combien un MEME genome bouge-t-il d'un environnement a l'autre ?
+
+    Compare, pour chaque genome d'un chunk, l'ecart type de ses positions entre
+    environnements a l'ecart type de la population dans un environnement donne.
+    Un rapport proche de 1 signifie que le contexte deplace autant le
+    comportement que le genotype -- donc qu'un point de la figure en dit autant
+    sur l'environnement que sur l'agent.
+    """
+    intra = []
+    for c in np.unique(chunk):
+        for g in np.unique(genome[chunk == c]):
+            m = (chunk == c) & (genome == g)
+            if m.sum() > 1:
+                intra.append(scores[m, :2].std(axis=0))
+    if not intra:
+        return None
+    intra = np.mean(intra, axis=0)
+    inter = np.array([scores[env == n, :2].std(axis=0)
+                      for n in sorted(set(env.tolist()))]).mean(axis=0)
+    return intra, inter
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("source", help="dossier d'experience, son replay, ou lab_data")
@@ -225,73 +264,79 @@ def main():
                    help="dossier de sortie (defaut <source>/fig)")
     p.add_argument("--vars", nargs="+", default=list(VARS_DEFAUT),
                    help=f"mesures retenues (defaut : {' '.join(VARS_DEFAUT)})")
-    p.add_argument("--color", default="chunk", metavar="COL",
+    p.add_argument("--envs", nargs="+", default=None, metavar="ENV",
+                   help="restreindre a ces environnements (ex. alone_scatter40_s0 "
+                        "lowres). Defaut : tous ceux trouves")
+    p.add_argument("--color", default=None, metavar="COL",
                    help="colonne du npz servant a colorer le nuage, SANS entrer "
-                        "dans la PCA (defaut chunk). `died` teste si PC1 n'est "
-                        "qu'un axe de survie, ce qui arrive des que la mortalite "
-                        "tire toutes les mesures ensemble")
-    p.add_argument("--chunk-size", type=int, default=None,
-                   help="pas par chunk, pour situer les permutations "
-                        "(defaut : lu dans config.json, sinon 1000)")
+                        "dans la PCA. Defaut : une couleur par environnement. "
+                        "`died` teste si PC1 n'est qu'un axe de survie, ce qui "
+                        "arrive des que la mortalite tire toutes les mesures "
+                        "ensemble")
     a = p.parse_args()
 
     data_dir = lab_data_de(a.source)
     if data_dir is None:
         raise SystemExit(f"Aucun chunk_*.npz sous {a.source}")
+    fichiers = familles(data_dir)
+    if not fichiers:
+        raise SystemExit(
+            f"Aucun chunk_*_pheno_*.npz sous {data_dir}.\n"
+            "Ces fichiers sont ecrits depuis l'ajout de _save_pheno : refaire "
+            "la passe de rejeu pour les produire.")
+    if a.envs:
+        fichiers = [t for t in fichiers if t[0] in set(a.envs)]
+        if not fichiers:
+            raise SystemExit(f"Aucun environnement parmi {a.envs}")
+    trouves = sorted({e for e, _, _ in fichiers})
     print(f"donnees : {data_dir}")
+    print(f"{len(trouves)} environnement(s) : {', '.join(trouves)}")
 
-    chunk_size = a.chunk_size
-    if chunk_size is None:
-        for c in (os.path.join(a.source, "config.json"),
-                  os.path.join(data_dir, "..", "..", "config.json")):
-            if os.path.isfile(c):
-                chunk_size = json.load(open(c)).get("chunk_size")
-                break
-    chunk_size = chunk_size or 1000
-    shuffles = shuffles_en_chunks(a.source, chunk_size)
+    X, chunk, env, genome, colonnes, sup = charge(fichiers, a.vars, a.color)
+    if X is None:
+        raise SystemExit("Rien a analyser")
+    X, chunk, env, genome, colonnes, sup = prepare(
+        X, chunk, env, genome, colonnes, sup)
+    if X.shape[0] < 3 or X.shape[1] < 2:
+        raise SystemExit(f"{X.shape[0]} genomes x {X.shape[1]} mesures : "
+                         "pas de quoi faire une PCA")
+
+    scores, axes, part, _, _ = pca(X)
+    # Regle usuelle : au moins ~10 observations par variable. En dessous les axes
+    # sont pilotes par quelques points et ne se reproduisent pas d'un tirage a
+    # l'autre.
+    if X.shape[0] < 10 * X.shape[1]:
+        print(f"  [attention] {X.shape[0]} lignes pour {X.shape[1]} mesures "
+              f"({X.shape[0]/X.shape[1]:.1f} par variable) : axes instables. "
+              "Refaire le rejeu avec plus de genomes (-n 0).")
+    print(f"  {X.shape[0]} lignes x {X.shape[1]} mesures  "
+          f"PC1 {100*part[0]:.0f} %  PC2 {100*part[1]:.0f} %  "
+          f"(PC1+PC2 {100*part[:2].sum():.0f} %)")
+    for i in (0, 1):
+        ordre = np.argsort(-np.abs(axes[i]))[:3]
+        detail = ", ".join(f"{colonnes[j]} {axes[i][j]:+.2f}" for j in ordre)
+        print(f"    PC{i+1} porte surtout : {detail}")
+
+    print("\n  barycentre par environnement (PC1, PC2) :")
+    for nom in sorted(set(env.tolist())):
+        m = env == nom
+        print(f"    {nom:<28} ({scores[m,0].mean():+6.2f}, "
+              f"{scores[m,1].mean():+6.2f})   n={int(m.sum())}")
+
+    d = deplacement_par_genome(scores, env, genome, chunk)
+    if d is not None:
+        intra, inter = d
+        print(f"\n  dispersion d'un MEME genome entre environnements : "
+              f"PC1 {intra[0]:.2f}  PC2 {intra[1]:.2f}")
+        print(f"  dispersion de la population dans un environnement : "
+              f"PC1 {inter[0]:.2f}  PC2 {inter[1]:.2f}")
+        print("  (rapport proche de 1 -> le contexte deplace autant que le genotype)")
 
     fig_dir = a.out or os.path.join(a.source, "fig")
-    fams = familles(data_dir)
-    if not fams:
-        raise SystemExit("Aucune serie phenotypique (chunk_N.npz ou chunk_N_env_*.npz)")
-
-    for geo, fichiers in sorted(fams.items()):
-        nom = geo or "reference"
-        print(f"\n=== {nom} : {len(fichiers)} chunk(s)")
-        extra = None if a.color == "chunk" else a.color
-        X, chunk, colonnes, sup = charge(fichiers, a.vars, extra)
-        if X is None:
-            continue
-        X, chunk, colonnes, sup = prepare(X, chunk, colonnes, sup)
-        if X.shape[0] < 3 or X.shape[1] < 2:
-            print(f"  [info] {X.shape[0]} genomes x {X.shape[1]} mesures : "
-                  "pas de quoi faire une PCA, saute")
-            continue
-        scores, axes, part, _, _ = pca(X)
-        # Regle usuelle : au moins ~10 observations par variable. En dessous les
-        # axes sont pilotes par quelques points et ne se reproduisent pas d'un
-        # tirage a l'autre.
-        if X.shape[0] < 10 * X.shape[1]:
-            print(f"  [attention] {X.shape[0]} genomes pour {X.shape[1]} mesures "
-                  f"({X.shape[0]/X.shape[1]:.1f} par variable) : les axes sont "
-                  "instables. Relancer le rejeu avec plus de genomes (-n 0).")
-        if len(np.unique(chunk)) < 4:
-            print(f"  [attention] {len(np.unique(chunk))} chunk(s) : la "
-                  "trajectoire du barycentre ne dit rien d'une dynamique.")
-        print(f"  {X.shape[0]} genomes x {X.shape[1]} mesures  "
-              f"PC1 {100*part[0]:.0f} %  PC2 {100*part[1]:.0f} %  "
-              f"(PC1+PC2 {100*part[:2].sum():.0f} %)")
-        for i in (0, 1):
-            ordre = np.argsort(-np.abs(axes[i]))[:3]
-            detail = ", ".join(f"{colonnes[j]} {axes[i][j]:+.2f}" for j in ordre)
-            print(f"    PC{i+1} porte surtout : {detail}")
-        suffixe = f"_{geo}" if geo else ""
-        trace(scores, chunk, colonnes, axes, part,
-              f"Lab phenotypes — PCA on pooled chunks, fixed axes"
-              + (f"   [{geo}]" if geo else ""),
-              os.path.join(fig_dir, f"pca_phenotypes{suffixe}.png"),
-              shuffles=shuffles,
-              couleur=None if extra is None else sup, nom_couleur=a.color)
+    trace(scores, chunk, env, colonnes, axes, part,
+          "Lab phenotypes — one PCA across all environments, fixed axes",
+          os.path.join(fig_dir, "pca_phenotypes_all_envs.png"),
+          couleur=None if a.color is None else sup, nom_couleur=a.color)
 
 
 if __name__ == "__main__":
