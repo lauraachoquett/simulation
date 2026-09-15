@@ -29,6 +29,7 @@ avait fait tomber le GPU en OOM. Les videos non plus, elles dominent le cout.
 import argparse
 import glob
 import os
+import json
 import re
 import time
 
@@ -173,9 +174,10 @@ def fusionner(chemins, sortie):
     DERNIER chemin donne l'emporte. D'ou l'ordre chronologique.
     """
     import shutil
+    import time as _time
     dest = os.path.join(sortie, "lab_data")
     os.makedirs(dest, exist_ok=True)
-    total = 0
+    total, sources = 0, []
     for chemin in chemins:
         src = lab_data_de(chemin)
         if src is None:
@@ -186,12 +188,48 @@ def fusionner(chemins, sortie):
             if os.path.isfile(f):
                 shutil.copy2(f, os.path.join(dest, os.path.basename(f)))
                 n += 1
-        print(f"  {src} : {n} fichier(s)")
+        chunks = sorted({int(m.group(1)) for m in
+                         (re.match(r"chunk_(\d+)", os.path.basename(f))
+                          for f in glob.glob(os.path.join(src, "chunk_*")))
+                         if m})
+        print(f"  {src} : {n} fichier(s)"
+              + (f", chunks {chunks[0]}-{chunks[-1]}" if chunks else ""))
+        sources.append({"nom": os.path.basename(os.path.normpath(chemin)),
+                        "chemin": os.path.abspath(chemin),
+                        "lab_data": os.path.abspath(src),
+                        "n_fichiers": n,
+                        "chunk_min": chunks[0] if chunks else None,
+                        "chunk_max": chunks[-1] if chunks else None})
         total += n
     if not total:
         print("Rien a fusionner.")
         return
-    print(f"{len(os.listdir(dest))} fichier(s) apres dedoublonnage")
+
+    # Chevauchements : sur un chunk present dans deux experiences, la derniere
+    # ecrase la premiere sans rien dire. On le consigne, parce que c'est la
+    # difference entre une reprise (plages disjointes) et des replicats (memes
+    # plages, donc une fusion qui n'en garde qu'un).
+    chevauchements = []
+    for i, a in enumerate(sources):
+        for b in sources[i + 1:]:
+            if None in (a["chunk_min"], b["chunk_min"]):
+                continue
+            lo = max(a["chunk_min"], b["chunk_min"])
+            hi = min(a["chunk_max"], b["chunk_max"])
+            if lo <= hi:
+                chevauchements.append({"ecrase": a["nom"], "par": b["nom"],
+                                       "chunks": [lo, hi]})
+                print(f"  [attention] chunks {lo}-{hi} presents dans {a['nom']} "
+                      f"et {b['nom']} : ceux de {b['nom']} l'emportent")
+
+    # L'ordre de la liste EST l'ordre de priorite : c'est lui qui dit quelle
+    # experience a fourni un chunk en cas de recouvrement.
+    with open(os.path.join(sortie, "exp.json"), "w") as f:
+        json.dump({"fusion": _time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "experiences": sources,
+                   "chevauchements": chevauchements}, f, indent=2)
+    print(f"{len(os.listdir(dest))} fichier(s) apres dedoublonnage, "
+          f"sources dans {os.path.join(sortie, 'exp.json')}")
     tracer(sortie)
 
 
