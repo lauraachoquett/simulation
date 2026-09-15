@@ -23,7 +23,7 @@ from simulation.utils.plots import plot_current_config
 from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABELS,
                                    MODEL_VERSIONS, resolve_model, label_of, color_of)
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, checkpoints_disponibles, dernier_checkpoint
 from simulation.simulation_data.core import simulation_data
 from simulation.lab_env import env_file_pour
 
@@ -440,7 +440,8 @@ def parse_cli(cfg):
     pre.add_argument("--from", dest="config_exp", default=None, metavar="DIR",
                      help="reprendre la config ET les graines d'un run, mais repartir de zero")
     pre.add_argument("-r", "--resume", default=None, metavar="DIR",
-                     help="dossier d'experience a reprendre (avec --chunk-id)")
+                     help="dossier d'experience a reprendre. Repart du dernier "
+                          "checkpoint, ou de --chunk-id s'il est donne")
     connus, _ = pre.parse_known_args()
     subkeys = None
     source = connus.config_exp or connus.resume
@@ -493,7 +494,9 @@ def parse_cli(cfg):
                    help="graine (defaut 105). Avec --from, la passer ignore les "
                         "graines chargees et en regenere de neuves")
     p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
-    p.add_argument("--chunk-id",      type=int, default=1,    help="chunk de reprise (defaut %(default)s)")
+    p.add_argument("--chunk-id",      type=int, default=None,
+                   help="chunk de reprise, avec --resume (defaut : le dernier "
+                        "checkpoint lisible du dossier)")
     p.add_argument("-x", "--ablate", default="", metavar="LETTRES",
                    help="ablations, lettres cumulables : "
                         + " ".join(f"{k}={v[7:]}" for k, v in ABLATIONS.items())
@@ -624,9 +627,37 @@ if __name__ == '__main__':
     
     # Sanity check :
 
+    # Reprise : resoudre le chunk AVANT de lancer. Deux echecs etaient muets
+    # jusqu'ici -- un dossier --resume inexistant faisait partir un run neuf
+    # (launch_simulation_chunked teste os.path.exists), et un --chunk-id sans
+    # checkpoint levait une erreur de fichier apres la creation du dossier.
+    if args.resume:
+        if not os.path.isdir(args.resume):
+            raise SystemExit(f"--resume {args.resume} : dossier introuvable")
+        dispo = checkpoints_disponibles(args.resume)
+        if not dispo:
+            raise SystemExit(f"--resume {args.resume} : aucun checkpoint dans "
+                             f"{os.path.join(args.resume, 'checkpoints')}")
+        if args.chunk_id is None:
+            args.chunk_id = dernier_checkpoint(args.resume)
+            if args.chunk_id is None:
+                raise SystemExit(f"--resume {args.resume} : aucun checkpoint "
+                                 "lisible")
+            print(f"[reprise] --chunk-id non precise : dernier checkpoint, "
+                  f"chunk {args.chunk_id}")
+        elif args.chunk_id not in dispo:
+            raise SystemExit(
+                f"--chunk-id {args.chunk_id} : pas de checkpoint pour ce chunk. "
+                f"Disponibles : {', '.join(map(str, dispo[-8:]))}"
+                + (" (8 derniers)" if len(dispo) > 8 else ""))
+    elif args.chunk_id is not None:
+        print(f"[cli] --chunk-id {args.chunk_id} ignore : il n'a de sens "
+              "qu'avec --resume")
+        args.chunk_id = None
+
     key = random.PRNGKey(args.seed)
     print(jax.devices())
 
     state_final, output, exp_dir,_,_ = launch_simulation_chunked(
         key, cfg, resume_exp=args.resume, n_video_workers=args.workers,
-        chunk_id=args.chunk_id, subkeys_init=subkeys_init)
+        chunk_id=args.chunk_id or 1, subkeys_init=subkeys_init)

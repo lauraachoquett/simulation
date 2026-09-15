@@ -168,11 +168,53 @@ def init_state(key, cfg, model):
 
 
 def save_checkpoint(state, filepath):
-    """Sauvegarde l'état de la simulation sur le disque."""
+    """Sauvegarde l'état de la simulation sur le disque.
+
+    Ecriture ATOMIQUE : dans un fichier temporaire, puis renommage. Un job tue
+    par le walltime pendant pickle.dump laissait sinon un state_chunk_N.pkl
+    tronque -- et c'est justement le dernier, celui qu'une reprise va chercher.
+    os.replace est atomique sur un meme systeme de fichiers : le fichier final
+    est soit l'ancien, soit le nouveau complet, jamais un melange.
+    """
     # Convertit le PyTree JAX en PyTree NumPy
     state_np = jax.tree_util.tree_map(np.asarray, state)
-    with open(filepath, 'wb') as f:
+    tmp = f"{filepath}.tmp"
+    with open(tmp, 'wb') as f:
         pickle.dump(state_np, f)
+    os.replace(tmp, filepath)
+
+def checkpoints_disponibles(exp_dir):
+    """Numeros de chunk des checkpoints presents, tries par ordre croissant."""
+    import glob
+    import re
+    out = []
+    for f in glob.glob(os.path.join(exp_dir, "checkpoints", "state_chunk_*.pkl")):
+        m = re.search(r"state_chunk_(\d+)\.pkl$", f)
+        if m:
+            out.append(int(m.group(1)))
+    return sorted(out)
+
+
+def dernier_checkpoint(exp_dir):
+    """Le plus recent checkpoint LISIBLE d'une experience, ou None.
+
+    On essaie de le relire au lieu de se fier au seul nom : les runs ecrits avant
+    que save_checkpoint devienne atomique peuvent porter un dernier fichier
+    tronque, et le prendre ferait echouer la reprise plus loin, apres la
+    creation du nouveau dossier d'experience. On recule alors d'un cran, en le
+    disant.
+    """
+    for chunk in reversed(checkpoints_disponibles(exp_dir)):
+        path = os.path.join(exp_dir, "checkpoints", f"state_chunk_{chunk}.pkl")
+        try:
+            with open(path, 'rb') as f:
+                pickle.load(f)
+            return chunk
+        except Exception as e:
+            print(f"[reprise] {path} illisible ({type(e).__name__}), "
+                  "probablement tronque par un arret du job : on essaie le precedent")
+    return None
+
 
 def load_checkpoint(resume_exp,chunk_id):
     """Charge l'état de la simulation depuis le disque."""
