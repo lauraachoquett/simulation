@@ -26,6 +26,10 @@ ssh -L 8501:localhost:8501 user@vm
 ## What it does
 
 - **Discovers runs**: every folder under `--root` containing a `config.json`.
+- **Filters** (sidebar): pick several parameters, then the values to keep for
+  each. Runs must match every parameter (AND); within a parameter, any ticked
+  value matches (OR). By default only parameters that differ across runs are
+  offered.
 - **Config comparison tab**: all selected runs as columns; toggle "show only
   differing parameters" to cut through the noise; differing cells highlighted.
 - **Plots side by side**: same plot type across runs in one row; per-chunk plots

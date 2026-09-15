@@ -352,6 +352,39 @@ def _load_shuffles(exp_dir: str) -> list[dict]:
 # UI
 # --------------------------------------------------------------------------- #
 
+def _varying_params(runs: list[dict]) -> list[str]:
+    """Params whose value is not the same in every run.
+
+    A config carries a hundred-odd fields and most never change between the
+    runs of a folder: offering them as filters only buries the useful ones.
+    A param missing from some runs counts as varying (absent vs present).
+    """
+    keys = sorted({p for r in runs for p in r["params"]})
+    return [k for k in keys
+            if len({str(r["params"].get(k)) for r in runs}) > 1]
+
+
+def _natural_value(v: str):
+    """Sort displayed values numerically when they are numbers, else as text."""
+    try:
+        return (0, float(v), "")
+    except ValueError:
+        return (1, 0.0, v.lower())
+
+
+def _apply_filters(runs: list[dict], filters: dict[str, list[str]]) -> list[dict]:
+    """Keep runs matching EVERY filter (AND across params, OR within a param).
+
+    Values are compared as strings, as displayed: config values mix ints,
+    floats, bools and None, and the widget hands back what it showed. An empty
+    value list for a param keeps nothing -- the user unticked every value.
+    """
+    for param, keep in filters.items():
+        keep = set(keep)
+        runs = [r for r in runs if str(r["params"].get(param)) in keep]
+    return runs
+
+
 def _parse_cli_root() -> str:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--root", default="exp")
@@ -430,14 +463,33 @@ def main() -> None:
         if picked_groups:
             runs = [r for r in runs if r["group"] in picked_groups]
 
-    # optional param filter
-    all_params = sorted({p for r in runs for p in r["params"]})
-    with st.sidebar.expander("Filter by parameter value"):
-        fparam = st.selectbox("Parameter", ["(none)"] + all_params)
-        if fparam != "(none)":
-            values = sorted({str(r["params"].get(fparam)) for r in runs})
-            fvals = st.multiselect("Keep values", values, default=values)
-            runs = [r for r in runs if str(r["params"].get(fparam)) in fvals]
+    # parameter filters, combined with AND
+    with st.sidebar.expander("Filter by parameter values", expanded=False):
+        only_varying = st.checkbox(
+            "Only parameters that differ", value=True,
+            help="Hide parameters shared by every run: they filter nothing.")
+        candidates = (_varying_params(runs) if only_varying
+                      else sorted({p for r in runs for p in r["params"]}))
+        fparams = st.multiselect(
+            "Parameters", candidates, key="filter-params",
+            help="Runs must match every parameter (AND). Within one parameter, "
+                 "any ticked value matches (OR).")
+        filters: dict[str, list[str]] = {}
+        for fparam in fparams:
+            # Options are computed on the runs BEFORE any parameter filter, not
+            # cascaded: a widget whose options shift under it as other filters
+            # change loses or rejects its current selection.
+            values = sorted({str(r["params"].get(fparam)) for r in runs},
+                            key=_natural_value)
+            filters[fparam] = st.multiselect(
+                fparam, values, default=values, key=f"filter-values-{fparam}")
+        n_before = len(runs)
+        runs = _apply_filters(runs, filters)
+        if filters:
+            st.caption(f"{len(runs)} / {n_before} run(s) kept")
+    if not runs:
+        st.warning("No run matches every filter. Loosen one of them.")
+        st.stop()
 
     id_to_run = {r["id"]: r for r in runs}
     labels = [r["id"] for r in runs]
