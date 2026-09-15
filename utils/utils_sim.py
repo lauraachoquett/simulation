@@ -216,6 +216,21 @@ def dernier_checkpoint(exp_dir):
     return None
 
 
+def chunks_jusqua(fin, dernier_fait):
+    """Nombre de chunks a calculer pour que le dernier soit `fin`.
+
+    launch_simulation_chunked calcule les chunks dernier_fait+1 .. dernier_fait
+    + num_chunks (un run neuf a dernier_fait = 0 ; une reprise, le chunk du
+    checkpoint). Donner le chunk de FIN evite de faire cette soustraction a la
+    main a chaque reprise -- et de se tromper d'un cran.
+    """
+    if fin <= dernier_fait:
+        raise ValueError(
+            f"--end-chunk {fin} : le dernier chunk deja calcule est "
+            f"{dernier_fait}, il n'y a rien a faire. Choisir une fin superieure.")
+    return fin - dernier_fait
+
+
 def load_checkpoint(resume_exp,chunk_id):
     """Charge l'état de la simulation depuis le disque."""
     path = os.path.join(resume_exp,f'checkpoints/state_chunk_{chunk_id}.pkl')

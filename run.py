@@ -1,6 +1,7 @@
 
 import os
 import glob
+import sys
 import shutil
 os.environ["XLA_FLAGS"] = "--xla_gpu_strict_conv_algorithm_picker=false --xla_gpu_autotune_level=0"
 os.environ["JAX_DONT_UNROLL_LOOPS"] = "1"
@@ -23,7 +24,7 @@ from simulation.utils.plots import plot_current_config
 from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABELS,
                                    MODEL_VERSIONS, resolve_model, label_of, color_of)
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, checkpoints_disponibles, dernier_checkpoint
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, checkpoints_disponibles, dernier_checkpoint, chunks_jusqua
 from simulation.simulation_data.core import simulation_data
 from simulation.lab_env import env_file_pour
 
@@ -494,6 +495,11 @@ def parse_cli(cfg):
                    help="graine (defaut 105). Avec --from, la passer ignore les "
                         "graines chargees et en regenere de neuves")
     p.add_argument("-w", "--workers", type=int, default=4,    help="process video (defaut %(default)s)")
+    p.add_argument("--end-chunk", dest="end_chunk", type=int, default=None,
+                   metavar="N",
+                   help="dernier chunk a calculer, en numero ABSOLU. Remplace -n : "
+                        "avec --resume au chunk 950, --end-chunk 3000 calcule "
+                        "les chunks 951 a 3000")
     p.add_argument("--chunk-id",      type=int, default=None,
                    help="chunk de reprise, avec --resume (defaut : le dernier "
                         "checkpoint lisible du dossier)")
@@ -654,6 +660,21 @@ if __name__ == '__main__':
         print(f"[cli] --chunk-id {args.chunk_id} ignore : il n'a de sens "
               "qu'avec --resume")
         args.chunk_id = None
+
+    # Chunk de fin : converti ici en num_chunks, la seule grandeur que
+    # launch_simulation_chunked connait. Resolu APRES --chunk-id, qui peut
+    # venir d'etre deduit du dernier checkpoint.
+    dernier_fait = args.chunk_id if args.resume else 0
+    if args.end_chunk is not None:
+        if any(t in ("-n", "--chunks") or t.startswith("--chunks=")
+               for t in sys.argv[1:]):
+            print(f"[cli] -n ignore : --end-chunk {args.end_chunk} fixe la fin")
+        try:
+            cfg = cfg._replace(num_chunks=chunks_jusqua(args.end_chunk, dernier_fait))
+        except ValueError as e:
+            raise SystemExit(str(e))
+    print(f"[cli] chunks {dernier_fait + 1} a {dernier_fait + cfg.num_chunks} "
+          f"({cfg.num_chunks} a calculer)")
 
     key = random.PRNGKey(args.seed)
     print(jax.devices())
