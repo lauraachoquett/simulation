@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jax import random
 
 from simulation.genealogy.genealogy import update_genealogy, chaine_ancetres
+from simulation.genealogy.lod import segment_fixe, params_du_segment, enregistre
 from simulation.genealogy.pca import save_alive_snapshot, load_clade_snapshots
 from simulation.genealogy.r0 import plot_r0, r0_by_birth_window
 from simulation.genealogy.mrca import coalescence_point, plot_tmrca_gen
@@ -33,6 +34,7 @@ class GenealogyMixin:
         self.prev_born = None
         self.prev_parent = None
         self.coalesced = False
+        self.mrca_prev = None      # dernier MRCA enregistre dans la lignee
 
     def update_genealogy(self, outputs,state, exp_dir):
         self.prev_born, self.prev_parent = update_genealogy(
@@ -50,7 +52,36 @@ class GenealogyMixin:
         tmrca_generations = outputs_mcra['tmrca_generations']
         self.tmrca_gen.append(tmrca_generations)
         if self.coalesced:
+            self.sauve_lignee(outputs_mcra['mrca'], exp_dir)
             plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen, exp_dir)
+
+    def sauve_lignee(self, mrca, exp_dir):
+        """Enregistre les ancetres fixes depuis le dernier changement de MRCA.
+
+        Le MRCA n'avance que par a-coups : la plupart des chunks le laissent en
+        place et ne coutent qu'une comparaison.
+        """
+        if mrca is None or mrca == self.mrca_prev:
+            return
+        segment, rupture = segment_fixe(mrca, self.mrca_prev, self.node_parent)
+        if not segment:
+            self.mrca_prev = mrca
+            return
+
+        # Fenetre de chunks ou ces ancetres ont pu etre vivants. Sans cette
+        # borne, load_clade_snapshots relirait tous les instantanes du run a
+        # chaque fixation.
+        deb = max(1, int(segment[0][1]) // self.cfg.chunk_size)
+        params = params_du_segment(segment, os.path.join(exp_dir, "params"),
+                                   range(deb, self.chunk_idx + 1))
+        n = enregistre(exp_dir, self.chunk_idx,
+                       self.chunk_idx * self.cfg.chunk_size,
+                       mrca, self.mrca_prev, segment, params, rupture)
+        print(f"[lod] chunk {self.chunk_idx} : {len(segment)} ancetre(s) fixe(s), "
+              f"{n} genome(s) retrouve(s)"
+              + ("  [rupture : changement de fondateur]" if rupture else ""),
+              flush=True)
+        self.mrca_prev = mrca
 
     def plot_lineage_simplex(self, state, key_env, subkey_sim, model, exp_dir,
                              n_lignees=1, max_generations=80):
