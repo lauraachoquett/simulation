@@ -245,6 +245,11 @@ class Config(NamedTuple):
 
     track_weights : bool = False
 
+    # Ligne de descendance : garder en memoire les genomes des ancetres encore
+    # susceptibles d'etre fixes, et les ecrire dans lod/ quand le MRCA avance.
+    # Cout memoire seul, quelques Mo ; --no-lod le coupe.
+    track_lod : bool = True
+
     lstm_forget_bias : float = None
 
     init_scale : str = "constant"

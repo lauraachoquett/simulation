@@ -420,6 +420,7 @@ CLI_FLAGS = [
     (("--randpos",), "random_pos_offspring"),
     (("--mem-ablation",), "lab_memory_ablation"),
     (("--weights",), "track_weights"),
+    (("--lod",),     "track_lod"),
     (("--repro",),   "reproduction_on"),
     (("--growth",),  "resources_growth"),
     (("--figurants",), "lab_figurants"),

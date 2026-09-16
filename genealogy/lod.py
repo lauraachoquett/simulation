@@ -81,6 +81,61 @@ def enregistre(exp_dir, chunk, step, mrca, mrca_prec, segment,
     return len(ordre)
 
 
+def capture_vivants(cache, state):
+    """Ajoute au cache les genomes des vivants qui n'y sont pas encore.
+
+    Cle = (slot, born_step), la meme que node_parent. Un genome ne change pas
+    au cours d'une vie, donc la premiere capture suffit.
+
+    Limite : la capture a lieu en fin de chunk, donc un individu ne vivant
+    qu'entre deux frontieres de chunk est manque. En pratique un ancetre de la
+    lignee s'est reproduit, donc a vecu au moins time_above_repr pas -- plus
+    long qu'un chunk dans les configs courantes.
+    """
+    alive = np.asarray(state.agents.alive)
+    born = np.asarray(state.agents.born_step)
+    params = np.asarray(state.agents.params)
+    for i in np.nonzero(alive == 1)[0]:
+        if i == 0:                       # slot 0 : sentinelle
+            continue
+        cle = (int(i), int(born[i]))
+        if cle not in cache:
+            cache[cle] = params[i].astype(np.float32)
+    return cache
+
+
+def elague_cache(cache, feuilles, node_parent, mrca=None):
+    """Ne garde que les ancetres encore susceptibles d'entrer dans la lignee.
+
+    Un futur ancetre commun est forcement sur une chaine reliant un vivant au
+    MRCA courant : tout le reste ne sera jamais fixe et son genome ne servira
+    plus. C'est ce qui borne la memoire -- sans cet elagage, le cache
+    accumulerait tous les individus du run.
+
+    On s'arrete des qu'on retombe sur un noeud deja garde : les chaines
+    fusionnent vite, donc le cout reel est bien inferieur a feuilles x profondeur.
+    """
+    garder = set()
+    for feuille in feuilles:
+        n = feuille
+        while n is not None and n not in garder:
+            garder.add(n)
+            if n == mrca:
+                break
+            n = node_parent.get(n)
+    for cle in list(cache):
+        if cle not in garder:
+            del cache[cle]
+    return cache
+
+
+def feuilles_vivantes(state):
+    """Noeuds (slot, born_step) des agents vivants."""
+    alive = np.asarray(state.agents.alive)
+    born = np.asarray(state.agents.born_step)
+    return [(int(i), int(born[i])) for i in np.nonzero(alive == 1)[0] if i != 0]
+
+
 def charge_lignee(exp_dir):
     """[(slot, born)] de toute la ligne de descendance, du plus ancien au plus recent.
 

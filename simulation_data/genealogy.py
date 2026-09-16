@@ -16,7 +16,9 @@ import jax.numpy as jnp
 from jax import random
 
 from simulation.genealogy.genealogy import update_genealogy, chaine_ancetres
-from simulation.genealogy.lod import segment_fixe, params_du_segment, enregistre
+from simulation.genealogy.lod import (segment_fixe, params_du_segment,
+                                      enregistre, capture_vivants,
+                                      elague_cache, feuilles_vivantes)
 from simulation.genealogy.pca import save_alive_snapshot, load_clade_snapshots
 from simulation.genealogy.r0 import plot_r0, r0_by_birth_window
 from simulation.genealogy.mrca import coalescence_point, plot_tmrca_gen
@@ -35,6 +37,7 @@ class GenealogyMixin:
         self.prev_parent = None
         self.coalesced = False
         self.mrca_prev = None      # dernier MRCA enregistre dans la lignee
+        self.lod_cache = {}        # (slot, born) -> genome, candidats a la lignee
 
     def update_genealogy(self, outputs,state, exp_dir):
         self.prev_born, self.prev_parent = update_genealogy(
@@ -45,6 +48,14 @@ class GenealogyMixin:
             if self.coalesced:
                 self.update_weight_metrics(state)      # -> WeightsMixin
             save_alive_snapshot(state, self.chunk_idx, os.path.join(exp_dir, 'params'))
+
+        if self.cfg.track_lod:
+            # Genomes gardes EN MEMOIRE, et seulement ceux qui peuvent encore
+            # devenir ancetres communs : params/ ecrirait tous les vivants a
+            # chaque chunk, alors que la lignee n'en retient qu'une poignee.
+            capture_vivants(self.lod_cache, state)
+            elague_cache(self.lod_cache, feuilles_vivantes(state),
+                         self.node_parent, self.mrca_prev)
 
     def update_mrca_and_plot(self, outputs, exp_dir):
         outputs_mcra = coalescence_point(outputs, self.node_parent)
@@ -68,12 +79,16 @@ class GenealogyMixin:
             self.mrca_prev = mrca
             return
 
-        # Fenetre de chunks ou ces ancetres ont pu etre vivants. Sans cette
-        # borne, load_clade_snapshots relirait tous les instantanes du run a
-        # chaque fixation.
-        deb = max(1, int(segment[0][1]) // self.cfg.chunk_size)
-        params = params_du_segment(segment, os.path.join(exp_dir, "params"),
-                                   range(deb, self.chunk_idx + 1))
+        # Le cache d'abord : il porte exactement les candidats a la lignee.
+        params = {n: self.lod_cache[n] for n in segment if n in self.lod_cache}
+        manquants = [n for n in segment if n not in params]
+        if manquants and os.path.isdir(os.path.join(exp_dir, "params")):
+            # Filet, seulement si --weights ecrit params/ : un ancetre dont la
+            # vie tient entre deux frontieres de chunk echappe au cache.
+            deb = max(1, int(segment[0][1]) // self.cfg.chunk_size)
+            params.update(params_du_segment(manquants,
+                                            os.path.join(exp_dir, "params"),
+                                            range(deb, self.chunk_idx + 1)))
         n = enregistre(exp_dir, self.chunk_idx,
                        self.chunk_idx * self.cfg.chunk_size,
                        mrca, self.mrca_prev, segment, params, rupture)
