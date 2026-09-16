@@ -2092,7 +2092,7 @@ def _cadre_simplex(ax, etiquettes=True):
     ax.set_ylim(-marge, np.sqrt(3) / 2 + marge)
 
 
-def frise_canaux(fig, shuffle_log, ids_initiaux, step=None,
+def frise_canaux(fig, shuffle_log, ids_initiaux, step=None, curseur=True,
                  rect=(0.13, 0.045, 0.78, 0.055)):
     """Une bande par canal, coloree selon l'identite qu'il porte.
 
@@ -2117,7 +2117,9 @@ def frise_canaux(fig, shuffle_log, ids_initiaux, step=None,
         for k, ident in enumerate(ordre):
             fr.barh(n_can - 1 - k, x1 - x0, left=x0, height=.82,
                     color=color_of(int(ident)), edgecolor="white", linewidth=.6)
-    if step is not None:
+    # `step` borne aussi l'etendue : une video qui deplace son propre curseur
+    # passe curseur=False mais garde le pas de fin.
+    if step is not None and curseur:
         fr.axvline(step, color="#C1121F", lw=2.0, zorder=5)
     fr.set_yticks(range(n_can))
     fr.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)], fontsize=8)

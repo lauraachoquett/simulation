@@ -191,16 +191,14 @@ def main():
                              a.batch, a.exp_dir)
     dispo = disponible_par_identite(genomes, retenus, cfg, model, sd, key_env, cle)
 
-    # Premiere generation d'une nouvelle epoque : une permutation tombe entre la
-    # naissance du precedent RETENU et la sienne.
-    pas_shuffle = np.array([e["step"] for e in load_shuffle_log(a.exp_dir)],
-                           dtype=np.int64)
+    # Changement REEL de l'affectation canal -> identite entre deux ancetres
+    # retenus : deux permutations entre deux naissances peuvent se compenser, et
+    # il n'y a alors rien a voir.
     naissances = np.array([b for _, b in retenus], dtype=np.int64)
+    ordres = build_id_timeline(naissances, load_shuffle_log(a.exp_dir),
+                               [r.id for r in cfg.resources])
     post = np.zeros(len(retenus), dtype=bool)
-    for i in range(1, len(retenus)):
-        if pas_shuffle.size:
-            post[i] = ((pas_shuffle > naissances[i - 1])
-                       & (pas_shuffle <= naissances[i])).any()
+    post[1:] = (ordres[1:] != ordres[:-1]).any(axis=1)
 
     data_dir = os.path.join(a.exp_dir, "lod", "lab")
     os.makedirs(data_dir, exist_ok=True)
@@ -230,8 +228,6 @@ def main():
     else:
         print("Simplex : moins de deux ancetres ont mange, rien a tracer")
 
-    ordres = build_id_timeline(naissances, load_shuffle_log(a.exp_dir),
-                               [r.id for r in cfg.resources])
     plot_lod_metrics(np.arange(len(retenus)), naissances, mesures["age"], post,
                      poison=mesures["p_poison"], ordres=ordres, fig_dir=fig_dir)
 
