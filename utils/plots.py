@@ -2350,25 +2350,27 @@ def _med_glissante(y, k):
     return out
 
 
-def plot_lod_metrics(generations, naissances, duree_vie, greediness,
-                     post_shuffle, poison=None, exp_dir=None, fig_dir=None,
+def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
+                     poison=None, ordres=None, exp_dir=None, fig_dir=None,
                      lissage=9, fname="lod_metrics.png"):
     """Mesures le long de la lignee, par generation.
 
     Un individu par generation, donc bruite : mediane glissante par-dessus les
-    points. Traits verticaux = permutations traversees.
+    points. `ordres` (n, n_canaux) ajoute la bande des permutations sous les
+    courbes, dans les memes coordonnees : elle s'aligne sur les pointilles.
     """
     g = np.asarray(generations)
-    panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None),
-                (greediness, "P(eat | resource in view)", "ratio", "#E76F51",
-                 (0, 1))]
+    panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None)]
     if poison is not None:
         panneaux.append((poison, "P(eat poison | poison in view)", "ratio",
                          color_of(LABELS.index("poison")), (0, 1)))
 
-    fig, axes = plt.subplots(len(panneaux), 1, sharex=True, squeeze=False,
-                             figsize=(11, 3.6 * len(panneaux)))
+    hauteurs = [3.4] * len(panneaux) + ([0.8] if ordres is not None else [])
+    fig, axes = plt.subplots(len(hauteurs), 1, sharex=True, squeeze=False,
+                             figsize=(11, 1.05 * sum(hauteurs)),
+                             gridspec_kw={"height_ratios": hauteurs})
     axes = axes[:, 0]
+
     for ax, (y, titre, unite, couleur, bornes) in zip(axes, panneaux):
         y = np.asarray(y, dtype=float)
         ax.plot(g, y, marker=".", ls="none", ms=4, alpha=.45, color=couleur)
@@ -2385,6 +2387,28 @@ def plot_lod_metrics(generations, naissances, duree_vie, greediness,
         if bornes:
             ax.set_ylim(*bornes)
         ax.grid(alpha=.25)
+
+    if ordres is not None:
+        ordres = np.asarray(ordres)
+        bande, n_can = axes[-1], ordres.shape[1]
+        for k in range(n_can):
+            col, deb_i = ordres[:, k], 0
+            for i in range(1, len(col) + 1):
+                if i == len(col) or col[i] != col[deb_i]:
+                    bande.barh(n_can - 1 - k, g[i - 1] - g[deb_i] + 1,
+                               left=g[deb_i] - .5, height=.82,
+                               color=color_of(int(col[deb_i])),
+                               edgecolor="white", linewidth=.6)
+                    deb_i = i
+        for x in g[np.asarray(post_shuffle, dtype=bool)]:
+            bande.axvline(x, color="grey", lw=1, ls=":", zorder=3)
+        bande.set_ylim(-0.5, n_can - 0.5)
+        bande.set_yticks(range(n_can))
+        bande.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)],
+                              fontsize=8)
+        bande.set_ylabel("channel", fontsize=9)
+        bande.spines[["right", "top"]].set_visible(False)
+        bande.tick_params(labelsize=8)
     axes[-1].set_xlabel("generation along the line of descent")
 
     # pas de naissance en haut : les generations ne sont pas equidistantes
