@@ -17,11 +17,5 @@ dependencies = [
     "plotly>=6.8.0",
 ]
 
-[tool.uv.workspace]
-exclude = ["EcoEvoJax/evojax"]
-members = [
-    "EcoEvoJax/evojax",
-]
-
 [tool.uv.sources]
 evojax = { path = "EcoEvoJax/evojax", editable = true }
