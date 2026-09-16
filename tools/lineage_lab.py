@@ -2,31 +2,6 @@
 
     python -m simulation.tools.lineage_lab <exp_dir>
     python -m simulation.tools.lineage_lab <exp_dir> --lab 2000 --batch 100
-
-lod/ porte les ancetres devenus communs a toute la population, avec leur pas de
-naissance et leur genome. On les rejoue ici dans l'env high_res pour en tirer un
-comportement -- regime alimentaire, duree de vie, P(manger | ressource en vue) --
-plutot que d'accumuler ce qu'ils ont mange dans le monde, qui melange le genome
-et la circonstance (ce qui passait a portee, la concurrence, ou ils avaient
-marche).
-
-Trois points de conception.
-
-1. Chaque ancetre est evalue sous la configuration de canaux EN VIGUEUR A SA
-   NAISSANCE, reconstruite depuis resource_shuffles.jsonl. Le prendre dans
-   l'ordre courant ferait porter chaque sommet du simplex sur la mauvaise
-   identite pour tous les ancetres anterieurs a la derniere permutation.
-
-2. On groupe par ORDRE DE CANAUX et non par epoque : il n'existe que 3! = 6
-   ordres, donc au plus 6 configurations de lab et 6 compilations, quel que soit
-   le nombre de permutations traversees.
-
-3. key_env vient de cfg.lab_seed, comme dans tools/replay_lab : les ancetres sont
-   notes sur le meme etalon que toutes les autres series de lab du run.
-
-La lignee est UNE chaine, pas un echantillon de lignees tirees au hasard parmi
-les vivants : c'est la suite des individus par lesquels l'evolution est
-effectivement passee.
 """
 import argparse
 import glob
@@ -69,17 +44,15 @@ def dernier_chunk_fixe(exp_dir):
 
 
 def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
-    """(regime par identite, metriques) pour chaque ancetre.
-
-    Le regroupement par ordre de canaux est ce qui borne le nombre de
-    compilations ; sans lui, chaque epoque traversee en declencherait une.
-    """
+    """(regime par identite, metriques) pour chaque ancetre."""
     n_types = len(cfg.resources)
     par_id = {r.id: r for r in cfg.resources}
     naissances = np.array([b for _, b in retenus], dtype=np.int64)
     ordres = build_id_timeline(naissances, load_shuffle_log(exp_dir),
                                [r.id for r in cfg.resources])
 
+    # Grouper par ORDRE DE CANAUX et non par epoque : 6 ordres possibles, donc
+    # au plus 6 compilations quel que soit le nombre de permutations.
     groupes = {}
     for i in range(len(retenus)):
         groupes.setdefault(tuple(int(x) for x in ordres[i]), []).append(i)
@@ -102,10 +75,10 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
             _, out = vmap_over_agents_env_lab_high_res(
                 X, key_env, random.split(k, len(lot)), model, cfg_g)
 
-            mange = sd.eaten_by_type(out)            # (B, n_types) par CANAL
+            mange = sd.eaten_by_type(out)            # (B, n_types) par canal
             for j, i in enumerate(lot):
                 for k_canal, ident in enumerate(ordre):
-                    regime[i, ident] = mange[j, k_canal]   # canal -> identite
+                    regime[i, ident] = mange[j, k_canal]
             par_genome = sd.data_lab_env_grouped(out, resources=cfg_g.resources)
             for cle_m in mesures:
                 mesures[cle_m][lot] = par_genome[cle_m]
@@ -113,8 +86,11 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
 
 
 def disponible_par_identite(genomes, retenus, cfg, model, sd, key_env, cle):
-    """Ce que la grille offre, par identite. Invariant d'une epoque a l'autre :
-    les parametres de croissance voyagent avec l'identite lors d'une permutation."""
+    """Ce que la grille offre, par identite.
+
+    Un seul point de reference : les parametres de croissance voyagent avec
+    l'identite, donc l'offre par identite ne change pas d'une epoque a l'autre.
+    """
     n_types = len(cfg.resources)
     cle, k = random.split(cle)
     _, out = vmap_over_agents_env_lab_high_res(
@@ -135,11 +111,11 @@ def main():
     p.add_argument("--batch", type=int, default=EVO_BATCH,
                    help="ancetres par vmap (defaut %(default)s)")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
-                   help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
-                        "noter les ancetres sur le meme etalon que le run)")
+                   help="graine de l'env de lab (defaut : cfg.lab_seed, le meme "
+                        "etalon que les autres series du run)")
     p.add_argument("--max", type=int, default=0, metavar="N",
-                   help="n'evaluer que N ancetres, repartis regulierement le "
-                        "long de la lignee (defaut 0 = tous)")
+                   help="n'evaluer que N ancetres, repartis le long de la "
+                        "lignee (defaut 0 = tous)")
     p.add_argument("-o", "--out", default=None,
                    help="dossier des figures (defaut <exp_dir>/fig/lod)")
     a = p.parse_args()
@@ -169,8 +145,7 @@ def main():
     if a.max and len(retenus) > a.max:
         pris = np.linspace(0, len(retenus) - 1, a.max).astype(int)
         retenus = [retenus[i] for i in sorted(set(pris))]
-        print(f"--max {a.max} : {len(retenus)} ancetre(s) evalue(s), "
-              "repartis le long de la lignee")
+        print(f"--max {a.max} : {len(retenus)} ancetre(s) evalue(s)")
 
     model = build_model(cfg)
     sd = simulation_data(cfg, 0, 1)
@@ -183,9 +158,8 @@ def main():
                              a.batch, a.exp_dir)
     dispo = disponible_par_identite(genomes, retenus, cfg, model, sd, key_env, cle)
 
-    # Une permutation entre la naissance de l'ancetre precedent et la sienne :
-    # premiere generation d'une nouvelle epoque. Le precedent RETENU sert de
-    # reference -- un ancetre sans genome, ou ecarte par --max, est enjambe.
+    # Premiere generation d'une nouvelle epoque : une permutation tombe entre la
+    # naissance du precedent RETENU et la sienne.
     pas_shuffle = np.array([e["step"] for e in load_shuffle_log(a.exp_dir)],
                            dtype=np.int64)
     naissances = np.array([b for _, b in retenus], dtype=np.int64)
@@ -205,8 +179,8 @@ def main():
         **{k: v for k, v in mesures.items()})
     print(f"Donnees : {os.path.join(data_dir, 'evaluation.npz')}")
 
-    # Un ancetre n'ayant rien mange au lab est ABSENT de la chaine : sa position
-    # dans le simplex est indefinie, pas nulle. Le trait l'enjambe.
+    # Un ancetre n'ayant rien mange est absent de la chaine : position indefinie,
+    # pas nulle. Le trait l'enjambe.
     chaine = [dict(regime=regime[i], born=int(naissances[i]),
                    post_shuffle=bool(post[i]))
               for i in range(len(retenus))

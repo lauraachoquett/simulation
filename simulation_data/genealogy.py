@@ -50,9 +50,7 @@ class GenealogyMixin:
             save_alive_snapshot(state, self.chunk_idx, os.path.join(exp_dir, 'params'))
 
         if self.cfg.track_lod:
-            # Genomes gardes EN MEMOIRE, et seulement ceux qui peuvent encore
-            # devenir ancetres communs : params/ ecrirait tous les vivants a
-            # chaque chunk, alors que la lignee n'en retient qu'une poignee.
+            # en memoire, et seulement les candidats a la lignee
             capture_vivants(self.lod_cache, state)
             elague_cache(self.lod_cache, feuilles_vivantes(state),
                          self.node_parent, self.mrca_prev)
@@ -67,11 +65,7 @@ class GenealogyMixin:
             plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen, exp_dir)
 
     def sauve_lignee(self, mrca, exp_dir):
-        """Enregistre les ancetres fixes depuis le dernier changement de MRCA.
-
-        Le MRCA n'avance que par a-coups : la plupart des chunks le laissent en
-        place et ne coutent qu'une comparaison.
-        """
+        """Enregistre les ancetres fixes depuis le dernier changement de MRCA."""
         if mrca is None or mrca == self.mrca_prev:
             return
         segment, rupture = segment_fixe(mrca, self.mrca_prev, self.node_parent)
@@ -79,12 +73,10 @@ class GenealogyMixin:
             self.mrca_prev = mrca
             return
 
-        # Le cache d'abord : il porte exactement les candidats a la lignee.
         params = {n: self.lod_cache[n] for n in segment if n in self.lod_cache}
         manquants = [n for n in segment if n not in params]
         if manquants and os.path.isdir(os.path.join(exp_dir, "params")):
-            # Filet, seulement si --weights ecrit params/ : un ancetre dont la
-            # vie tient entre deux frontieres de chunk echappe au cache.
+            # filet quand --weights ecrit params/
             deb = max(1, int(segment[0][1]) // self.cfg.chunk_size)
             params.update(params_du_segment(manquants,
                                             os.path.join(exp_dir, "params"),

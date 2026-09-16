@@ -2293,8 +2293,7 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
     print(f"Figure saved: {out}")
 
 def _med_glissante(y, k):
-    """Mediane glissante sur k points, NaN ignores. k pair -> k+1, pour que la
-    fenetre soit centree."""
+    """Mediane glissante sur k points, NaN ignores. k pair -> k+1 (fenetre centree)."""
     y = np.asarray(y, dtype=float)
     if k < 3 or y.size < 3:
         return y
@@ -2311,20 +2310,10 @@ def _med_glissante(y, k):
 def plot_lod_metrics(generations, naissances, duree_vie, greediness,
                      post_shuffle, exp_dir=None, fig_dir=None, lissage=9,
                      fname="lod_metrics.png"):
-    """Deux mesures le long de la ligne de descendance, par generation.
+    """Duree de vie au lab et P(manger | en vue) le long de la lignee.
 
-    En haut la duree de vie AU LAB, en bas P(manger | ressource en vue). Les
-    deux viennent du meme rollout que le point du simplex, donc se lisent
-    ensemble : un regime qui se deplace sans que la survie bouge ne dit pas la
-    meme chose qu'un deplacement accompagne d'un gain.
-
-    Une lignee est bruitee -- un individu, un rollout -- d'ou la mediane
-    glissante par-dessus les points. Les traits verticaux marquent les
-    permutations de canaux traversees : c'est ce qui permet de rattacher une
-    cassure a un changement d'environnement plutot qu'a une derive du genome.
-
-    L'axe du haut porte le pas de naissance : les generations ne sont pas
-    equidistantes dans le temps, une lignee pouvant accelerer ou ralentir.
+    Un individu par generation, donc bruite : mediane glissante par-dessus les
+    points. Traits verticaux = permutations traversees.
     """
     g = np.asarray(generations)
     fig, axes = plt.subplots(2, 1, figsize=(11, 7.2), sharex=True)
@@ -2348,7 +2337,7 @@ def plot_lod_metrics(generations, naissances, duree_vie, greediness,
     axes[1].set_ylim(0, 1)                       # G est un ratio borne
     axes[1].set_xlabel("generation along the line of descent")
 
-    # pas de naissance en haut : meme axe, autres etiquettes
+    # pas de naissance en haut : les generations ne sont pas equidistantes
     naissances = np.asarray(naissances)
     if g.size:
         haut = axes[0].twiny()

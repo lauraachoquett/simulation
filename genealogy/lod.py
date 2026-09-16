@@ -1,13 +1,7 @@
-"""Ligne de descendance : les ancetres devenus communs a toute la population.
+"""Ligne de descendance : les ancetres fixes, enregistres quand le MRCA avance.
 
-Quand le MRCA avance, tous les noeuds situes entre l'ancien et le nouveau sont
-desormais ancetres de TOUS les vivants. Leur sort ne changera plus : ils sont
-fixes. Les enregistrer au fil du run donne la ligne de descendance, c'est-a-dire
-la suite des individus par lesquels l'evolution est effectivement passee.
-
-Il faut le faire PENDANT le run : l'arbre (node_parent) ne vit qu'en memoire, et
-params/ est supprime a la fin par purge_params. Rien ne permet de reconstituer
-la lignee apres coup.
+A faire pendant le run : node_parent ne vit qu'en memoire et params/ est
+supprime a la fin.
 """
 import json
 import os
@@ -20,11 +14,7 @@ from simulation.genealogy.genealogy import chaine_ancetres
 def segment_fixe(mrca, mrca_prec, node_parent):
     """Noeuds de `mrca_prec` (exclu) a `mrca` (inclus), du plus ancien au plus recent.
 
-    `mrca_prec=None` (premiere coalescence) -> toute la chaine jusqu'a la racine.
-
-    Si `mrca_prec` n'est pas sur la chaine du nouveau MRCA, la population a
-    change de fondateur : on rend alors la chaine entiere, et le drapeau
-    `rupture` le signale plutot que de laisser un trou silencieux dans la lignee.
+    mrca_prec absent de la chaine -> changement de fondateur, signale par `rupture`.
     """
     chaine = chaine_ancetres(mrca, node_parent)      # [mrca, parent, ..., racine]
     if mrca_prec is None or mrca_prec not in chaine:
@@ -33,14 +23,7 @@ def segment_fixe(mrca, mrca_prec, node_parent):
 
 
 def params_du_segment(segment, params_dir, chunks):
-    """Genomes des ancetres fixes, lus dans les instantanes de vivants.
-
-    Incomplet par construction : params/ ne garde qu'un instantane par chunk,
-    donc un ancetre ne vivant qu'entre deux instantanes n'y figure pas. Le
-    nombre reellement retrouve est rendu a l'appelant pour que le trou soit
-    visible. Vide si track_weights est False -- rien n'est alors ecrit dans
-    params/.
-    """
+    """Genomes lus dans params/. Incomplet : un instantane par chunk seulement."""
     from simulation.genealogy.pca import load_clade_snapshots
     if not os.path.isdir(params_dir):
         return {}
@@ -49,11 +32,7 @@ def params_du_segment(segment, params_dir, chunks):
 
 def enregistre(exp_dir, chunk, step, mrca, mrca_prec, segment,
                params=None, rupture=False):
-    """Ajoute un evenement de fixation a lod/lignee.jsonl. Rend le nb de genomes ecrits.
-
-    Un fichier par ligne et en mode append : un run interrompu garde tout ce
-    qui precede, et la lignee se lit dans l'ordre chronologique sans rien trier.
-    """
+    """Ajoute un evenement de fixation a lod/lignee.jsonl, en append."""
     d = os.path.join(exp_dir, "lod")
     os.makedirs(d, exist_ok=True)
 
@@ -82,15 +61,10 @@ def enregistre(exp_dir, chunk, step, mrca, mrca_prec, segment,
 
 
 def capture_vivants(cache, state):
-    """Ajoute au cache les genomes des vivants qui n'y sont pas encore.
+    """Ajoute au cache les genomes des vivants absents. Cle = (slot, born_step).
 
-    Cle = (slot, born_step), la meme que node_parent. Un genome ne change pas
-    au cours d'une vie, donc la premiere capture suffit.
-
-    Limite : la capture a lieu en fin de chunk, donc un individu ne vivant
-    qu'entre deux frontieres de chunk est manque. En pratique un ancetre de la
-    lignee s'est reproduit, donc a vecu au moins time_above_repr pas -- plus
-    long qu'un chunk dans les configs courantes.
+    Capture en fin de chunk : un individu ne vivant qu'entre deux frontieres est
+    manque.
     """
     alive = np.asarray(state.agents.alive)
     born = np.asarray(state.agents.born_step)
@@ -105,15 +79,9 @@ def capture_vivants(cache, state):
 
 
 def elague_cache(cache, feuilles, node_parent, mrca=None):
-    """Ne garde que les ancetres encore susceptibles d'entrer dans la lignee.
+    """Ne garde que les noeuds sur une chaine reliant un vivant au MRCA courant.
 
-    Un futur ancetre commun est forcement sur une chaine reliant un vivant au
-    MRCA courant : tout le reste ne sera jamais fixe et son genome ne servira
-    plus. C'est ce qui borne la memoire -- sans cet elagage, le cache
-    accumulerait tous les individus du run.
-
-    On s'arrete des qu'on retombe sur un noeud deja garde : les chaines
-    fusionnent vite, donc le cout reel est bien inferieur a feuilles x profondeur.
+    Sans cet elagage le cache accumulerait tous les individus du run.
     """
     garder = set()
     for feuille in feuilles:
@@ -137,12 +105,7 @@ def feuilles_vivantes(state):
 
 
 def charge_lignee(exp_dir):
-    """[(slot, born)] de toute la ligne de descendance, du plus ancien au plus recent.
-
-    Les segments sont disjoints et deja dans l'ordre : il suffit de les mettre
-    bout a bout. Un segment marque `rupture` signale un changement de fondateur,
-    donc un saut dans la suite.
-    """
+    """[(slot, born)] de toute la lignee, du plus ancien au plus recent."""
     path = os.path.join(exp_dir, "lod", "lignee.jsonl")
     if not os.path.exists(path):
         return []
