@@ -2105,7 +2105,9 @@ def frise_canaux(fig, shuffle_log, ids_initiaux, step=None,
     fin = max(int(step or 0), epoques[-1][0]) or 1
 
     fr = fig.add_axes(rect)
-    fr.set_xlim(0, fin)
+    # marge a droite : le pas courant est souvent le dernier, et le curseur
+    # tombait alors sur le bord de l'axe, invisible
+    fr.set_xlim(0, fin * 1.02)
     fr.set_ylim(-0.5, n_can - 0.5)
     fr.spines[["right", "top"]].set_visible(False)
     for i, (x0, ordre) in enumerate(epoques):
