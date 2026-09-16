@@ -2092,9 +2092,42 @@ def _cadre_simplex(ax, etiquettes=True):
     ax.set_ylim(-marge, np.sqrt(3) / 2 + marge)
 
 
+def frise_canaux(fig, shuffle_log, ids_initiaux, step=None,
+                 rect=(0.13, 0.045, 0.78, 0.055)):
+    """Une bande par canal, coloree selon l'identite qu'il porte.
+
+    Les sommets du triangle sont des identites : une permutation n'y deplace
+    rien du decor. La frise est donc la seule chose qui montre CE QUI a change.
+    """
+    epoques = [(0, list(ids_initiaux))]
+    epoques += [(int(e["step"]), list(e["order_ids"])) for e in shuffle_log]
+    n_can = len(ids_initiaux)
+    fin = max(int(step or 0), epoques[-1][0]) or 1
+
+    fr = fig.add_axes(rect)
+    fr.set_xlim(0, fin)
+    fr.set_ylim(-0.5, n_can - 0.5)
+    fr.spines[["right", "top"]].set_visible(False)
+    for i, (x0, ordre) in enumerate(epoques):
+        x1 = epoques[i + 1][0] if i + 1 < len(epoques) else fin
+        if x1 <= x0:
+            continue
+        for k, ident in enumerate(ordre):
+            fr.barh(n_can - 1 - k, x1 - x0, left=x0, height=.82,
+                    color=color_of(int(ident)), edgecolor="white", linewidth=.6)
+    if step is not None:
+        fr.axvline(step, color="#C1121F", lw=2.0, zorder=5)
+    fr.set_yticks(range(n_can))
+    fr.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)], fontsize=8)
+    fr.set_xlabel("Simulation step", fontsize=9)
+    fr.tick_params(labelsize=8)
+    return fr
+
+
 def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                       suffix="", titre="", fig_dir=None, parent=None,
-                      age_max=None):
+                      age_max=None, shuffle_log=None, ids_initiaux=None,
+                      step=None):
     """Composition du regime de chaque agent, dans un simplex good/medium/poison.
 
     `eaten` est indexe par CANAL ; `ids` donne l'identite de chaque canal. On
@@ -2166,6 +2199,10 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                  + (f"  |  {titre}" if titre else "") + f"\n{sous}",
                  fontsize=12)
 
+    if shuffle_log is not None and ids_initiaux is not None:
+        fig.subplots_adjust(bottom=0.20)
+        frise_canaux(fig, shuffle_log, ids_initiaux, step)
+
     fig_dir = fig_dir or os.path.join(exp_dir, "fig", "simplex")
     os.makedirs(fig_dir, exist_ok=True)
     out = os.path.join(fig_dir, f"food_simplex_chunk_{chunk}{suffix}.png")
@@ -2175,7 +2212,8 @@ def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
 
 
 def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
-                         fig_dir=None, titre=""):
+                         fig_dir=None, titre="", shuffle_log=None,
+                         ids_initiaux=None, step=None):
     """Trajectoire de quelques lignees dans le simplex good/medium/poison.
 
     `chaines` : liste de lignees, chacune une liste de dicts ordonnee de la
@@ -2285,6 +2323,11 @@ def plot_lineage_simplex(chaines, disponible, exp_dir, chunk, couverture=None,
     ax.set_title(f"Lineage trajectories in diet space — chunk {chunk}"
                  + (f"  |  {titre}" if titre else "") + f"\n{sous}", fontsize=12)
 
+    if shuffle_log is not None and ids_initiaux is not None:
+        fig.subplots_adjust(bottom=0.24)
+        frise_canaux(fig, shuffle_log, ids_initiaux, step,
+                     rect=(0.13, 0.055, 0.78, 0.055))
+
     fig_dir = fig_dir or os.path.join(exp_dir, "fig", "simplex")
     os.makedirs(fig_dir, exist_ok=True)
     out = os.path.join(fig_dir, f"lineage_simplex_chunk_{chunk}.png")
@@ -2308,19 +2351,25 @@ def _med_glissante(y, k):
 
 
 def plot_lod_metrics(generations, naissances, duree_vie, greediness,
-                     post_shuffle, exp_dir=None, fig_dir=None, lissage=9,
-                     fname="lod_metrics.png"):
-    """Duree de vie au lab et P(manger | en vue) le long de la lignee.
+                     post_shuffle, poison=None, exp_dir=None, fig_dir=None,
+                     lissage=9, fname="lod_metrics.png"):
+    """Mesures le long de la lignee, par generation.
 
     Un individu par generation, donc bruite : mediane glissante par-dessus les
     points. Traits verticaux = permutations traversees.
     """
     g = np.asarray(generations)
-    fig, axes = plt.subplots(2, 1, figsize=(11, 7.2), sharex=True)
+    panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None),
+                (greediness, "P(eat | resource in view)", "ratio", "#E76F51",
+                 (0, 1))]
+    if poison is not None:
+        panneaux.append((poison, "P(eat poison | poison in view)", "ratio",
+                         color_of(LABELS.index("poison")), (0, 1)))
 
-    for ax, y, titre, unite, couleur in (
-            (axes[0], duree_vie, "Lifespan in the lab", "steps", "#1D3557"),
-            (axes[1], greediness, "P(eat | resource in view)", "ratio", "#E76F51")):
+    fig, axes = plt.subplots(len(panneaux), 1, sharex=True, squeeze=False,
+                             figsize=(11, 3.6 * len(panneaux)))
+    axes = axes[:, 0]
+    for ax, (y, titre, unite, couleur, bornes) in zip(axes, panneaux):
         y = np.asarray(y, dtype=float)
         ax.plot(g, y, marker=".", ls="none", ms=4, alpha=.45, color=couleur)
         lisse = _med_glissante(y, lissage)
@@ -2333,9 +2382,10 @@ def plot_lod_metrics(generations, naissances, duree_vie, greediness,
             ax.axvline(x, color="grey", lw=1, ls=":", zorder=0)
         ax.set_title(titre, fontsize=11)
         ax.set_ylabel(unite)
+        if bornes:
+            ax.set_ylim(*bornes)
         ax.grid(alpha=.25)
-    axes[1].set_ylim(0, 1)                       # G est un ratio borne
-    axes[1].set_xlabel("generation along the line of descent")
+    axes[-1].set_xlabel("generation along the line of descent")
 
     # pas de naissance en haut : les generations ne sont pas equidistantes
     naissances = np.asarray(naissances)

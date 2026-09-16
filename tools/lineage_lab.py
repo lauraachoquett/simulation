@@ -8,15 +8,18 @@ import glob
 import json
 import os
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import random
 
+from simulation.data_class import label_of
 from simulation.genealogy.lod import charge_lignee
 from simulation.lab_env import vmap_over_agents_env_lab_high_res
 from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
-from simulation.simulation_data.lab import EVO_BATCH
+from simulation.simulation_data.energy_response import resource_in_view
+from simulation.simulation_data.lab import EVO_BATCH, _greediness
 from simulation.utils.plots import plot_lineage_simplex, plot_lod_metrics
 from simulation.utils.utils_sim import (build_id_timeline, load_config,
                                         load_shuffle_log)
@@ -43,6 +46,33 @@ def dernier_chunk_fixe(exp_dir):
     return dernier
 
 
+def proba_poison(out, resources):
+    """P(manger du poison | poison en vue), par fenetres de GREED_WINDOW pas.
+
+    Passe par ate_res et non par rewards > 0 : le poison rapporte un gain
+    negatif, la greediness ne le verrait donc jamais.
+    """
+    ch = [k for k, r in enumerate(resources) if label_of(r.id) == "poison"]
+    if not ch:
+        return None
+    n_channels = len(resources) + 2
+    G = np.full(out.alive.shape[0], np.nan)
+    for b in range(out.alive.shape[0]):
+        single = jax.tree_util.tree_map(lambda x: x[b], out)
+        alive = np.asarray(single.alive)
+        vivants = np.nonzero(alive[0, 1:] == 1)[0]
+        lignes = np.nonzero(alive[:, int(vivants[0]) + 1] == 1)[0] if vivants.size else []
+        if not len(lignes):
+            continue
+        slot = int(vivants[0]) + 1
+        saw = resource_in_view(single.obs, np.array(ch), n_channels)
+        ate = np.asarray(single.ate_res)[..., ch[0]] > 0
+        g, _, _ = _greediness(saw, ate, np.array([slot]), np.array([0]),
+                              np.array([int(lignes[-1])]))
+        G[b] = g[0]
+    return G
+
+
 def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
     """(regime par identite, metriques) pour chaque ancetre."""
     n_types = len(cfg.resources)
@@ -60,7 +90,7 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
 
     regime = np.full((len(retenus), n_types), np.nan)
     mesures = {k: np.full(len(retenus), np.nan)
-               for k in ("age", "greediness", "mean_rew")}
+               for k in ("age", "greediness", "mean_rew", "p_poison")}
 
     cfg_m = cfg._replace(log_grid=False)
     for ordre, idx in sorted(groupes.items()):
@@ -80,8 +110,11 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
                 for k_canal, ident in enumerate(ordre):
                     regime[i, ident] = mange[j, k_canal]
             par_genome = sd.data_lab_env_grouped(out, resources=cfg_g.resources)
-            for cle_m in mesures:
+            for cle_m in ("age", "greediness", "mean_rew"):
                 mesures[cle_m][lot] = par_genome[cle_m]
+            pp = proba_poison(out, cfg_g.resources)
+            if pp is not None:
+                mesures["p_poison"][lot] = pp
     return regime, mesures
 
 
@@ -190,12 +223,16 @@ def main():
         plot_lineage_simplex([chaine], dispo, a.exp_dir,
                              dernier_chunk_fixe(a.exp_dir),
                              couverture=len(chaine) / len(retenus),
-                             fig_dir=fig_dir, titre="line of descent")
+                             fig_dir=fig_dir, titre="line of descent",
+                             shuffle_log=load_shuffle_log(a.exp_dir),
+                             ids_initiaux=[r.id for r in cfg.resources],
+                             step=int(naissances[-1]))
     else:
         print("Simplex : moins de deux ancetres ont mange, rien a tracer")
 
     plot_lod_metrics(np.arange(len(retenus)), naissances, mesures["age"],
-                     mesures["greediness"], post, fig_dir=fig_dir)
+                     mesures["greediness"], post, poison=mesures["p_poison"],
+                     fig_dir=fig_dir)
 
 
 if __name__ == "__main__":
