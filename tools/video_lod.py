@@ -21,7 +21,7 @@ from simulation.utils.utils_video import VideoWriter
 
 
 def charge(exp_dir):
-    """(p, born, generation, post_shuffle, age) des ancetres ayant mange."""
+    """(p, born, generation, post_shuffle, age, disponible) des ancetres ayant mange."""
     f = os.path.join(exp_dir, "lod", "lab", "evaluation.npz")
     if not os.path.exists(f):
         raise SystemExit(f"{f} absent : lancer d'abord "
@@ -31,9 +31,13 @@ def charge(exp_dir):
         gen = np.asarray(d["generation"])
         post = np.asarray(d["post_shuffle"], bool)
         age = np.asarray(d["age"], float)
+        dispo = np.asarray(d["disponible"], float) if "disponible" in d else None
     total = regime.sum(axis=1)
     ok = np.isfinite(regime).all(axis=1) & (total > 0)
-    return regime[ok] / total[ok, None], born[ok], gen[ok], post[ok], age[ok]
+    if dispo is not None and dispo.sum() > 0:
+        dispo = dispo / dispo.sum()
+    return (regime[ok] / total[ok, None], born[ok], gen[ok], post[ok], age[ok],
+            dispo)
 
 
 def config(exp_dir):
@@ -61,7 +65,7 @@ def decor(exp_dir, born, age_max):
 
 
 def rend(fig, ax, curseur, p, born, gen, post, age, i, fenetre, taille,
-         cmap, norm):
+         cmap, norm, dispo=None):
     """Une frame : les `fenetre` dernieres generations, les plus anciennes pales.
 
     Couleur = duree de vie au lab, meme echelle que plot_food_simplex. Le point
@@ -95,6 +99,12 @@ def rend(fig, ax, curseur, p, born, gen, post, age, i, fenetre, taille,
                    facecolors="none", edgecolors="0.25", linewidths=1.2, zorder=5)
     ax.scatter(x[-1], y[-1], s=taille * 2.6, marker="*", color=couleurs[-1][:3],
                edgecolors="black", linewidths=1.0, zorder=6)
+    if dispo is not None:
+        # ancre : sans elle, un regime pres de `good` peut n'etre que le reflet
+        # de son abondance. C'est l'ecart au cercle qui est la preference.
+        xd, yd = _bary(*dispo)
+        ax.scatter([xd], [yd], marker="o", s=190, facecolor="none",
+                   edgecolor="black", linewidth=2.0, zorder=7)
 
     curseur.set_xdata([born[i], born[i]])
     vie = "" if not np.isfinite(age[i]) else f"   |   lab lifespan {int(age[i])}"
@@ -121,13 +131,16 @@ def main():
                        help="haut de l'echelle de couleur (defaut : lab_time_steps)")
     a = p_arg.parse_args()
 
-    p, born, gen, post, age = charge(a.exp_dir)
+    p, born, gen, post, age, dispo = charge(a.exp_dir)
     if len(p) < 2:
         raise SystemExit("moins de deux ancetres exploitables")
     age_max = a.age_max or config(a.exp_dir).get("lab_time_steps") \
         or float(np.nanmax(age))
     print(f"{len(p)} ancetre(s), generations {int(gen[0])} a {int(gen[-1])}, "
           f"{int(post.sum())} changement(s) de canaux")
+    if dispo is None:
+        print("[info] pas de composition disponible dans evaluation.npz : "
+              "relancer lineage_lab pour avoir le cercle de reference")
 
     fig, ax, curseur, cmap, norm = decor(a.exp_dir, born, age_max)
     sortie = a.out or os.path.join(a.exp_dir, "videos", "lod_simplex.mp4")
@@ -137,7 +150,7 @@ def main():
     with VideoWriter(sortie, fps=a.fps) as vid:
         for i in range(len(p)):
             img = rend(fig, ax, curseur, p, born, gen, post, age, i, a.fenetre,
-                       a.taille, cmap, norm)
+                       a.taille, cmap, norm, dispo)
             vid.add(img); n += 1
             if post[i]:
                 for _ in range(a.pause):

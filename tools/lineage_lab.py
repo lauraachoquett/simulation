@@ -206,7 +206,7 @@ def main():
         os.path.join(data_dir, "evaluation.npz"),
         slot=np.array([s for s, _ in retenus], dtype=np.int32),
         born=naissances, generation=np.arange(len(retenus)),
-        regime=regime, post_shuffle=post,
+        regime=regime, post_shuffle=post, disponible=dispo,
         **{k: v for k, v in mesures.items()})
     print(f"Donnees : {os.path.join(data_dir, 'evaluation.npz')}")
 
