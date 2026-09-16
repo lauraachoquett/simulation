@@ -2360,6 +2360,9 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
     courbes, dans les memes coordonnees : elle s'aligne sur les pointilles.
     """
     g = np.asarray(generations)
+    # Entre deux generations, pas sur l'une d'elles : la permutation tombe entre
+    # la naissance du precedent et celle-ci. C'est aussi la ou la bande bascule.
+    coupes = g[np.asarray(post_shuffle, dtype=bool)] - 0.5
     panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None)]
     if poison is not None:
         panneaux.append((poison, "P(eat poison | poison in view)", "ratio",
@@ -2380,7 +2383,7 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
             ax.plot(g[ok], lisse[ok], color=couleur, lw=2,
                     label=f"rolling median ({lissage})")
             ax.legend(loc="best", fontsize=9, frameon=False)
-        for x in g[np.asarray(post_shuffle, dtype=bool)]:
+        for x in coupes:
             ax.axvline(x, color="grey", lw=1, ls=":", zorder=0)
         ax.set_title(titre, fontsize=11)
         ax.set_ylabel(unite)
@@ -2400,7 +2403,7 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
                                color=color_of(int(col[deb_i])),
                                edgecolor="white", linewidth=.6)
                     deb_i = i
-        for x in g[np.asarray(post_shuffle, dtype=bool)]:
+        for x in coupes:
             bande.axvline(x, color="grey", lw=1, ls=":", zorder=3)
         bande.set_ylim(-0.5, n_can - 0.5)
         bande.set_yticks(range(n_can))
