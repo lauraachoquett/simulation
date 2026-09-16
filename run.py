@@ -278,17 +278,6 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             sim_data.update_genealogy(outputs,state,exp_dir)
             sim_data.update_mrca_and_plot(outputs,exp_dir)
 
-            ## TRAJECTOIRE DES LIGNEES DANS LE SIMPLEX ##
-            # Avant le shuffle : la config courante est encore celle sous
-            # laquelle les vivants ont vecu. Meme condition que le shuffle pour
-            # que les deux restent alignes si cycle_period change.
-            if ((chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10
-                    and len(cfg.resources) == 3 and cfg.track_weights):
-                subkey_lab, subkey_lig = random.split(subkey_lab)
-                sim_data.plot_lineage_simplex(state, subkey_env_lab, subkey_lig,
-                                              model, exp_dir)
-            
-
             ## TEST AGENTS IN LAB ENV ##
             phase = (chunk_idx) % cfg.cycle_period
             # lab_after_shuffle n'a de sens que s'il y a des permutations : a une
