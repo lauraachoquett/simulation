@@ -193,6 +193,16 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
               f"low_res={cfg.lab_env_low_res or '-'}")
 
     save_config(cfg,subkeys, exp_dir)
+
+    # Population initiale : le premier checkpoint n'arrive qu'au bout de
+    # checkpoint_freq chunks, donc l'etat de depart etait perdu. Avec lui, le
+    # rejeu place un point a l'origine des courbes.
+    if not reprend:
+        ckpt0 = os.path.join(exp_dir, "checkpoints", "state_chunk_0.pkl")
+        os.makedirs(os.path.dirname(ckpt0), exist_ok=True)
+        save_checkpoint(state, ckpt0)
+        print(f"[checkpoint] etat initial sauve : {ckpt0}")
+
     start_step = start_chunk * cfg.chunk_size
 
     sim_data = simulation_data(cfg=cfg,start_step=start_step, start_chunk =start_chunk)
