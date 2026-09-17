@@ -47,7 +47,7 @@ from simulation.lab_env import (env_file_pour,
 from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
 from simulation.utils.plots import (plot_lab_metrics, plot_lab_exploration,
-                                    plot_alone_vs_clones)
+                                    plot_alone_vs_clones, plot_food_simplex)
 from simulation.utils.utils_sim import (load_config, load_checkpoint,
                                         load_shuffle_log, VideoPayload)
 from simulation.utils.utils_video import save_chunk_video
@@ -458,6 +458,23 @@ def main():
                 # ce qui aligne la ligne b sur le meme genome d'un env a l'autre
                 pg_h = sd.data_lab_env_grouped(out_high, resources=res)
                 sd._save_pheno(pg_h, sortie, f"alone{marque}")
+
+                if len(res) == 3:
+                    eaten = sd.eaten_by_type(out_high)
+                    # le cercle de reference demande la grille : un rollout d'UN
+                    # genome, log_grid etant coupe sur la mesure
+                    _, out_g = vmap_over_agents_env_lab_high_res(
+                        params[:1], key_env, cles[:1], model,
+                        cfg_g._replace(log_grid=True))
+                    dispo = sd.available_by_type(out_g, 3)
+                    sd._save_simplex(eaten, [r.id for r in res], pg_h["age"],
+                                     dispo, sortie)
+                    plot_food_simplex(
+                        eaten, [r.id for r in res], pg_h["age"], dispo, sortie,
+                        chunk, suffix=marque, titre="lab_1 — high_res",
+                        age_max=cfg.lab_time_steps,
+                        shuffle_log=load_shuffle_log(exp_dir),
+                        ids_initiaux=[r.id for r in cfg.resources], step=step)
                 video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem)
 
                 out_clo = etape(f"clones {stem}".strip(),
