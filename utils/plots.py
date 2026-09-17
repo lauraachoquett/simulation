@@ -2355,8 +2355,8 @@ def _med_glissante(y, k):
 
 
 def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
-                     poison=None, ordres=None, exp_dir=None, fig_dir=None,
-                     lissage=9, fname="lod_metrics.png"):
+                     poison=None, ordres=None, coutures=None, exp_dir=None,
+                     fig_dir=None, lissage=9, fname="lod_metrics.png"):
     """Mesures le long de la lignee, par generation.
 
     Un individu par generation, donc bruite : mediane glissante par-dessus les
@@ -2416,6 +2416,10 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
         bande.set_ylabel("channel", fontsize=9)
         bande.spines[["right", "top"]].set_visible(False)
         bande.tick_params(labelsize=8)
+    if coutures is not None:
+        for x in np.asarray(coutures) - 0.5:       # debut d'une nouvelle experience
+            for ax in axes:
+                ax.axvline(x, color="black", lw=1.6, zorder=4)
     axes[-1].set_xlabel("generation along the line of descent")
 
     # pas de naissance en haut : les generations ne sont pas equidistantes
