@@ -43,7 +43,6 @@ def load_clade_snapshots(clade, store_dir, name_save=None):
         data.close()
     return node_params
 
-from sklearn.decomposition import PCA
 
 def plot_clade_pca_html(node_params, exp_dir, name_fig='clade'):
     nodes = list(node_params.keys())
@@ -53,6 +52,7 @@ def plot_clade_pca_html(node_params, exp_dir, name_fig='clade'):
     if X.shape[0] < 4:
         print(f"Sous-ensemble trop petit ({X.shape[0]} agents)"); return
 
+    from sklearn.decomposition import PCA   # import tardif : pas une dependance declaree
     pca = PCA(n_components=3)
     Y   = pca.fit_transform(X)
     var = pca.explained_variance_ratio_ * 100
@@ -92,6 +92,7 @@ def plot_clade_pca_html_res(node_params, resource_history, exp_dir, name_fig='cl
     if np.max(born)>1000:
         res_birth[born<1000] = np.max(res_birth[born>1000])
     
+    from sklearn.decomposition import PCA   # import tardif : pas une dependance declaree
     pca = PCA(n_components=3)
     Y   = pca.fit_transform(X)
     var = pca.explained_variance_ratio_ * 100
