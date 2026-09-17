@@ -36,8 +36,8 @@ def fusionne(dossiers):
         cfg, log = config(d), load_shuffle_log(d)
         ids0 = ids_initiaux(cfg)
 
-        # Une reprise repart de l'ordre INITIAL (run.py ne relit pas le journal
-        # du parent) : on l'inscrit comme une permutation a la couture.
+        # Une reprise repart de l'ordre de SA config : celui du checkpoint depuis
+        # la correction de --resume, l'ordre initial avant. Inscrit a la couture.
         if k > 0:
             debut = int(cfg.get("resume_chunk", 0)) * int(cfg.get("chunk_size", 1000))
             journal.append({"step": debut, "order_ids": ids0, "couture": True})

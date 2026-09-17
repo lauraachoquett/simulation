@@ -231,6 +231,26 @@ def chunks_jusqua(fin, dernier_fait):
     return fin - dernier_fait
 
 
+def ordre_de_reprise(ids_depart, journal, pas, permutation_due):
+    """(ids au checkpoint, ids de reprise, source) pour reprendre au pas `pas`.
+
+    Le checkpoint d'un chunk est ecrit AVANT le bloc de permutation du meme
+    chunk : il porte l'ancien ordre, d'ou la comparaison stricte. Si une
+    permutation etait due a ce chunk, on reprend celle du journal quand le parent
+    l'a faite (source "journal"), sinon il faut la tirer (source "a_tirer").
+    """
+    avant = list(ids_depart)
+    for e in journal:
+        if e["step"] < pas:
+            avant = list(e["order_ids"])
+    if not permutation_due:
+        return avant, avant, None
+    faites = [e for e in journal if e["step"] == pas]
+    if faites:
+        return avant, list(faites[-1]["order_ids"]), "journal"
+    return avant, avant, "a_tirer"
+
+
 def load_checkpoint(resume_exp,chunk_id):
     """Charge l'état de la simulation depuis le disque."""
     path = os.path.join(resume_exp,f'checkpoints/state_chunk_{chunk_id}.pkl')

@@ -24,7 +24,7 @@ from simulation.utils.plots import plot_current_config
 from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABELS,
                                    MODEL_VERSIONS, resolve_model, label_of, color_of)
 from EcoEvoJax.source.agent import MetaRnnPolicy_bcppr
-from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, checkpoints_disponibles, dernier_checkpoint, chunks_jusqua
+from simulation.utils. utils_sim import init_state,load_checkpoint,save_checkpoint, log_resource_shuffle, checkpoints_disponibles, dernier_checkpoint, chunks_jusqua, load_shuffle_log, ordre_de_reprise
 from simulation.simulation_data.core import simulation_data
 from simulation.lab_env import env_file_pour
 
@@ -116,6 +116,11 @@ def purge_params(exp_dir):
     print(f"params/ supprime ({n} snapshots)")
 
 
+def permutation_due(cfg, chunk_idx):
+    return (chunk_idx % cfg.cycle_period == 0 and chunk_idx > 10
+            and len(cfg.resources) > 1)
+
+
 def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chunk_id= 1 ,save_dir='', subkeys_init=None):
     
     start_time_sim = time.time()
@@ -147,6 +152,27 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
         if len(subkeys) < num_chunks_exp:
             key, k_sup = random.split(key)
             subkeys.extend(random.split(k_sup, num_chunks_exp - len(subkeys)))
+
+        # Ordre des canaux au checkpoint, puis la permutation due a ce chunk --
+        # sans ca la reprise repartait de l'ordre initial de la config.
+        par_id = {r.id: r for r in cfg.resources}
+        ids_avant, ids, source = ordre_de_reprise(
+            [r.id for r in cfg.resources], load_shuffle_log(resume_exp),
+            int(state.step), permutation_due(cfg, chunk_id))
+        if source == "a_tirer":
+            if cfg.shuffle_version == "v1":
+                nouv = shuffle_resources_v1(BASE_RESOURCES, subkeys[chunk_id - 1])
+            else:
+                key, k_sh = random.split(key)
+                nouv = shuffle_resources(tuple(par_id[i] for i in ids_avant), k_sh)
+            ids = [r.id for r in nouv]
+        cfg = cfg._replace(resources=tuple(par_id[i] for i in ids))
+        print(f"[reprise] canaux au checkpoint : "
+              f"{[label_of(i) for i in ids_avant]}")
+        if source:
+            print(f"[reprise] permutation du chunk {chunk_id} "
+                  f"({'reprise du journal' if source == 'journal' else 'tiree'}) : "
+                  f"{[label_of(i) for i in ids]}")
 
         model = build_model(cfg)
         n_ckpt = state.agents.params.shape[1]
@@ -193,6 +219,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
               f"low_res={cfg.lab_env_low_res or '-'}")
 
     save_config(cfg,subkeys, exp_dir)
+    if reprend and source:
+        log_resource_shuffle(exp_dir, chunk_id, int(state.step),
+                             tuple(par_id[i] for i in ids_avant), cfg.resources)
 
     # Population initiale : le premier checkpoint n'arrive qu'au bout de
     # checkpoint_freq chunks, donc l'etat de depart etait perdu. Avec lui, le
@@ -329,8 +358,7 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # A une ressource, permuter est l'identite : le shuffle ne changeait
             # rien mais imprimait et journalisait une ligne a chaque cycle, ce
             # qui laisse croire a un changement dans resource_shuffles.jsonl.
-            if ((chunk_idx) % cfg.cycle_period == 0 and chunk_idx > 10
-                    and len(cfg.resources) > 1):
+            if permutation_due(cfg, chunk_idx):
                 old_resources = cfg.resources
                 if cfg.shuffle_version == "v1":
                     # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
