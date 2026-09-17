@@ -108,9 +108,10 @@ def main():
                              couverture=len(chaine) / len(g["born"]),
                              shuffle_log=journal, ids_initiaux=ids_initiaux(cfg0),
                              step=int(g["born"].max()))
-    plot_lod_metrics(g["generation"], g["born"], g["age"], g["post_shuffle"],
-                     poison=g.get("p_poison"), ordres=g["ordres"],
-                     coutures=coutures, fig_dir=fig_dir)
+    plot_lod_metrics(g["born"], g["age"], poison=g.get("p_poison"),
+                     journal=journal, ids_initiaux=ids_initiaux(cfg0),
+                     coutures=[e["step"] for e in journal if e.get("couture")],
+                     generations=g["generation"], fig_dir=fig_dir)
     print(f"Sorties dans {sortie}")
 
 

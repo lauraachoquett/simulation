@@ -2354,25 +2354,32 @@ def _med_glissante(y, k):
     return out
 
 
-def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
-                     poison=None, ordres=None, coutures=None, exp_dir=None,
-                     fig_dir=None, lissage=9, fname="lod_metrics.png"):
-    """Mesures le long de la lignee, par generation.
+def plot_lod_metrics(naissances, duree_vie, poison=None, journal=None,
+                     ids_initiaux=None, coutures=None, generations=None,
+                     exp_dir=None, fig_dir=None, lissage=9,
+                     fname="lod_metrics.png"):
+    """Mesures le long de la lignee, en fonction du pas de naissance.
 
-    Un individu par generation, donc bruite : mediane glissante par-dessus les
-    points. `ordres` (n, n_canaux) ajoute la bande des permutations sous les
-    courbes, dans les memes coordonnees : elle s'aligne sur les pointilles.
+    Un individu par point, donc bruite : mediane glissante sur `lissage` points.
+    Pointilles = changements reels de canaux, traits pleins = debut d'une reprise.
     """
-    g = np.asarray(generations)
-    # Entre deux generations, pas sur l'une d'elles : la permutation tombe entre
-    # la naissance du precedent et celle-ci. C'est aussi la ou la bande bascule.
-    coupes = g[np.asarray(post_shuffle, dtype=bool)] - 0.5
+    x = np.asarray(naissances, dtype=float)
+    marge = 0.01 * max(x.max() - x.min(), 1)
+    xlim = (x.min() - marge, x.max() + marge)
+
+    epoques = None
+    if journal is not None and ids_initiaux is not None:
+        epoques = [(0, list(ids_initiaux))]
+        for e in sorted(journal, key=lambda e: e["step"]):
+            if list(e["order_ids"]) != epoques[-1][1]:
+                epoques.append((int(e["step"]), list(e["order_ids"])))
+    changements = [s for s, _ in (epoques or [])[1:] if xlim[0] <= s <= xlim[1]]
+
     panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None)]
     if poison is not None:
         panneaux.append((poison, "P(eat poison | poison in view)", "ratio",
                          color_of(LABELS.index("poison")), (0, 1)))
-
-    hauteurs = [3.4] * len(panneaux) + ([0.8] if ordres is not None else [])
+    hauteurs = [3.4] * len(panneaux) + ([0.8] if epoques else [])
     fig, axes = plt.subplots(len(hauteurs), 1, sharex=True, squeeze=False,
                              figsize=(11, 1.05 * sum(hauteurs)),
                              gridspec_kw={"height_ratios": hauteurs})
@@ -2380,35 +2387,30 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
 
     for ax, (y, titre, unite, couleur, bornes) in zip(axes, panneaux):
         y = np.asarray(y, dtype=float)
-        ax.plot(g, y, marker=".", ls="none", ms=4, alpha=.45, color=couleur)
+        ax.plot(x, y, marker=".", ls="none", ms=4, alpha=.45, color=couleur)
         lisse = _med_glissante(y, lissage)
         ok = np.isfinite(lisse)
         if ok.any():
-            ax.plot(g[ok], lisse[ok], color=couleur, lw=2,
-                    label=f"rolling median ({lissage})")
+            ax.plot(x[ok], lisse[ok], color=couleur, lw=2,
+                    label=f"rolling median ({lissage} ancestors)")
             ax.legend(loc="best", fontsize=9, frameon=False)
-        for x in coupes:
-            ax.axvline(x, color="grey", lw=1, ls=":", zorder=0)
         ax.set_title(titre, fontsize=11)
         ax.set_ylabel(unite)
         if bornes:
             ax.set_ylim(*bornes)
         ax.grid(alpha=.25)
 
-    if ordres is not None:
-        ordres = np.asarray(ordres)
-        bande, n_can = axes[-1], ordres.shape[1]
-        for k in range(n_can):
-            col, deb_i = ordres[:, k], 0
-            for i in range(1, len(col) + 1):
-                if i == len(col) or col[i] != col[deb_i]:
-                    bande.barh(n_can - 1 - k, g[i - 1] - g[deb_i] + 1,
-                               left=g[deb_i] - .5, height=.82,
-                               color=color_of(int(col[deb_i])),
-                               edgecolor="white", linewidth=.6)
-                    deb_i = i
-        for x in coupes:
-            bande.axvline(x, color="grey", lw=1, ls=":", zorder=3)
+    if epoques:
+        bande, n_can = axes[-1], len(ids_initiaux)
+        for i, (s0, ordre) in enumerate(epoques):
+            s1 = epoques[i + 1][0] if i + 1 < len(epoques) else xlim[1]
+            g0, g1 = max(s0, xlim[0]), min(s1, xlim[1])
+            if g1 <= g0:
+                continue
+            for k, ident in enumerate(ordre):
+                bande.barh(n_can - 1 - k, g1 - g0, left=g0, height=.82,
+                           color=color_of(int(ident)), edgecolor="white",
+                           linewidth=.6)
         bande.set_ylim(-0.5, n_can - 0.5)
         bande.set_yticks(range(n_can))
         bande.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)],
@@ -2416,29 +2418,27 @@ def plot_lod_metrics(generations, naissances, duree_vie, post_shuffle,
         bande.set_ylabel("channel", fontsize=9)
         bande.spines[["right", "top"]].set_visible(False)
         bande.tick_params(labelsize=8)
-    if coutures is not None:
-        for x in np.asarray(coutures) - 0.5:       # debut d'une nouvelle experience
-            for ax in axes:
-                ax.axvline(x, color="black", lw=1.6, zorder=4)
-    axes[-1].set_xlabel("generation along the line of descent")
 
-    # pas de naissance en haut : les generations ne sont pas equidistantes
-    naissances = np.asarray(naissances)
-    if g.size:
+    for ax in axes:
+        for s in changements:
+            ax.axvline(s, color="grey", lw=1, ls=":", zorder=3)
+        for s in (coutures if coutures is not None else []):
+            ax.axvline(s, color="black", lw=1.6, zorder=4)
+    axes[-1].set_xlim(*xlim)
+    axes[-1].set_xlabel("birth step")
+
+    if generations is not None and len(x):
         haut = axes[0].twiny()
-        haut.set_xlim(axes[0].get_xlim())
-        pris = np.unique(np.linspace(0, g.size - 1, min(6, g.size)).astype(int))
-        haut.set_xticks(g[pris])
-        haut.set_xticklabels([f"{n/1e6:.1f}M" if n >= 1e6 else f"{n/1e3:.0f}k"
-                              for n in naissances[pris]], fontsize=9)
-        haut.set_xlabel("birth step", fontsize=9)
+        haut.set_xlim(*xlim)
+        pris = np.unique(np.linspace(0, len(x) - 1, min(6, len(x))).astype(int))
+        haut.set_xticks(x[pris])
+        haut.set_xticklabels([str(int(generations[i])) for i in pris], fontsize=9)
+        haut.set_xlabel("generation along the line of descent", fontsize=9)
 
-    n_shuffle = int(np.asarray(post_shuffle, dtype=bool).sum())
     fig.suptitle("Line of descent, re-evaluated in the lab"
-                 f"  —  {g.size} ancestors, {n_shuffle} permutation(s) crossed",
+                 f"  —  {len(x)} ancestors, {len(changements)} channel change(s)",
                  fontsize=12.5)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
-
     fig_dir = fig_dir or os.path.join(exp_dir or ".", "fig", "lod")
     os.makedirs(fig_dir, exist_ok=True)
     out = os.path.join(fig_dir, fname)

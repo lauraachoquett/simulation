@@ -228,8 +228,10 @@ def main():
     else:
         print("Simplex : moins de deux ancetres ont mange, rien a tracer")
 
-    plot_lod_metrics(np.arange(len(retenus)), naissances, mesures["age"], post,
-                     poison=mesures["p_poison"], ordres=ordres, fig_dir=fig_dir)
+    plot_lod_metrics(naissances, mesures["age"], poison=mesures["p_poison"],
+                     journal=load_shuffle_log(a.exp_dir),
+                     ids_initiaux=[r.id for r in cfg.resources],
+                     generations=np.arange(len(retenus)), fig_dir=fig_dir)
 
 
 if __name__ == "__main__":
