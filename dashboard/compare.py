@@ -125,6 +125,64 @@ def discover_runs(root: str) -> list[dict]:
     return runs
 
 
+_CHAIN_SKIP = {"resume_from", "resume_chunk", "num_chunks"}
+_CHAIN_ROOT = {"seed_fingerprint", "seed_first"}   # une reprise tire de nouvelles cles
+
+
+def _tail(path: str) -> str:
+    return "/".join(Path(path).parts[-2:])
+
+
+def group_chains(runs: list[dict]) -> list[dict]:
+    """Une entree par chaine de reprises (racine -> ... -> feuille), via `resume_from`."""
+    by_tail = {_tail(r["dir"]): r for r in runs}
+    parent = {}
+    for r in runs:
+        p = by_tail.get(_tail(r["raw"].get("resume_from") or "/"))
+        if p is not None and p is not r:
+            parent[r["id"]] = p
+    has_child = {p["id"] for p in parent.values()}
+    out = []
+    for leaf in runs:
+        if leaf["id"] in has_child:
+            continue
+        chain = [leaf]
+        while chain[-1]["id"] in parent and len(chain) < 100:
+            chain.append(parent[chain[-1]["id"]])
+        chain.reverse()
+        if len(chain) == 1:
+            out.append(leaf)
+            continue
+        params = {}
+        for k in dict.fromkeys(k for r in chain for k in r["params"]):
+            if k in _CHAIN_SKIP:
+                continue
+            vals = list(dict.fromkeys(str(r["params"].get(k)) for r in chain))
+            vals = [v for v in vals if v not in ("None", "")] or vals[:1]
+            if len(vals) == 1 or k in _CHAIN_ROOT:
+                params[k] = next((r["params"].get(k) for r in chain
+                                  if str(r["params"].get(k)) == vals[0]), None)
+            else:
+                params[k] = " → ".join(vals)
+        params["num_chunks"] = leaf["params"].get("num_chunks")
+        params["n_parts"] = len(chain)
+        out.append({**leaf, "id": f"{chain[0]['id']} ⟶ {leaf['name']} ({len(chain)} parts)",
+                    "params": params, "dirs": [r["dir"] for r in chain]})
+    return out
+
+
+def _dirs(run: dict) -> list[str]:
+    return run.get("dirs", [run["dir"]])
+
+
+def plots_of(run: dict) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {}
+    for d in _dirs(run):
+        for k, v in discover_plots(d).items():
+            merged.setdefault(k, []).extend(v)
+    return merged
+
+
 # --------------------------------------------------------------------------- #
 # Plot discovery / grouping
 # --------------------------------------------------------------------------- #
@@ -453,6 +511,10 @@ def main() -> None:
         st.stop()
 
     st.sidebar.caption(f"{len(runs)} run(s) found")
+    if st.sidebar.checkbox("Merge resumed runs", value=True,
+                           help="A run and its resumes (resume_from) become one "
+                                "experiment; its plots are pooled."):
+        runs = group_chains(runs)
 
     # ---- Filters ---------------------------------------------------------- #
     groups = sorted({r["group"] for r in runs if r["group"]})
@@ -532,7 +594,7 @@ def main() -> None:
 
     # ---- Plots side by side ---------------------------------------------- #
     with tab_plots:
-        per_run_plots = {r["id"]: discover_plots(r["dir"]) for r in sel_runs}
+        per_run_plots = {r["id"]: plots_of(r) for r in sel_runs}
         plot_keys = sorted({k for g in per_run_plots.values() for k in g})
         if not plot_keys:
             st.info("No PNG plots found in the selected runs.")
@@ -614,7 +676,8 @@ def main() -> None:
     with tab_single:
         one = st.selectbox("Run", [r["id"] for r in sel_runs])
         run = id_to_run[one]
-        st.markdown(f"**Directory:** `{run['dir']}`")
+        for d in _dirs(run):
+            st.markdown(f"**Directory:** `{d}`")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -629,11 +692,11 @@ def main() -> None:
                 ]
                 if records:
                     st.dataframe(pd.json_normalize(records), use_container_width=True)
-            vids = _list_videos(run["dir"])
+            vids = [v for d in _dirs(run) for v in _list_videos(d)]
             if vids:
                 st.markdown("**Videos**")
                 vsel = st.selectbox(
-                    "video", vids, format_func=lambda p: os.path.relpath(p, run["dir"])
+                    "video", vids, format_func=lambda p: _tail(os.path.dirname(p)) + "/" + os.path.basename(p)
                 )
                 st.video(vsel)
 
