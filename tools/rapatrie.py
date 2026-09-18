@@ -6,6 +6,7 @@
 import argparse
 import os
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 SITES = ["grenoble", "lille", "luxembourg", "lyon", "nancy", "nantes",
@@ -41,8 +42,13 @@ def fichiers(dossier):
 def rsync(site, base, rel, dest, motifs, *options):
     filtres = ["--include=*/"] + [f"--include={m}" for m in motifs] + ["--exclude=*"]
     os.makedirs(dest, exist_ok=True)
-    subprocess.run(["rsync", "-am", *options, "-e", " ".join(SSH), *filtres,
-                    f"{site}.g5k:{base}/{rel}/", dest + "/"], check=False)
+    for essai in range(4):
+        r = subprocess.run(["rsync", "-am", *options, "-e", " ".join(SSH), *filtres,
+                            f"{site}.g5k:{base}/{rel}/", dest + "/"])
+        if r.returncode == 0:
+            return True
+        time.sleep(10 * (essai + 1))
+    return False
 
 
 def reencode(mp4):
@@ -85,20 +91,27 @@ def main():
     if not choix:
         raise SystemExit("aucune experience trouvee (ssh <site>.g5k fonctionne ?)")
 
+    echecs = []
     for rel, (_, site) in sorted(choix.items()):
         dest = os.path.join(a.dest, rel)
         if a.dry_run:
             print(f"{site}: {rel}")
             continue
         avant = fichiers(dest)
-        rsync(site, a.distant, rel, dest, FIGURES)
-        if a.videos:
-            rsync(site, a.distant, rel, dest, VIDEOS, "--ignore-existing")
+        ok = rsync(site, a.distant, rel, dest, FIGURES)
+        if a.videos and ok:
+            ok = rsync(site, a.distant, rel, dest, VIDEOS, "--ignore-existing")
+        if not ok:
+            echecs.append(rel)
+            print(f"{site}: {rel} ECHEC (connexion)", flush=True)
+            continue
             for f in sorted(fichiers(dest) - avant):
                 if f.endswith(".mp4"):
                     reencode(f)
         print(f"{site}: {rel} ({len(fichiers(dest) - avant)} nouveau(x) fichier(s))",
               flush=True)
+    if echecs:
+        print(f"{len(echecs)} echec(s) : relancer la meme commande, seul le manquant sera copie")
     if not a.dry_run:
         print(f"Dans {a.dest}")
 
