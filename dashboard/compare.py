@@ -79,6 +79,7 @@ def _flatten(cfg: dict) -> dict:
         if k in _HIDDEN_PARAMS:
             continue
         if k == "resources" and isinstance(v, list):
+            flat["n_resources"] = len(v)
             for i, res in enumerate(v):
                 if isinstance(res, dict):
                     for rk, rv in res.items():
@@ -462,6 +463,11 @@ def main() -> None:
         )
         if picked_groups:
             runs = [r for r in runs if r["group"] in picked_groups]
+
+    n_res = st.sidebar.radio("Resources", ["all", "1", "several"], horizontal=True)
+    if n_res != "all":
+        runs = [r for r in runs if (r["params"].get("n_resources", 1) == 1)
+                == (n_res == "1")]
 
     # parameter filters, combined with AND
     with st.sidebar.expander("Filter by parameter values", expanded=False):

@@ -10,6 +10,16 @@ no re-running.
 pip install -r dashboard/requirements.txt
 ```
 
+## Local, from the clusters
+
+```bash
+python3 tools/rapatrie.py 'exp/2026-09-17/*'            # config + figures, no data
+python3 tools/rapatrie.py exp/2026-09-17/<run> --videos # + videos, re-encoded smaller
+tools/voir.sh                                           # dashboard on ~/Documents/BioTiC/exp_figs
+```
+
+Each pattern is looked up on every G5K site (`--sites lyon lille` to restrict).
+
 ## Run
 
 ```bash
