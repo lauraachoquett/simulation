@@ -310,7 +310,8 @@ def main():
                 ids_initiaux=ids0, step=b)
 
     if a.offspring > 0:
-        print(f"descendance : {len(rangs)} permutation(s), {a.offspring} mutants")
+        print(f"descendance : {a.offspring} mutants pour chacun des {len(rangs)} "
+              "ancetre(s) ne(s) juste avant une permutation")
         for i in rangs:
             parent = jnp.asarray(genomes[retenus[i - 1]])
             cle, k_mut = random.split(cle)
