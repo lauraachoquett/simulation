@@ -20,8 +20,8 @@ from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
 from simulation.simulation_data.energy_response import resource_in_view
 from simulation.simulation_data.lab import EVO_BATCH, _greediness
-from simulation.utils.plots import (plot_food_simplex, plot_lineage_simplex,
-                                    plot_lod_metrics)
+from simulation.utils.plots import (plot_diet_par_graine, plot_food_simplex,
+                                    plot_lineage_simplex, plot_lod_metrics)
 from simulation.utils.utils_sim import (build_id_timeline, load_config,
                                         load_shuffle_log)
 
@@ -171,6 +171,9 @@ def main():
     p.add_argument("--offspring", type=int, default=0, metavar="N",
                    help="pour chaque ancetre ne juste avant une permutation, "
                         "evaluer N mutants avant et apres (defaut 0 = non)")
+    p.add_argument("--graines-avant", dest="graines_avant", type=int, default=0,
+                   metavar="N", help="pour chaque ancetre ne juste avant une "
+                   "permutation, son regime sur N grilles de lab (defaut 0 = non)")
     p.add_argument("--permutations", type=int, nargs="+", default=None,
                    metavar="K", help="rangs des permutations a traiter avec "
                                      "--offspring (defaut : toutes)")
@@ -276,11 +279,37 @@ def main():
                      duree_vie_s=mesures_s["age"], poison_s=mesures_s["p_poison"],
                      fig_dir=fig_dir)
 
+    journal, ids0 = load_shuffle_log(a.exp_dir), [r.id for r in cfg.resources]
+    rangs = list(np.flatnonzero(post))          # premier ancetre d'une nouvelle epoque
+    if a.permutations:
+        rangs = [rangs[k] for k in a.permutations if k < len(rangs)]
+
+    if a.graines_avant > 0 and rangs:
+        parents = [retenus[i - 1] for i in rangs]
+        gr = [base + k for k in range(a.graines_avant)]
+        print(f"regime avant permutation : {len(parents)} ancetre(s) x "
+              f"{len(gr)} graines")
+        res = [evalue(parents, genomes, cfg, model, sd, random.PRNGKey(g), cle,
+                      a.batch, a.exp_dir) for g in gr]
+        reg = np.stack([r for r, _ in res], axis=1)                # (P, S, 3)
+        ages = np.stack([m["age"] for _, m in res], axis=1)         # (P, S)
+        dis = np.stack([disponible_par_identite(genomes, parents, cfg, model, sd,
+                                                random.PRNGKey(g), cle)
+                        for g in gr])                                # (S, 3)
+        np.savez_compressed(
+            os.path.join(data_dir, "graines_avant.npz"),
+            slot=np.array([s for s, _ in parents], dtype=np.int32),
+            born=np.array([b for _, b in parents], dtype=np.int64),
+            graines=np.array(gr), regime=reg, age=ages, disponible=dis)
+        for j, i in enumerate(rangs):
+            b = int(naissances[i - 1])
+            plot_diet_par_graine(
+                reg[j], ages[j], dis, os.path.join(fig_dir, "seeds"),
+                f"diet_seeds_born_{b}.png", titre=f"ancestor born at step {b}",
+                age_max=cfg.lab_time_steps, shuffle_log=journal,
+                ids_initiaux=ids0, step=b)
+
     if a.offspring > 0:
-        journal, ids0 = load_shuffle_log(a.exp_dir), [r.id for r in cfg.resources]
-        rangs = list(np.flatnonzero(post))      # premier ancetre d'une nouvelle epoque
-        if a.permutations:
-            rangs = [rangs[k] for k in a.permutations if k < len(rangs)]
         print(f"descendance : {len(rangs)} permutation(s), {a.offspring} mutants")
         for i in rangs:
             parent = jnp.asarray(genomes[retenus[i - 1]])

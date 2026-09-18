@@ -2128,6 +2128,50 @@ def frise_canaux(fig, shuffle_log, ids_initiaux, step=None, curseur=True,
     return fr
 
 
+def plot_diet_par_graine(regimes, ages, dispos, fig_dir, fname, titre="",
+                         age_max=None, shuffle_log=None, ids_initiaux=None,
+                         step=None):
+    """Regime d'un genome sur plusieurs grilles, chaque point relie a l'offre de sa grille."""
+    r = np.asarray(regimes, dtype=float)
+    tot = r.sum(axis=1)
+    ok = np.isfinite(r).all(axis=1) & (tot > 0)
+    d = np.asarray(dispos, dtype=float)
+    d = d / d.sum(axis=1, keepdims=True)
+
+    fig, ax = plt.subplots(figsize=(7.5, 7.4))
+    _cadre_simplex(ax)
+    xd, yd = _bary(d[:, 0], d[:, 1], d[:, 2])
+    p = r[ok] / tot[ok, None]
+    x, y = _bary(p[:, 0], p[:, 1], p[:, 2])
+    for x0, y0, x1, y1 in zip(xd[ok], yd[ok], x, y):
+        ax.plot([x0, x1], [y0, y1], color="0.75", lw=.8, zorder=2)
+    ax.scatter(xd, yd, s=70, facecolors="none", edgecolors="0.45", lw=1.2,
+               zorder=3, label="available on the grid (each seed)")
+    sc = ax.scatter(x, y, c=np.asarray(ages, dtype=float)[ok], cmap="viridis",
+                    vmin=0 if age_max else None, vmax=age_max, s=70,
+                    edgecolor="white", linewidth=.6, zorder=4)
+    if ok.any():
+        m = p.mean(axis=0)
+        ax.scatter(*_bary(*m), marker="*", s=320, color="black", zorder=5,
+                   label="mean diet")
+    cb = fig.colorbar(sc, ax=ax, shrink=.62, pad=.02)
+    cb.set_label("lifespan (steps)", fontsize=10)
+    ax.legend(loc="upper center", fontsize=9, frameon=False, ncol=2,
+              bbox_to_anchor=(.5, -.06))
+    ax.set_title(f"Diet across {int(ok.sum())} lab seeds"
+                 + (f"  |  {titre}" if titre else ""), fontsize=12)
+
+    if shuffle_log is not None and ids_initiaux is not None:
+        fig.subplots_adjust(bottom=0.20)
+        frise_canaux(fig, shuffle_log, ids_initiaux, step)
+    os.makedirs(fig_dir, exist_ok=True)
+    out = os.path.join(fig_dir, fname)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Figure saved: {out}")
+    return out
+
+
 def plot_food_simplex(eaten, ids, age, disponible, exp_dir, chunk,
                       suffix="", titre="", fig_dir=None, parent=None,
                       age_max=None, shuffle_log=None, ids_initiaux=None,
