@@ -15,12 +15,13 @@ from jax import random
 
 from simulation.data_class import label_of
 from simulation.genealogy.lod import charge_lignee
-from simulation.lab_env import vmap_over_agents_env_lab_high_res
+from simulation.lab_env import vmap_mutate, vmap_over_agents_env_lab_high_res
 from simulation.run import build_model
 from simulation.simulation_data.core import simulation_data
 from simulation.simulation_data.energy_response import resource_in_view
 from simulation.simulation_data.lab import EVO_BATCH, _greediness
-from simulation.utils.plots import plot_lineage_simplex, plot_lod_metrics
+from simulation.utils.plots import (plot_food_simplex, plot_lineage_simplex,
+                                    plot_lod_metrics)
 from simulation.utils.utils_sim import (build_id_timeline, load_config,
                                         load_shuffle_log)
 
@@ -118,6 +119,25 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
     return regime, mesures
 
 
+def evalue_enfants(enfants, parent, ordre, cfg, model, sd, key_env, cle, batch):
+    """(bouchees par canal, duree de vie, bouchees du parent) sous l'ordre `ordre`."""
+    par_id = {r.id: r for r in cfg.resources}
+    cfg_g = cfg._replace(log_grid=False, resources=tuple(par_id[i] for i in ordre))
+    sd.cfg = cfg_g
+    mange, age = [], []
+    for deb in range(0, len(enfants), batch):
+        lot = enfants[deb:deb + batch]
+        cle, k = random.split(cle)
+        _, out = vmap_over_agents_env_lab_high_res(
+            lot, key_env, random.split(k, len(lot)), model, cfg_g)
+        mange.append(sd.eaten_by_type(out))
+        age.append(sd.data_lab_env_grouped(out, resources=cfg_g.resources)["age"])
+    cle, k = random.split(cle)
+    _, out_p = vmap_over_agents_env_lab_high_res(
+        parent[None], key_env, random.split(k, 1), model, cfg_g)
+    return np.concatenate(mange), np.concatenate(age), sd.eaten_by_type(out_p)[0]
+
+
 def disponible_par_identite(genomes, retenus, cfg, model, sd, key_env, cle):
     """Ce que la grille offre, par identite.
 
@@ -144,8 +164,16 @@ def main():
     p.add_argument("--batch", type=int, default=EVO_BATCH,
                    help="ancetres par vmap (defaut %(default)s)")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
-                   help="graine de l'env de lab (defaut : cfg.lab_seed, le meme "
-                        "etalon que les autres series du run)")
+                   help="premiere graine de l'env de lab (defaut : cfg.lab_seed)")
+    p.add_argument("--graines", type=int, default=3,
+                   help="environnements de lab testes, graines consecutives "
+                        "(defaut %(default)s)")
+    p.add_argument("--offspring", type=int, default=0, metavar="N",
+                   help="pour chaque ancetre ne juste avant une permutation, "
+                        "evaluer N mutants avant et apres (defaut 0 = non)")
+    p.add_argument("--permutations", type=int, nargs="+", default=None,
+                   metavar="K", help="rangs des permutations a traiter avec "
+                                     "--offspring (defaut : toutes)")
     p.add_argument("--max", type=int, default=0, metavar="N",
                    help="n'evaluer que N ancetres, repartis le long de la "
                         "lignee (defaut 0 = tous)")
@@ -182,14 +210,24 @@ def main():
 
     model = build_model(cfg)
     sd = simulation_data(cfg, 0, 1)
-    graine = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
-    key_env = random.PRNGKey(graine)
-    cle = random.PRNGKey(graine + 1)
-    print(f"env de lab : graine {graine}, {cfg.lab_time_steps} pas")
+    base = a.lab_seed if a.lab_seed is not None else cfg.lab_seed
+    graines = [base + k for k in range(max(1, a.graines))]
+    key_env = random.PRNGKey(graines[0])
+    cle = random.PRNGKey(base + 1000)
+    print(f"env de lab : graines {graines}, {cfg.lab_time_steps} pas")
 
-    regime, mesures = evalue(retenus, genomes, cfg, model, sd, key_env, cle,
-                             a.batch, a.exp_dir)
-    dispo = disponible_par_identite(genomes, retenus, cfg, model, sd, key_env, cle)
+    par_graine = [evalue(retenus, genomes, cfg, model, sd, random.PRNGKey(g), cle,
+                         a.batch, a.exp_dir) for g in graines]
+    regime_s = np.stack([r for r, _ in par_graine], axis=1)          # (n, S, 3)
+    mesures_s = {k: np.stack([m[k] for _, m in par_graine], axis=1)
+                 for k in par_graine[0][1]}                          # (n, S)
+    regime = np.nansum(regime_s, axis=1)        # bouchees cumulees sur les graines
+    with np.errstate(all="ignore"):
+        mesures = {k: np.nanmean(v, axis=1) for k, v in mesures_s.items()}
+    dispo_s = np.stack([disponible_par_identite(genomes, retenus, cfg, model, sd,
+                                                random.PRNGKey(g), cle)
+                        for g in graines])
+    dispo = dispo_s.mean(axis=0)
 
     # Changement REEL de l'affectation canal -> identite entre deux ancetres
     # retenus : deux permutations entre deux naissances peuvent se compenser, et
@@ -207,7 +245,10 @@ def main():
         slot=np.array([s for s, _ in retenus], dtype=np.int32),
         born=naissances, generation=np.arange(len(retenus)),
         regime=regime, post_shuffle=post, disponible=dispo,
-        **{k: v for k, v in mesures.items()})
+        graines=np.array(graines), regime_par_graine=regime_s,
+        disponible_par_graine=dispo_s,
+        **{k: v for k, v in mesures.items()},
+        **{f"{k}_par_graine": v for k, v in mesures_s.items()})
     print(f"Donnees : {os.path.join(data_dir, 'evaluation.npz')}")
 
     # Un ancetre n'ayant rien mange est absent de la chaine : position indefinie,
@@ -231,7 +272,33 @@ def main():
     plot_lod_metrics(naissances, mesures["age"], poison=mesures["p_poison"],
                      journal=load_shuffle_log(a.exp_dir),
                      ids_initiaux=[r.id for r in cfg.resources],
-                     generations=np.arange(len(retenus)), fig_dir=fig_dir)
+                     generations=np.arange(len(retenus)),
+                     duree_vie_s=mesures_s["age"], poison_s=mesures_s["p_poison"],
+                     fig_dir=fig_dir)
+
+    if a.offspring > 0:
+        journal, ids0 = load_shuffle_log(a.exp_dir), [r.id for r in cfg.resources]
+        rangs = list(np.flatnonzero(post))      # premier ancetre d'une nouvelle epoque
+        if a.permutations:
+            rangs = [rangs[k] for k in a.permutations if k < len(rangs)]
+        print(f"descendance : {len(rangs)} permutation(s), {a.offspring} mutants")
+        for i in rangs:
+            parent = jnp.asarray(genomes[retenus[i - 1]])
+            cle, k_mut = random.split(cle)
+            enfants = vmap_mutate(parent, random.split(k_mut, a.offspring), cfg)
+            # memes enfants, memes cles : avant et apres sont apparies
+            for nom, ordre in (("before", ordres[i - 1]), ("after", ordres[i])):
+                ordre = [int(x) for x in ordre]
+                mange, age, mange_p = evalue_enfants(
+                    enfants, parent, ordre, cfg, model, sd, key_env, cle, a.batch)
+                plot_food_simplex(
+                    mange, ordre, age, [dispo[j] for j in ordre], a.exp_dir,
+                    int(naissances[i - 1]) // cfg.chunk_size,
+                    suffix=f"_offspring_{nom}",
+                    titre=f"offspring, {nom} the permutation",
+                    fig_dir=os.path.join(fig_dir, "offspring"), parent=mange_p,
+                    age_max=cfg.lab_time_steps, shuffle_log=journal,
+                    ids_initiaux=ids0, step=int(naissances[i - 1]))
 
 
 if __name__ == "__main__":

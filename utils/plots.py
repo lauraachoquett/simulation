@@ -2356,8 +2356,8 @@ def _med_glissante(y, k):
 
 def plot_lod_metrics(naissances, duree_vie, poison=None, journal=None,
                      ids_initiaux=None, coutures=None, generations=None,
-                     exp_dir=None, fig_dir=None, lissage=9,
-                     fname="lod_metrics.png"):
+                     duree_vie_s=None, poison_s=None, exp_dir=None,
+                     fig_dir=None, lissage=9, fname="lod_metrics.png"):
     """Mesures le long de la lignee, en fonction du pas de naissance.
 
     Un individu par point, donc bruite : mediane glissante sur `lissage` points.
@@ -2375,18 +2375,24 @@ def plot_lod_metrics(naissances, duree_vie, poison=None, journal=None,
                 epoques.append((int(e["step"]), list(e["order_ids"])))
     changements = [s for s, _ in (epoques or [])[1:] if xlim[0] <= s <= xlim[1]]
 
-    panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None)]
+    panneaux = [(duree_vie, "Lifespan in the lab", "steps", "#1D3557", None,
+                 duree_vie_s)]
     if poison is not None:
         panneaux.append((poison, "P(eat poison | poison in view)", "ratio",
-                         color_of(LABELS.index("poison")), (0, 1)))
+                         color_of(LABELS.index("poison")), (0, 1), poison_s))
     hauteurs = [3.4] * len(panneaux) + ([0.8] if epoques else [])
     fig, axes = plt.subplots(len(hauteurs), 1, sharex=True, squeeze=False,
                              figsize=(11, 1.05 * sum(hauteurs)),
                              gridspec_kw={"height_ratios": hauteurs})
     axes = axes[:, 0]
 
-    for ax, (y, titre, unite, couleur, bornes) in zip(axes, panneaux):
+    for ax, (y, titre, unite, couleur, bornes, ys) in zip(axes, panneaux):
         y = np.asarray(y, dtype=float)
+        if ys is not None:                          # min-max entre graines de lab
+            ys = np.asarray(ys, dtype=float)
+            ok = np.isfinite(ys).any(axis=1)
+            ax.vlines(x[ok], np.nanmin(ys[ok], axis=1), np.nanmax(ys[ok], axis=1),
+                      color=couleur, alpha=.25, lw=1.2)
         ax.plot(x, y, marker=".", ls="none", ms=4, alpha=.45, color=couleur)
         lisse = _med_glissante(y, lissage)
         ok = np.isfinite(lisse)
