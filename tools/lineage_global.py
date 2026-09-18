@@ -26,6 +26,14 @@ def ids_initiaux(cfg):
     return [int(r["id"]) for r in cfg.get("resources", [])] or [0, 1, 2]
 
 
+def _largeur(v, n, S):
+    """(n, S) complete par NaN : les experiences n'ont pas toutes le meme nombre de graines."""
+    out = np.full((n, S), np.nan)
+    if v is not None:
+        out[:, :v.shape[1]] = v
+    return out
+
+
 def fusionne(dossiers):
     """Evaluations concatenees dans l'ordre de la chaine, doublons retires."""
     blocs, journal, vus = [], [], set()
@@ -61,6 +69,11 @@ def fusionne(dossiers):
                 "p_poison", "ordres", "experience")
     g = {c: np.concatenate([b[c] for b in blocs if c in b]) for c in colonnes
          if all(c in b for b in blocs)}
+    for c in ("age_par_graine", "p_poison_par_graine"):
+        S = max((b[c].shape[1] for b in blocs if c in b), default=0)
+        if S:
+            g[c] = np.concatenate([_largeur(b.get(c), len(b["born"]), S)
+                                   for b in blocs])
     g["generation"] = np.arange(len(g["born"]))
     g["post_shuffle"] = np.zeros(len(g["born"]), bool)
     g["post_shuffle"][1:] = (g["ordres"][1:] != g["ordres"][:-1]).any(axis=1)
@@ -111,7 +124,9 @@ def main():
     plot_lod_metrics(g["born"], g["age"], poison=g.get("p_poison"),
                      journal=journal, ids_initiaux=ids_initiaux(cfg0),
                      coutures=[e["step"] for e in journal if e.get("couture")],
-                     generations=g["generation"], fig_dir=fig_dir)
+                     generations=g["generation"],
+                     duree_vie_s=g.get("age_par_graine"),
+                     poison_s=g.get("p_poison_par_graine"), fig_dir=fig_dir)
     print(f"Sorties dans {sortie}")
 
 
