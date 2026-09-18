@@ -313,6 +313,8 @@ def main():
         print(f"descendance : {a.offspring} mutants pour chacun des {len(rangs)} "
               "ancetre(s) ne(s) juste avant une permutation")
         for i in rangs:
+            print(f"  ancetre ne au pas {int(naissances[i - 1])} "
+                  f"(chunk {int(naissances[i - 1]) // cfg.chunk_size})", flush=True)
             parent = jnp.asarray(genomes[retenus[i - 1]])
             cle, k_mut = random.split(cle)
             enfants = vmap_mutate(parent, random.split(k_mut, a.offspring), cfg)
