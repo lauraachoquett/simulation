@@ -1696,6 +1696,24 @@ def _plot_band(ax, x, S, prefix, color="C0", label="median", band=None):
     return m
  
  
+def _une_ressource(exp_dir):
+    """Vrai si le run n'a qu'une ressource : le gain net n'y mesure plus un choix."""
+    chemins = [os.path.join(exp_dir, "config.json")]
+    try:    # dossier de fusion : la config est celle des experiences sources
+        with open(os.path.join(exp_dir, "exp.json")) as fh:
+            chemins += [os.path.join(e["chemin"], "config.json")
+                        for e in json.load(fh).get("experiences", [])]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    for c in chemins:
+        try:
+            with open(c) as fh:
+                return len(json.load(fh).get("resources", [])) == 1
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def _num_chunk(f):
     return int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1))
 
@@ -1773,7 +1791,7 @@ def plot_lab_metrics(exp_dir, suffix="", bornes=None, fig_dir=None, pas=0):
     # QUANTITE recoltee la ou elle sert, quand adapt_score compare des
     # compositions. Les deux sont traces cote a cote pour pouvoir diverger.
     ax = axes[1, 2]
-    if any("adapt_gain_p50" in s for s in S):
+    if any("adapt_gain_p50" in s for s in S) and not _une_ressource(exp_dir):
         _plot_band(ax, x, S, "adapt_gain")
         ax.axhline(0, color="black", lw=1)
         ax.set_title("Net gain / hungry step")
@@ -2895,6 +2913,8 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
     # P[0] la ferait disparaitre a jamais. _get rend NaN sur les chunks qui ne
     # l'ont pas, donc la courbe demarre simplement plus tard.
     presentes = {k for p in P for k in p["metrics"]}
+    if _une_ressource(exp_dir):
+        presentes.discard("adapt_gain")
     metrics = [k for k in titles if k in presentes]
 
     n_cols = 3
