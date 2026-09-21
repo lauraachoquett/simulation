@@ -1696,19 +1696,28 @@ def _plot_band(ax, x, S, prefix, color="C0", label="median", band=None):
     return m
  
  
-def plot_lab_metrics(exp_dir, suffix=""):
+def _chunks_dans(files, bornes):
+    """Fichiers chunk_N_* dont N tombe dans [a, b] ; tous si bornes est None."""
+    if not bornes:
+        return files
+    a, b = bornes
+    return [f for f in files
+            if a <= int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1)) <= b]
+
+
+def plot_lab_metrics(exp_dir, suffix="", bornes=None, fig_dir=None):
     """Évolution des métriques d'un env de lab, chunk après chunk.
     suffix="" -> high_res ; suffix="adapt_rot1" -> l'env adapt rot1, etc."""
     data_dir = os.path.join(exp_dir, "lab_data")
-    fig_dir  = os.path.join(exp_dir, "fig")
+    fig_dir  = fig_dir or os.path.join(exp_dir, "fig")
 
     tag = f"_{suffix}" if suffix else ""
     pattern = rf"chunk_\d+{re.escape(tag)}_summary\.json"        # match EXACT de cette famille
 
     files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*{tag}_summary.json")),
                    key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
-    files = [f for f in files
-             if re.fullmatch(pattern, os.path.basename(f))]      # exclut les autres suffixes
+    files = _chunks_dans([f for f in files
+                          if re.fullmatch(pattern, os.path.basename(f))], bornes)
     if not files:
         print(f"No summary to plot (suffix={suffix!r}).")
         return
@@ -2777,7 +2786,7 @@ def plot_evolvability(data_dir, chunk, fig_dir=None):
     print(f"Figure saved: {out}")
 
 
-def plot_lab_exploration(exp_dir):
+def plot_lab_exploration(exp_dir, bornes=None, fig_dir=None):
     """Évolution de l'EXPLORATION (env low_res) chunk après chunk.
     Deux panneaux :
       - frac_found_food : part des agents qui trouvent au moins une ressource
@@ -2785,9 +2794,10 @@ def plot_lab_exploration(exp_dir):
                           les seuls agents qui ont mangé (grandeur conditionnelle).
     """
     data_dir = os.path.join(exp_dir, "lab_data")
-    fig_dir = os.path.join(exp_dir, "fig")
-    files = sorted(glob.glob(os.path.join(data_dir, "chunk_*_lowres_summary.json")),
-                   key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig")
+    files = _chunks_dans(
+        sorted(glob.glob(os.path.join(data_dir, "chunk_*_lowres_summary.json")),
+               key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1))), bornes)
     if not files:
         print("No low_res summary to plot.")
         return
@@ -2841,7 +2851,8 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
                          prefixes=("alone", "clones"),
                          labels=("alone", "clones (median of peers)"),
                          titre="Focal agent alone vs among identical clones",
-                         fname="lab_alone_vs_clones_evolution.png"):
+                         fname="lab_alone_vs_clones_evolution.png",
+                         bornes=None, fig_dir=None):
     """Évolution d'une comparaison APPARIÉE, chunk après chunk.
 
     Un sous-graphe par métrique, deux courbes : les deux conditions comparées.
@@ -2850,10 +2861,11 @@ def plot_alone_vs_clones(exp_dir, tag="alone_vs_clones",
     données. `tag` sélectionne la famille de fichiers, `labels` les clés de
     dispersion écrites par la comparaison correspondante."""
     data_dir = os.path.join(exp_dir, "lab_data")
-    fig_dir = os.path.join(exp_dir, "fig")
+    fig_dir = fig_dir or os.path.join(exp_dir, "fig")
     os.makedirs(fig_dir, exist_ok=True)   # ne pas dependre d'un plot appele avant
-    files = sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}.json")),
-                   key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1)))
+    files = _chunks_dans(
+        sorted(glob.glob(os.path.join(data_dir, f"chunk_*_{tag}.json")),
+               key=lambda f: int(re.search(r"chunk_(\d+)", f).group(1))), bornes)
     if not files:
         print(f"No {tag} data to plot.")
         return
