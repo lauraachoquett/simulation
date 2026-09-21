@@ -22,8 +22,14 @@ def outils(source, a):
     if lab:
         liste += [
             ("lab metrics", ["replay_lab", source, "--plot-only", *zoom, *pas_c]),
-            ("geometries", ["plot_geometries", source, *pas_c]
+            ("geometries alone", ["plot_geometries", source, *pas_c]
              + (["--chunks", *map(str, a.chunks)] if a.chunks else [])),
+            ("geometries clones", ["plot_geometries", source, "--condition",
+                                   "clones", *pas_c] + (["--chunks", *map(str, a.chunks)] if a.chunks else [])),
+            ("geometries figurants", ["plot_geometries", source, "--condition",
+                                      "figurants", *pas_c] + (["--chunks", *map(str, a.chunks)] if a.chunks else [])),
+            ("conditions par env", ["plot_geometries", source, "--par-env",
+                                    *pas_c] + (["--chunks", *map(str, a.chunks)] if a.chunks else [])),
             ("repro vs age", ["plot_repro_vs_age", source, "--pas", str(a.pas)]),
             ("greediness vs voisins",
              ["plot_greed_vs_voisins", source, "--pas", str(a.pas)]),
