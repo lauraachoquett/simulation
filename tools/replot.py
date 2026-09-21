@@ -37,7 +37,7 @@ from simulation.utils.plots import (
 _NUM = re.compile(r"chunk_(\d+)\.npz$")
 
 
-def load_history(*data_dirs):
+def load_history(*data_dirs, bornes=None):
     """Concatène les .npz de chunks dans l'ordre NUMÉRIQUE, sur un ou plusieurs
     dossiers.
 
@@ -65,6 +65,11 @@ def load_history(*data_dirs):
     if not par_chunk:
         raise SystemExit(f"aucun chunk_*.npz dans {', '.join(data_dirs)}")
 
+    if bornes:
+        a, b = bornes
+        par_chunk = {c: f for c, f in par_chunk.items() if a <= c <= b}
+        if not par_chunk:
+            raise SystemExit(f"aucun chunk entre {a} et {b}")
     chunks = sorted(par_chunk)
     fichiers = [par_chunk[c] for c in chunks]
 
@@ -143,6 +148,10 @@ def main(argv=None):
     ap.add_argument("--no-resume", action="store_true",
                     help="ne PAS remonter la chaine des reprises ; ne tracer que "
                          "le dossier donne")
+    ap.add_argument("--chunks", type=int, nargs=2, default=None,
+                    metavar=("DEBUT", "FIN"),
+                    help="ne tracer que cette plage de chunks (bornes incluses) ; "
+                         "les figures vont dans fig_chunks_<DEBUT>_<FIN>/ sauf --out")
     ap.add_argument("--n-target", type=int, default=0,
                     help="réduire à ~N points ; 0 = pleine résolution (défaut)")
     args = ap.parse_args(argv)
@@ -155,7 +164,8 @@ def main(argv=None):
         print("[replot] chaine de reprise suivie : "
               + " -> ".join(os.path.basename(d.rstrip("/")) for d in dossiers))
     exp_dir = dossiers[0]
-    hist = load_history(*[os.path.join(d, "data") for d in dossiers])
+    hist = load_history(*[os.path.join(d, "data") for d in dossiers],
+                        bornes=args.chunks)
 
     # config et journal de permutations viennent du PREMIER dossier : c'est lui
     # qui porte l'ordre initial des canaux, dont depend la lecture de tout le
@@ -182,8 +192,11 @@ def main(argv=None):
     # `--out` prend un CHEMIN et l'utilise tel quel -- il etait auparavant lu
     # puis ignore au profit d'un "_replot" en dur, ce qui rendait impossible de
     # ranger ailleurs les figures d'une fusion.
-    cible = exp_dir if args.out is None else args.out
-    if args.out is not None:
+    cible = args.out
+    if cible is None:
+        cible = (exp_dir if not args.chunks else
+                 os.path.join(exp_dir, f"zoom_chunks_{args.chunks[0]}_{args.chunks[1]}"))
+    if cible != exp_dir:
         os.makedirs(os.path.join(cible, "fig"), exist_ok=True)
 
     series = {k: hist[k] for k in
