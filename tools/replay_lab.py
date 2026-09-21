@@ -329,6 +329,9 @@ def main():
                    help="filmer les N premiers genomes de CHAQUE env et de "
                         "chaque geometrie (defaut 0 = aucune video). Un rollout "
                         "separe avec log_grid : garder N petit")
+    p.add_argument("--vieux", type=int, default=0, metavar="N",
+                   help="ne garder que les N agents les plus vieux du checkpoint "
+                        "(age dans la simulation), au lieu des N premiers de -n")
     p.add_argument("--video-top", dest="video_top", action="store_true",
                    help="filmer les genomes qui ont vecu le plus longtemps dans "
                         "cet env, et non les premiers de la liste")
@@ -434,14 +437,20 @@ def main():
                 print(f"  chunk {chunk:>5} (step {step}) : aucun survivant, saute")
                 continue
             ids = np.array([i for i, _ in survivants])
-            if a.n:
-                ids = ids[:a.n]
+            ages_sim = step - np.array([b for _, b in survivants])
+            if a.vieux:          # les plus vieux DANS LA SIMULATION, pas au lab
+                ordre = np.argsort(-ages_sim)[:a.vieux]
+                ids, ages_sim = ids[ordre], ages_sim[ordre]
+            elif a.n:
+                ids, ages_sim = ids[:a.n], ages_sim[:a.n]
             params = state.agents.params[ids]
 
             cle, k_sim = random.split(cle)
             cles = random.split(k_sim, len(ids))
             canaux = " ".join(label_of(r.id) for r in res)
-            print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
+            vieux = (f", ages {ages_sim.min()}-{ages_sim.max()} pas"
+                     if a.vieux else "")
+            print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes{vieux}, "
                   f"canaux [{canaux}]", flush=True)
 
             def video(fn, cfg_x, nom_env, sous="", ages=None):
