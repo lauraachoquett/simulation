@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-from simulation.data_class import LAB_ENVS, color_of
+from simulation.data_class import LAB_ENVS, color_of, label_of
 
 TITRES = {"scatter40_s0": "Scattered", "patch8x5_s0": "Patchy",
           "blob1x40_s1": "Single blob"}
@@ -20,6 +20,24 @@ SOUS_TITRES = {"scatter40_s0": "40 isolated items",
                "patch8x5_s0": "8 patches of 5",
                "blob1x40_s1": "one blob of 40"}
 MUR, FOND, GRILLE, VUE = "#2B2B2B", "#FAF7F2", "#E2DCD3", "#1D5C8F"
+
+
+def grille_low_res(exp_dir, graine):
+    """Grille de depart de l'env low_res, par le vrai chemin de code."""
+    from jax import random
+    from simulation.data_class import resolve_model
+    from simulation.lab_env import vmap_over_agents_env_lab_low_res
+    from simulation.tools.make_lab_envs import ModeleFactice
+    from simulation.tools.preview_lab_env import config_par_defaut, grille_de_depart
+    from simulation.utils.utils_sim import load_config
+
+    cfg = load_config(exp_dir)[0] if exp_dir else config_par_defaut()
+    cfg = resolve_model(cfg)
+    if graine is None:
+        graine = cfg.lab_seed
+    res, _ = grille_de_depart(vmap_over_agents_env_lab_low_res, cfg,
+                              ModeleFactice(), graine)
+    return res, [r.id for r in cfg.resources], graine
 
 
 def charge(nom, dossier):
@@ -52,6 +70,19 @@ def encart_vision(ax, grille, couleur, vue, centre):
     iax.set_title(f"agent view, {c} × {c}", fontsize=9.5, color=VUE, pad=5)
 
 
+def panneau_multi(ax, res, ids, titre, sous_titre):
+    """Plusieurs identites de ressource sur la meme grille."""
+    L = res.shape[1]
+    panneau(ax, np.zeros((L, L)), color_of(ids[0]), titre, sous_titre)
+    for c, i in enumerate(ids):
+        y, x = np.nonzero(res[c])
+        ax.scatter(x, y, s=46, marker="s", color=color_of(i), edgecolor="white",
+                   linewidth=.5, zorder=4, label=f"{label_of(i)} ({int(res[c].sum())})")
+    if len(ids) > 1:
+        ax.legend(loc="upper center", bbox_to_anchor=(.5, -.02), ncol=len(ids),
+                  frameon=False, fontsize=9)
+
+
 def panneau(ax, grille, couleur, titre, sous_titre, vue=None, centre=None):
     L = grille.shape[0]
     ax.set_facecolor(FOND)
@@ -72,12 +103,13 @@ def panneau(ax, grille, couleur, titre, sous_titre, vue=None, centre=None):
                            lw=1.6, zorder=5))
 
     y, x = np.nonzero(grille)
-    ax.scatter(x, y, s=46, marker="s", color=couleur, edgecolor="white",
-               linewidth=.5, zorder=4)
+    if len(y):
+        ax.scatter(x, y, s=46, marker="s", color=couleur, edgecolor="white",
+                   linewidth=.5, zorder=4)
     ax.set_xticks([]), ax.set_yticks([])
     for c in ax.spines.values():
         c.set_visible(False)
-    if vue:
+    if vue and grille.any():
         # centre sur les ressources : un encart vide ne montrerait pas l'echelle
         yy, xx = np.nonzero(grille)
         c = centre or (int(round(yy.mean())), int(round(xx.mean())))
@@ -92,6 +124,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("noms", nargs="*", default=list(LAB_ENVS))
     p.add_argument("--dir", default=os.path.join(os.path.dirname(__file__), "..", "lab_envs"))
+    p.add_argument("--low-res", dest="low_res", action="store_true",
+                   help="ajouter l'env low_res (exploration), tire a la graine")
+    p.add_argument("--from", dest="config_exp", default=None,
+                   help="config d'un run, pour ses ressources et sa lab_seed")
+    p.add_argument("--graine", type=int, default=None,
+                   help="graine du low_res (defaut : cfg.lab_seed)")
     p.add_argument("--vue", type=int, default=5,
                    help="rayon du champ de vision, encart sur le dernier panneau "
                         "(defaut %(default)s ; 0 = pas d'encart)")
@@ -99,20 +137,36 @@ def main():
     a = p.parse_args()
 
     grilles = [(n, charge(n, a.dir)) for n in a.noms]
+    bas = None
+    if a.low_res:
+        bas = grille_low_res(a.config_exp, a.graine)
     couleur = color_of(0)
-    fig, axes = plt.subplots(1, len(grilles),
-                             figsize=(4.5 * len(grilles) + (1.9 if a.vue else 0), 5.1))
+    n_pan = len(grilles) + (1 if bas else 0)
+    fig, axes = plt.subplots(1, n_pan,
+                             figsize=(4.5 * n_pan + (1.9 if a.vue else 0), 5.1))
     fig.patch.set_facecolor("white")
-    for ax, (nom, g) in zip(np.atleast_1d(axes), grilles):
+    axes = np.atleast_1d(axes)
+    for ax, (nom, g) in zip(axes, grilles):
         cle = os.path.splitext(os.path.basename(nom))[0]
-        dernier = nom == grilles[-1][0]
+        dernier = nom == grilles[-1][0] and not bas
         panneau(ax, g, couleur, TITRES.get(cle, cle), SOUS_TITRES.get(cle, ""),
                 vue=a.vue if dernier else 0)
+    if bas:
+        res, ids, graine = bas
+        total = int(res.sum())
+        panneau_multi(axes[-1], res, ids, "Low resources",
+                      f"exploration env — {total} cells, seed {graine}")
+        if a.vue:
+            panneau(axes[-1], res.sum(axis=0), couleur, "Low resources",
+                    f"exploration env — {total} cells, seed {graine}", vue=a.vue)
 
     fig.suptitle("Fixed test environments", fontsize=16, fontweight="semibold", y=.99)
-    fig.text(.5, .085, "30 × 30 arena, border wall in dark, agents start inside "
-             "the dashed area, 40 resource cells in all three. Blue: what one "
-             "agent sees from its position.",
+    legende = ("30 × 30 arena, border wall in dark, agents start inside the "
+               "dashed area. The three fixed environments hold 40 resource "
+               "cells each")
+    legende += (f", the exploration one {int(bas[0].sum())}. " if bas else ". ")
+    legende += "Blue: what one agent sees from its position."
+    fig.text(.5, .085, legende,
              ha="center", fontsize=10, color="#4A4A4A")
     fig.tight_layout(rect=[0, .11, .88 if a.vue else 1, .95])
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
