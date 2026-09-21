@@ -193,7 +193,10 @@ def main():
         fig.suptitle(f"Focal agent with {COND[a.condition]}, across test "
                      "geometries (median and p25–p75 over genomes)", fontsize=13)
         fig.tight_layout(rect=[0, 0, .88, .93])
-        out = a.out or os.path.join(fig_dir, f"lab_geometries_{a.condition}.png")
+        suffixe = ("" if len(mesures) == len(MESURES)
+                   else "_" + "_".join(m[0] for m in mesures))
+        out = a.out or os.path.join(
+            fig_dir, f"lab_geometries_{a.condition}{suffixe}.png")
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
