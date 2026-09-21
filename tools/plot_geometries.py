@@ -20,6 +20,8 @@ import numpy as np
 
 from simulation.utils.plots import _band, _chunks_dans
 
+LARGEUR_LEGENDE = 1.7      # pouces reserves a droite pour la legende
+
 # (cle dans alone_vs_*, cle dans *_summary, titre, unite)
 MESURES = [("age", "duree_vie", "Lifespan", "steps"),
            ("greediness", "greediness", "Greediness  G = Cr/Tr", "ratio"),
@@ -158,10 +160,11 @@ def main():
         titres = " · ".join(t for _, _, t, _ in mesures)
         fig.suptitle(f"Social conditions within each test environment — {titres}"
                      r" (median and p25–p75 over genomes)", fontsize=13)
+        frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
         h, l = axes[0][0].get_legend_handles_labels()
         fig.legend(h, l, title="condition", frameon=False,
-                   loc="center left", bbox_to_anchor=(.885, .5))
-        fig.tight_layout(rect=[0, 0, .88, .93])
+                   loc="center left", bbox_to_anchor=(frac + .01, .5))
+        fig.tight_layout(rect=[0, 0, frac, .93])
         nom = ("lab_conditions_par_env.png" if len(mesures) == len(MESURES)
                else f"lab_conditions_par_env_{'_'.join(m[0] for m in mesures)}.png")
         out = a.out or os.path.join(fig_dir, nom)
@@ -187,12 +190,15 @@ def main():
         for ax, (k_vs, *_) in zip(axes, mesures):
             if k_vs == "greediness":
                 ax.set_ylim(0, 1)
+        frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
         h, l = axes[0].get_legend_handles_labels()
         fig.legend(h, l, title="test environment", frameon=False,
-                   loc="center left", bbox_to_anchor=(.885, .5))
-        fig.suptitle(f"Focal agent with {COND[a.condition]}, across test "
-                     "geometries (median and p25–p75 over genomes)", fontsize=13)
-        fig.tight_layout(rect=[0, 0, .88, .93])
+                   loc="center left", bbox_to_anchor=(frac + .01, .5))
+        quoi = ("alone" if a.condition == "alone"
+                else f"with {COND[a.condition]}")
+        fig.suptitle(f"Focal agent {quoi}, across test geometries "
+                     "(median and p25–p75 over genomes)", fontsize=13)
+        fig.tight_layout(rect=[0, 0, frac, .93])
         suffixe = ("" if len(mesures) == len(MESURES)
                    else "_" + "_".join(m[0] for m in mesures))
         out = a.out or os.path.join(
