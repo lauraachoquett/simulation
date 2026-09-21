@@ -329,6 +329,11 @@ def main():
                    help="filmer les N premiers genomes de CHAQUE env et de "
                         "chaque geometrie (defaut 0 = aucune video). Un rollout "
                         "separe avec log_grid : garder N petit")
+    p.add_argument("--video-top", dest="video_top", action="store_true",
+                   help="filmer les genomes qui ont vecu le plus longtemps dans "
+                        "cet env, et non les premiers de la liste")
+    p.add_argument("--saut-chunks", dest="saut", type=int, default=0, metavar="N",
+                   help="ne rejouer qu'un checkpoint tous les N chunks")
     p.add_argument("--video-stride", type=int, default=1, metavar="S",
                    help="une frame sur S (defaut %(default)s)")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
@@ -383,6 +388,13 @@ def main():
         if a.chunks:
             garde = set(a.chunks)
             ckpts = [c for c in ckpts if c[0] in garde]
+        if a.saut:
+            garde, dernier = [], None
+            for c in ckpts:
+                if dernier is None or c[0] - dernier >= a.saut:
+                    garde.append(c)
+                    dernier = c[0]
+            ckpts = garde
         if not ckpts:
             print(f"Aucun checkpoint dans {exp_dir}/checkpoints/")
             return
@@ -432,7 +444,7 @@ def main():
             print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes, "
                   f"canaux [{canaux}]", flush=True)
 
-            def video(fn, cfg_x, nom_env, sous=""):
+            def video(fn, cfg_x, nom_env, sous="", ages=None):
                 """Rollout SEPARE avec log_grid : celui de mesure ne journalise
                 pas la grille (2,7 Go a 3000 pas) et c'est elle que la video
                 dessine. Memes params et memes cles que la mesure, donc les N
@@ -440,14 +452,19 @@ def main():
                 if not a.video:
                     return
                 k = min(a.video, len(params))
-                _, out_v = fn(params[:k], key_env, cles[:k], model,
+                # argsort met les NaN en dernier : un genome sans age mesure ne
+                # passe jamais devant un survivant
+                choix = (np.argsort(-np.asarray(ages, float))[:k]
+                         if a.video_top and ages is not None else np.arange(k))
+                _, out_v = fn(params[choix], key_env, cles[choix], model,
                               cfg_x._replace(log_grid=True))
                 d = os.path.join(sortie, "videos", nom_env, sous)
                 os.makedirs(d, exist_ok=True)
-                for b in range(k):
+                for j, b in enumerate(choix):
+                    age = "" if ages is None else f"_age{int(np.nan_to_num(ages[b]))}"
                     chemin = os.path.join(
-                        d, f"{nom_env}_chunk_{chunk}_lab_{b}.mp4")
-                    save_chunk_video(payload_video(out_v, b, a.video_stride),
+                        d, f"{nom_env}_chunk_{chunk}_lab_{int(b)}{age}.mp4")
+                    save_chunk_video(payload_video(out_v, j, a.video_stride),
                                      chemin, fps=20, scale=10, resources=res)
                     print(f"    video {chemin}", flush=True)
 
@@ -467,7 +484,8 @@ def main():
             # le MEME jeu de colonnes que les autres env : data_lab_env_low_res
             # n'en garde que cinq, insuffisant pour une analyse commune
             sd._save_pheno(sd.data_lab_env_grouped(out_low), sortie, "lowres")
-            video(vmap_over_agents_env_lab_low_res, cfg_c, "low_res")
+            video(vmap_over_agents_env_lab_low_res, cfg_c, "low_res",
+                  ages=sd.data_lab_env_grouped(out_low)["age"])
 
             # Une condition par geometrie, toutes de meme rang. Liste vide ->
             # une seule condition sans suffixe, c'est-a-dire le comportement
@@ -506,7 +524,8 @@ def main():
                         age_max=cfg.lab_time_steps,
                         shuffle_log=load_shuffle_log(exp_dir),
                         ids_initiaux=[r.id for r in cfg.resources], step=step)
-                video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem)
+                video(vmap_over_agents_env_lab_high_res, cfg_g, "high_res", stem,
+                      ages=pg_h["age"])
 
                 out_clo = etape(f"clones {stem}".strip(),
                                 vmap_over_agents_env_lab_high_res_with_clones, cfg_g)
@@ -516,7 +535,7 @@ def main():
                                            condition="clones", suffix=sfx,
                                            a=pg_h, c=pg_c)
                 video(vmap_over_agents_env_lab_high_res_with_clones, cfg_g,
-                      "clones", stem)
+                      "clones", stem, ages=pg_c["age"])
 
                 if cfg.lab_figurants:
                     out_fig = etape(f"figurants {stem}".strip(),
@@ -528,7 +547,7 @@ def main():
                                                condition="figurants", suffix=sfx,
                                                a=pg_h, c=pg_f)
                     video(vmap_over_agents_env_lab_high_res_with_figurants, cfg_g,
-                          "figurants", stem)
+                          "figurants", stem, ages=pg_f["age"])
 
         if not a.merge:
             tracer(sortie, a.chunks_zoom, a.pas_chunks)
