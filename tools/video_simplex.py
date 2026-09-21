@@ -29,6 +29,7 @@ nuage immobile en suggerant qu'il ne se passe rien.
 """
 import argparse
 import glob
+import json
 import os
 import re
 
@@ -245,6 +246,23 @@ def frame(fig, p, ages, norm_age, dispo, resources, step, epoques, bornes,
     return img, contour, barycentre
 
 
+def dossier_config(chemin):
+    """Ou lire la config : ici, chez le parent (replay/), ou via exp.json (fusion)."""
+    if os.path.exists(os.path.join(chemin, "config.json")):
+        return chemin
+    parent = os.path.dirname(os.path.abspath(chemin.rstrip("/")))
+    if os.path.exists(os.path.join(parent, "config.json")):
+        return parent
+    try:
+        with open(os.path.join(chemin, "exp.json")) as fh:
+            for e in json.load(fh).get("experiences", []):
+                if os.path.exists(os.path.join(e["chemin"], "config.json")):
+                    return e["chemin"]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return chemin
+
+
 def etapes_depuis_lab_data(exp_dirs, cfg):
     """Les nuages deja calcules pendant le run, sans rien reevaluer.
 
@@ -333,7 +351,7 @@ def main():
                         "depuis les checkpoints. Plus d'images, cout nul")
     a = p.parse_args()
 
-    cfg, _ = load_config(a.exp_dirs[0])
+    cfg, _ = load_config(dossier_config(a.exp_dirs[0]))
     if a.lab_time_steps:
         cfg = cfg._replace(lab_time_steps=a.lab_time_steps)
     if len(cfg.resources) != 3:
