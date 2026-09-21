@@ -1305,6 +1305,44 @@ def compute_mean_movement_chunk(outputs, n):
                         (magnitude * same).sum(axis=1) / n_valid, 0.0)
     return mean_mov   # (T-1,)
 
+def plot_movement_colore(mov_history, valeurs, exp_dir, label, fname,
+                         start_step=0, cmap='viridis', max_points=200_000):
+    """Deplacement moyen, colore par une autre serie du meme pas (population,
+    ressources). Lit un couplage que deux courbes cote a cote ne montrent pas."""
+    mov = np.asarray(mov_history, dtype=float)
+    val = np.asarray(valeurs, dtype=float)
+    if val.ndim > 1:
+        val = val.sum(axis=1)
+    n = min(len(mov), len(val))
+    mov, val = mov[:n], val[:n]
+    pas = max(1, n // max_points)
+    x = np.arange(start_step, start_step + n)[::pas]
+    mov, val = mov[::pas], val[::pas]
+
+    pts = np.array([x, mov]).T.reshape(-1, 1, 2)
+    seg = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    norm = plt.Normalize(float(np.nanmin(val)), float(np.nanmax(val)))
+    lc = LineCollection(seg, cmap=cmap, norm=norm, linewidth=1.2)
+    lc.set_array(0.5 * (val[:-1] + val[1:]))
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.add_collection(lc)
+    ax.set_xlim(x[0], x[-1])
+    marge = 0.05 * (np.nanmax(mov) - np.nanmin(mov) + 1e-9)
+    ax.set_ylim(np.nanmin(mov) - marge, np.nanmax(mov) + marge)
+    ax.set_xlabel('Steps')
+    ax.set_ylabel('Mean movement (cell)')
+    ax.grid(True, alpha=0.3)
+    fig.colorbar(lc, ax=ax, pad=.02).set_label(label)
+    ax.set_title(f'Mean population movement, coloured by {label.lower()}')
+    fig.tight_layout()
+    path = os.path.join(exp_dir, 'fig'); os.makedirs(path, exist_ok=True)
+    out = os.path.join(path, fname)
+    fig.savefig(out, dpi=120); plt.close(fig)
+    print(f"Figure saved: {out}")
+    return out
+
+
 def plot_mean_movement(mov_history, exp_dir, start_step=0, name_fig='sim', steps=None):
     plot_mean_movement_png(mov_history, exp_dir, start_step=start_step, name_fig=name_fig, steps=steps)
     plot_mean_movement_html(mov_history, exp_dir, start_step=start_step, name_fig=name_fig, steps=steps)

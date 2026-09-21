@@ -29,7 +29,7 @@ from simulation.data_class import BASE_RESOURCES
 from simulation.utils.utils_sim import load_config, load_shuffle_log
 from simulation.utils.plots import (
     block_edges, block_apply, block_steps,
-    plot_evolution, plot_consumption, plot_prob_eat_given_seen,
+    plot_evolution, plot_consumption, plot_prob_eat_given_seen, plot_movement_colore,
     plot_phase_portrait_png, plot_mean_movement,
     plot_lifetime_vs_step, plot_life_expectancy,
 )
@@ -260,6 +260,16 @@ def main(argv=None):
     # 1500 pas de chauffe : a ignorer seulement si la plage part du debut du run
     saute = 1500 if hist["_premier"] <= 1 else 0
     plot_mean_movement(hist["mean_movement"][saute:], cible, start_step + saute)
+
+    if args.chunks:
+        # couleur = etat de la simulation au meme pas ; trop de segments a
+        # pleine longueur, d'ou le zoom seulement
+        plot_movement_colore(hist["mean_movement"], hist["population"], cible,
+                             "Population size", "plot_movement_by_pop.png",
+                             start_step=start_step)
+        plot_movement_colore(hist["mean_movement"], hist["resources"], cible,
+                             "Resources amount", "plot_movement_by_res.png",
+                             start_step=start_step, cmap="YlGn")
 
     vie = hist["mean_life"]
     plot_lifetime_vs_step(vie[1], vie[0], cible, cfg)
