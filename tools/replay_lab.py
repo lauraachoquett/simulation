@@ -293,6 +293,9 @@ def main():
                    default=None, metavar=("DEBUT", "FIN"),
                    help="ne tracer que cette plage de chunks (bornes incluses), "
                         "dans zoom_chunks_<DEBUT>_<FIN>/")
+    p.add_argument("--plot-only", dest="plot_only", action="store_true",
+                   help="ne rien copier ni reevaluer : retracer les figures "
+                        "d'un dossier qui a deja son lab_data/")
     p.add_argument("--merge-only", dest="merge_only", action="store_true",
                    help="ne RIEN reevaluer : fusionner des lab_data deja "
                         "produits et tracer. Les chemins donnes peuvent etre "
@@ -326,6 +329,11 @@ def main():
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
     a = p.parse_args()
+
+    if a.plot_only:
+        for d in a.exp_dirs:
+            tracer(d, a.chunks_zoom)
+        return
 
     if a.merge_only:
         fusionner(a.exp_dirs, a.out or os.path.join(a.exp_dirs[0], "replay_merge"),
