@@ -104,6 +104,24 @@ def load_history(*data_dirs, bornes=None):
     return hist
 
 
+def chunks_presents(*data_dirs):
+    n = [int(m.group(1)) for d in data_dirs
+         for f in glob.glob(os.path.join(d, "chunk_*.npz"))
+         for m in [_NUM.search(os.path.basename(f))] if m]
+    return sorted(n)
+
+
+def bornes_de_reference(data_dirs, n_chunks):
+    """Echelle y prise sur les `n_chunks` PREMIERS chunks du run : un zoom garde
+    alors la meme echelle d'un bout a l'autre de la simulation."""
+    dispo = chunks_presents(*data_dirs)
+    if not dispo:
+        return None, None
+    ref = load_history(*data_dirs, bornes=(dispo[0], dispo[min(n_chunks, len(dispo)) - 1]))
+    pop, res = ref["population"], np.asarray(ref["resources"])
+    return (0, float(pop.max()) * 1.05), (0, float(res.max()) * 1.05)
+
+
 def chaine_de_reprise(exp_dir):
     """[ancetres..., exp_dir] en remontant `resume_from` de config en config.
 
@@ -152,6 +170,10 @@ def main(argv=None):
                     metavar=("DEBUT", "FIN"),
                     help="ne tracer que cette plage de chunks (bornes incluses) ; "
                          "les figures vont dans fig_chunks_<DEBUT>_<FIN>/ sauf --out")
+    ap.add_argument("--ylim-chunks", dest="ylim_chunks", type=int, default=0,
+                    metavar="N",
+                    help="echelle y de plot_evo prise sur les N premiers chunks "
+                         "du run (defaut avec --chunks : autant que la plage)")
     ap.add_argument("--n-target", type=int, default=0,
                     help="réduire à ~N points ; 0 = pleine résolution (défaut)")
     args = ap.parse_args(argv)
@@ -214,9 +236,17 @@ def main(argv=None):
             series[k] = block_apply(series[k], e, "sum")
         print(f"réduit à {len(steps)} points")
 
+    ylim_pop = ylim_res = None
+    n_ref = args.ylim_chunks or (len(hist["_chunks"]) if args.chunks else 0)
+    if n_ref:
+        ylim_pop, ylim_res = bornes_de_reference(
+            [os.path.join(d, "data") for d in dossiers], n_ref)
+        print(f"echelle y prise sur les {n_ref} premiers chunks")
+
     pop_s = series["population"]
     plot_evolution(pop_s, series["resources"], cible, shuffle_log,
-                   initial_order_ids, start_step, steps=steps)
+                   initial_order_ids, start_step, steps=steps,
+                   ylim_pop=ylim_pop, ylim_res=ylim_res)
     plot_consumption(pop_s, series["consumed"], cible, shuffle_log,
                      initial_order_ids, start_step,
                      window=1 if args.n_target else 100,

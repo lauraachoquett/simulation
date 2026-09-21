@@ -75,15 +75,19 @@ def block_steps(edges, start_step=0):
     return start_step + 0.5 * (edges[:-1] + edges[1:])
 
 
-def plot_evolution(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=0,steps=None):
-    plot_evolution_png(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps)
-    plot_evolution_html(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps)
+def plot_evolution(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=0,steps=None,
+                   ylim_pop=None, ylim_res=None):
+    plot_evolution_png(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps,
+                       ylim_pop=ylim_pop, ylim_res=ylim_res)
+    plot_evolution_html(pop_history, res_history, exp_dir,shuffle_log,initial_order_ids,start_step=start_step,steps=steps,
+                        ylim_pop=ylim_pop, ylim_res=ylim_res)
 
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 
 def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
-                       initial_order_ids, start_step=0, steps=None):
+                       initial_order_ids, start_step=0, steps=None,
+                       ylim_pop=None, ylim_res=None):
     generations = (np.asarray(steps) if steps is not None
                    else np.arange(start_step, start_step + len(pop_history)))
 
@@ -114,7 +118,9 @@ def plot_evolution_png(pop_history, res_history, exp_dir, shuffle_log,
 
     # LineCollection ne cadre pas seule
     ax_evo_res.set_xlim(generations[0], generations[-1])
-    ax_evo_res.set_ylim(0, res.max() * 1.05)
+    ax_evo_res.set_ylim(*(ylim_res if ylim_res else (0, res.max() * 1.05)))
+    if ylim_pop:
+        ax_evo_agents.set_ylim(*ylim_pop)
     ax_evo_res.tick_params(axis='y', labelcolor='tab:green')
 
     # légende = les IDENTITÉS (couleur fixe), pas les canaux
@@ -1040,7 +1046,8 @@ def plot_phase_portrait_png(pop_history, res_history, exp_dir, cfg, start_step=0
             
 
 def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
-                        initial_order_ids, start_step=0, steps=None):
+                        initial_order_ids, start_step=0, steps=None,
+                        ylim_pop=None, ylim_res=None):
     generations = (np.asarray(steps) if steps is not None
                    else np.arange(start_step, start_step + len(pop_history)))
     T = len(generations)
@@ -1087,8 +1094,10 @@ def plot_evolution_html(pop_history, res_history, exp_dir, shuffle_log,
 
     fig.update_xaxes(title_text='Steps')
     fig.update_yaxes(title_text='Population size', secondary_y=False,
+                     range=list(ylim_pop) if ylim_pop else None,
                      title_font=dict(color='red'), tickfont=dict(color='red'))
     fig.update_yaxes(title_text='Resources amount', secondary_y=True,
+                     range=list(ylim_res) if ylim_res else None,
                      title_font=dict(color='green'), tickfont=dict(color='green'))
     fig.update_layout(title='Simulation dynamic')
 
