@@ -226,8 +226,9 @@ def main(argv=None):
     plot_phase_portrait_png(pop_s, series["resources"], cible, cfg, start_step,
                             steps=steps)
 
-    mov = hist["mean_movement"][1500:]
-    plot_mean_movement(mov, cible, start_step + 1500)
+    # 1500 pas de chauffe : a ignorer seulement si la plage part du debut du run
+    saute = 1500 if hist["_premier"] <= 1 else 0
+    plot_mean_movement(hist["mean_movement"][saute:], cible, start_step + saute)
 
     vie = hist["mean_life"]
     plot_lifetime_vs_step(vie[1], vie[0], cible, cfg)
