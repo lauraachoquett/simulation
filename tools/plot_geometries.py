@@ -3,6 +3,7 @@
     python -m simulation.tools.plot_geometries <fusion|exp_dir>              # alone
     python -m simulation.tools.plot_geometries <dir> --condition clones
     python -m simulation.tools.plot_geometries <dir> --par-env               # les 3 conditions
+    python -m simulation.tools.plot_geometries <dirA> <dirB> --labels v1 v2  # deux expes
 
 Par defaut : une courbe par geometrie, pour une condition. Avec --par-env : une
 ligne par geometrie, les trois conditions superposees.
@@ -87,9 +88,67 @@ def trace(ax, x, S, prefix, couleur, label, chunk_size):
     return True
 
 
+def compare(a, mesures):
+    """Plusieurs experiences superposees : une couleur par experience."""
+    sources, dirs = [], []
+    for src in a.sources:
+        d = data_dir_de(src)
+        if d is None:
+            print(f"  [info] pas de lab_data sous {src}, ignore")
+            continue
+        sources.append(src)
+        dirs.append(d)
+    noms = a.labels or [os.path.basename(os.path.normpath(s)) for s in sources]
+    geos = [g for g in a.geos if any(geometries(d).get(g) for d in dirs)]
+    if not geos:
+        raise SystemExit("aucune geometrie commune")
+
+    cmap = plt.get_cmap(a.cmap)
+    couleurs = [cmap(t) for t in np.linspace(.12, .82, len(sources))]
+    une = len(mesures) == 1          # une mesure : geometries en colonnes
+    nl, nc = (1, len(geos)) if une else (len(geos), len(mesures))
+    fig, axes = plt.subplots(nl, nc, squeeze=False, sharex=True, sharey=une,
+                             figsize=(5.4 * nc, (4.4 if une else 3.9) * nl))
+    for i, geo in enumerate(geos):
+        for (d, nom, couleur) in zip(dirs, noms, couleurs):
+            x, S, pref = serie(d, geo, a.condition, a.chunks, a.pas)
+            if not len(x):
+                continue
+            for j, (k_vs, k_res, titre, unite) in enumerate(mesures):
+                ax = axes[0][i] if une else axes[i][j]
+                Sk = S if a.condition == "alone" else [s.get(k_vs, {}) for s in S]
+                trace(ax, x, Sk, k_res if a.condition == "alone" else pref,
+                      couleur, nom, a.chunk_size)
+                ax.set_title(NOMS.get(geo, geo) if une
+                             else f"{NOMS.get(geo, geo)} — {titre}", fontsize=11)
+                ax.set_ylabel(unite)
+                ax.grid(alpha=.3)
+                if k_vs == "greediness":
+                    ax.set_ylim(0, 1)
+                if une or i == nl - 1:
+                    ax.set_xlabel("simulation step")
+    frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, title="experiment", frameon=False, loc="center left",
+               bbox_to_anchor=(frac + .01, .5))
+    quoi = "alone" if a.condition == "alone" else f"with {COND[a.condition]}"
+    titres = " · ".join(t for _, _, t, _ in mesures)
+    fig.suptitle(f"Experiments compared — focal agent {quoi} — {titres}",
+                 fontsize=12.5)
+    fig.tight_layout(rect=[0, 0, frac, .94])
+    out = a.out or os.path.join(sources[0], "fig",
+                                f"lab_compare_{a.condition}.png")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    fig.savefig(out, dpi=150)
+    print(f"Figure saved: {out}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("source")
+    p.add_argument("sources", nargs="+", metavar="DIR",
+                   help="un dossier, ou plusieurs a superposer")
+    p.add_argument("--labels", nargs="+", default=None,
+                   help="noms des courbes quand plusieurs dossiers sont donnes")
     p.add_argument("--condition", default="alone", choices=list(COND))
     p.add_argument("--mesures", nargs="+", default=None,
                    metavar="M", choices=[m[0] for m in MESURES],
@@ -109,6 +168,9 @@ def main():
 
     mesures = ([m for m in MESURES if m[0] in a.mesures] if a.mesures
                else list(MESURES))
+    a.source = a.sources[0]
+    if len(a.sources) > 1:
+        return compare(a, mesures)
     data_dir = data_dir_de(a.source)
     if data_dir is None:
         raise SystemExit(f"pas de lab_data sous {a.source}")
