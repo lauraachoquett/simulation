@@ -22,11 +22,11 @@ SOUS_TITRES = {"scatter40_s0": "40 isolated items",
 MUR, FOND, GRILLE, VUE = "#2B2B2B", "#FAF7F2", "#E2DCD3", "#1D5C8F"
 
 
-def grille_low_res(exp_dir, graine):
-    """Grille de depart de l'env low_res, par le vrai chemin de code."""
-    from jax import random
+def grille_tiree(quel, exp_dir, graine):
+    """Grille de depart d'un env de lab, par le vrai chemin de code."""
     from simulation.data_class import resolve_model
-    from simulation.lab_env import vmap_over_agents_env_lab_low_res
+    from simulation.lab_env import (vmap_over_agents_env_lab_high_res,
+                                    vmap_over_agents_env_lab_low_res)
     from simulation.tools.make_lab_envs import ModeleFactice
     from simulation.tools.preview_lab_env import config_par_defaut, grille_de_depart
     from simulation.utils.utils_sim import load_config
@@ -35,8 +35,9 @@ def grille_low_res(exp_dir, graine):
     cfg = resolve_model(cfg)
     if graine is None:
         graine = cfg.lab_seed
-    res, _ = grille_de_depart(vmap_over_agents_env_lab_low_res, cfg,
-                              ModeleFactice(), graine)
+    fn = (vmap_over_agents_env_lab_high_res if quel == "high_res"
+          else vmap_over_agents_env_lab_low_res)
+    res, _ = grille_de_depart(fn, cfg, ModeleFactice(), graine)
     return res, [r.id for r in cfg.resources], graine
 
 
@@ -78,9 +79,7 @@ def panneau_multi(ax, res, ids, titre, sous_titre):
         y, x = np.nonzero(res[c])
         ax.scatter(x, y, s=46, marker="s", color=color_of(i), edgecolor="white",
                    linewidth=.5, zorder=4, label=f"{label_of(i)} ({int(res[c].sum())})")
-    if len(ids) > 1:
-        ax.legend(loc="upper center", bbox_to_anchor=(.5, -.02), ncol=len(ids),
-                  frameon=False, fontsize=9)
+
 
 
 def panneau(ax, grille, couleur, titre, sous_titre, vue=None, centre=None):
@@ -122,10 +121,13 @@ def panneau(ax, grille, couleur, titre, sous_titre, vue=None, centre=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("noms", nargs="*", default=list(LAB_ENVS))
+    p.add_argument("noms", nargs="*", default=None)
     p.add_argument("--dir", default=os.path.join(os.path.dirname(__file__), "..", "lab_envs"))
     p.add_argument("--low-res", dest="low_res", action="store_true",
                    help="ajouter l'env low_res (exploration), tire a la graine")
+    p.add_argument("--high-res", dest="high_res", action="store_true",
+                   help="ajouter l'env high_res tire a la graine : le seul cas a "
+                        "plusieurs ressources, les .npy etant figes a une seule")
     p.add_argument("--from", dest="config_exp", default=None,
                    help="config d'un run, pour ses ressources et sa lab_seed")
     p.add_argument("--graine", type=int, default=None,
@@ -136,39 +138,57 @@ def main():
     p.add_argument("-o", "--out", default="fig/lab_envs.png")
     a = p.parse_args()
 
-    grilles = [(n, charge(n, a.dir)) for n in a.noms]
-    bas = None
+    # les .npy sont a une ressource : on ne les melange pas a un tirage a trois
+    noms = list(a.noms) if a.noms else ([] if a.high_res else list(LAB_ENVS))
+    grilles = [(n, charge(n, a.dir)) for n in noms]
+    tires = []
+    if a.high_res:
+        tires.append(("High resources", "test env", ) + grille_tiree(
+            "high_res", a.config_exp, a.graine))
     if a.low_res:
-        bas = grille_low_res(a.config_exp, a.graine)
+        tires.append(("Low resources", "exploration env") + grille_tiree(
+            "low_res", a.config_exp, a.graine))
+    bas = tires[-1][2:] if tires else None
     couleur = color_of(0)
-    n_pan = len(grilles) + (1 if bas else 0)
+    n_pan = len(grilles) + len(tires)
     fig, axes = plt.subplots(1, n_pan,
                              figsize=(4.5 * n_pan + (1.9 if a.vue else 0), 5.1))
     fig.patch.set_facecolor("white")
     axes = np.atleast_1d(axes)
     for ax, (nom, g) in zip(axes, grilles):
         cle = os.path.splitext(os.path.basename(nom))[0]
-        dernier = nom == grilles[-1][0] and not bas
+        dernier = nom == grilles[-1][0] and not tires
         panneau(ax, g, couleur, TITRES.get(cle, cle), SOUS_TITRES.get(cle, ""),
                 vue=a.vue if dernier else 0)
-    if bas:
-        res, ids, graine = bas
+    for k, (titre, sous, res, ids, graine) in enumerate(tires):
+        ax = axes[len(grilles) + k]
         total = int(res.sum())
-        panneau_multi(axes[-1], res, ids, "Low resources",
-                      f"exploration env — {total} cells, seed {graine}")
-        if a.vue:
-            panneau(axes[-1], res.sum(axis=0), couleur, "Low resources",
-                    f"exploration env — {total} cells, seed {graine}", vue=a.vue)
+        panneau_multi(ax, res, ids, titre, f"{sous} — {total} cells, seed {graine}")
+        if a.vue and k == len(tires) - 1:
+            panneau(ax, res.sum(axis=0), couleur, titre,
+                    f"{sous} — {total} cells, seed {graine}", vue=a.vue)
 
-    fig.suptitle("Fixed test environments", fontsize=16, fontweight="semibold", y=.99)
+    titre = ("Fixed test environments" if not tires else
+             "Lab environments" if grilles else "Lab environments, drawn from the seed")
+    fig.suptitle(titre, fontsize=16, fontweight="semibold", y=.99)
+    ids_vus = sorted({i for *_, ids, _ in tires for i in ids})
+    if len(ids_vus) > 1:
+        fig.legend(handles=[plt.Line2D([0], [0], marker="s", color="none",
+                                       markerfacecolor=color_of(i),
+                                       markeredgecolor="white", markersize=11,
+                                       label=label_of(i)) for i in ids_vus],
+                   loc="lower center", ncol=len(ids_vus), frameon=False,
+                   fontsize=10, bbox_to_anchor=(.5, .085))
     legende = ("30 × 30 arena, border wall in dark, agents start inside the "
-               "dashed area. The three fixed environments hold 40 resource "
-               "cells each")
-    legende += (f", the exploration one {int(bas[0].sum())}. " if bas else ". ")
-    legende += "Blue: what one agent sees from its position."
-    fig.text(.5, .085, legende,
+               "dashed area.")
+    if grilles:
+        legende += " The fixed environments hold 40 resource cells each."
+    if a.vue:
+        legende += " Blue: what one agent sees from its position."
+    fig.text(.5, .028, legende,
              ha="center", fontsize=10, color="#4A4A4A")
-    fig.tight_layout(rect=[0, .11, .88 if a.vue else 1, .95])
+    fig.tight_layout(rect=[0, .17 if len(ids_vus) > 1 else .11,
+                           .88 if a.vue else 1, .95])
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     fig.savefig(a.out, dpi=200, facecolor="white")
     print(f"Figure saved: {a.out}")
