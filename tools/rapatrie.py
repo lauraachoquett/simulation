@@ -19,9 +19,14 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
 
 
 def cherche(site, base, motifs):
-    """[(mtime, chemin relatif a base)] des experiences du site qui correspondent."""
+    """[(n_fichiers, mtime, chemin)] des experiences du site qui correspondent.
+
+    Le compte de fichiers sert a departager un dossier present sur deux sites :
+    on garde le plus complet, une copie partielle etant souvent la plus recente.
+    """
     cmd = (f"cd {base} 2>/dev/null || exit 0; for d in {' '.join(motifs)}; do "
-           f'[ -f "$d/config.json" ] && echo "$(stat -c %Y "$d/config.json") $d"; done')
+           f'[ -f "$d/config.json" ] && echo '
+           f'"$(find "$d" -type f | wc -l) $(stat -c %Y "$d/config.json") $d"; done')
     try:
         r = subprocess.run(SSH + [f"{site}.g5k", cmd], capture_output=True,
                            text=True, timeout=90)
@@ -29,9 +34,10 @@ def cherche(site, base, motifs):
         return []
     out = []
     for ligne in r.stdout.splitlines():
-        t, _, d = ligne.partition(" ")
-        if t.isdigit():
-            out.append((int(t), d.rstrip("/")))
+        n, _, reste = ligne.partition(" ")
+        t, _, d = reste.partition(" ")
+        if n.isdigit() and t.isdigit():
+            out.append((int(n), int(t), d.rstrip("/")))
     return out
 
 
@@ -82,17 +88,19 @@ def main():
 
     choix = {}
     for site, lst in trouves.items():
-        for t, rel in lst:
+        for n, t, rel in lst:
+            mieux = rel not in choix or (n, t) > choix[rel][:2]
             if rel in choix:
-                print(f"[info] {rel} sur {choix[rel][1]} et {site} : "
-                      f"{site if t > choix[rel][0] else choix[rel][1]} garde (plus recent)")
-            if rel not in choix or t > choix[rel][0]:
-                choix[rel] = (t, site)
+                gagnant = site if mieux else choix[rel][2]
+                print(f"[info] {rel} sur {choix[rel][2]} ({choix[rel][0]} fichiers) "
+                      f"et {site} ({n}) : {gagnant} garde")
+            if mieux:
+                choix[rel] = (n, t, site)
     if not choix:
         raise SystemExit("aucune experience trouvee (ssh <site>.g5k fonctionne ?)")
 
     echecs = []
-    for rel, (_, site) in sorted(choix.items()):
+    for rel, (_, _, site) in sorted(choix.items()):
         dest = os.path.join(a.dest, rel)
         if a.dry_run:
             print(f"{site}: {rel}")
