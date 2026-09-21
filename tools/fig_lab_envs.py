@@ -19,7 +19,7 @@ TITRES = {"scatter40_s0": "Scattered", "patch8x5_s0": "Patchy",
 SOUS_TITRES = {"scatter40_s0": "40 isolated items",
                "patch8x5_s0": "8 patches of 5",
                "blob1x40_s1": "one blob of 40"}
-MUR, FOND, GRILLE = "#2B2B2B", "#FAF7F2", "#E2DCD3"
+MUR, FOND, GRILLE, VUE = "#2B2B2B", "#FAF7F2", "#E2DCD3", "#1D5C8F"
 
 
 def charge(nom, dossier):
@@ -27,7 +27,32 @@ def charge(nom, dossier):
     return g.sum(axis=0) if g.ndim == 3 else g
 
 
-def panneau(ax, grille, couleur, titre, sous_titre):
+def encart_vision(ax, grille, couleur, vue, centre):
+    """Fenetre d'observation (2*vue+1) autour d'un agent, montree en zoom."""
+    c = 2 * vue + 1
+    y0, x0 = centre[0] - vue, centre[1] - vue
+    iax = ax.inset_axes([1.07, .28, .46, .46])
+    iax.set_facecolor(FOND)
+    for k in range(c + 1):
+        iax.axhline(y0 - .5 + k, color=GRILLE, lw=.5)
+        iax.axvline(x0 - .5 + k, color=GRILLE, lw=.5)
+    sous = grille[max(y0, 0):y0 + c, max(x0, 0):x0 + c]
+    yy, xx = np.nonzero(sous)
+    iax.scatter(xx + max(x0, 0), yy + max(y0, 0), s=70, marker="s",
+                color=couleur, edgecolor="white", linewidth=.5)
+    iax.scatter([centre[1]], [centre[0]], s=110, marker="o", color=VUE,
+                edgecolor="white", linewidth=1.2, zorder=5)
+    iax.set_xlim(x0 - .5, x0 + c - .5), iax.set_ylim(y0 + c - .5, y0 - .5)
+    iax.set_xticks([]), iax.set_yticks([])
+    for co in iax.spines.values():
+        co.set_color(VUE), co.set_linewidth(1.4)
+    _, traits = ax.indicate_inset_zoom(iax, edgecolor=VUE, linewidth=1.4, alpha=1)
+    for t in traits:                      # les diagonales se croisent, illisible
+        t.set_visible(False)
+    iax.set_title(f"agent view, {c} × {c}", fontsize=9.5, color=VUE, pad=5)
+
+
+def panneau(ax, grille, couleur, titre, sous_titre, vue=None, centre=None):
     L = grille.shape[0]
     ax.set_facecolor(FOND)
     ax.set_xlim(-.5, L - .5), ax.set_ylim(L - .5, -.5)
@@ -52,6 +77,12 @@ def panneau(ax, grille, couleur, titre, sous_titre):
     ax.set_xticks([]), ax.set_yticks([])
     for c in ax.spines.values():
         c.set_visible(False)
+    if vue:
+        # centre sur les ressources : un encart vide ne montrerait pas l'echelle
+        yy, xx = np.nonzero(grille)
+        c = centre or (int(round(yy.mean())), int(round(xx.mean())))
+        c = tuple(int(np.clip(v, vue + 1, L - vue - 2)) for v in c)
+        encart_vision(ax, grille, couleur, vue, c)
     ax.set_title(titre, fontsize=13, pad=30, fontweight="semibold")
     ax.text(.5, 1.012, sous_titre, transform=ax.transAxes, ha="center",
             va="bottom", fontsize=10, color="#5A5A5A")
@@ -61,22 +92,29 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("noms", nargs="*", default=list(LAB_ENVS))
     p.add_argument("--dir", default=os.path.join(os.path.dirname(__file__), "..", "lab_envs"))
+    p.add_argument("--vue", type=int, default=5,
+                   help="rayon du champ de vision, encart sur le dernier panneau "
+                        "(defaut %(default)s ; 0 = pas d'encart)")
     p.add_argument("-o", "--out", default="fig/lab_envs.png")
     a = p.parse_args()
 
     grilles = [(n, charge(n, a.dir)) for n in a.noms]
     couleur = color_of(0)
-    fig, axes = plt.subplots(1, len(grilles), figsize=(4.5 * len(grilles), 5.1))
+    fig, axes = plt.subplots(1, len(grilles),
+                             figsize=(4.5 * len(grilles) + (1.9 if a.vue else 0), 5.1))
     fig.patch.set_facecolor("white")
     for ax, (nom, g) in zip(np.atleast_1d(axes), grilles):
         cle = os.path.splitext(os.path.basename(nom))[0]
-        panneau(ax, g, couleur, TITRES.get(cle, cle), SOUS_TITRES.get(cle, ""))
+        dernier = nom == grilles[-1][0]
+        panneau(ax, g, couleur, TITRES.get(cle, cle), SOUS_TITRES.get(cle, ""),
+                vue=a.vue if dernier else 0)
 
     fig.suptitle("Fixed test environments", fontsize=16, fontweight="semibold", y=.99)
     fig.text(.5, .085, "30 × 30 arena, border wall in dark, agents start inside "
-             "the dashed area. 40 resource cells in all three.",
+             "the dashed area, 40 resource cells in all three. Blue: what one "
+             "agent sees from its position.",
              ha="center", fontsize=10, color="#4A4A4A")
-    fig.tight_layout(rect=[0, .11, 1, .95])
+    fig.tight_layout(rect=[0, .11, .88 if a.vue else 1, .95])
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     fig.savefig(a.out, dpi=200, facecolor="white")
     print(f"Figure saved: {a.out}")
