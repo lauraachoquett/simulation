@@ -105,6 +105,7 @@ def main():
             echecs.append(rel)
             print(f"{site}: {rel} ECHEC (connexion)", flush=True)
             continue
+        if a.videos:
             for f in sorted(fichiers(dest) - avant):
                 if f.endswith(".mp4"):
                     reencode(f)
