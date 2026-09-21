@@ -89,6 +89,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("source")
     p.add_argument("--condition", default="alone", choices=list(COND))
+    p.add_argument("--mesures", nargs="+", default=None,
+                   metavar="M", choices=[m[0] for m in MESURES],
+                   help="mesures a tracer parmi age, greediness, mean_speed "
+                        "(defaut : les trois)")
     p.add_argument("--par-env", dest="par_env", action="store_true",
                    help="une ligne par geometrie, les trois conditions ensemble")
     p.add_argument("--geos", nargs="+", default=list(NOMS),
@@ -101,6 +105,8 @@ def main():
     p.add_argument("-o", "--out", default=None)
     a = p.parse_args()
 
+    mesures = ([m for m in MESURES if m[0] in a.mesures] if a.mesures
+               else list(MESURES))
     data_dir = data_dir_de(a.source)
     if data_dir is None:
         raise SystemExit(f"pas de lab_data sous {a.source}")
@@ -114,9 +120,12 @@ def main():
     if a.par_env:
         conds = ["alone"] + [c for c in ("figurants", "clones") if glob.glob(
             os.path.join(data_dir, f"chunk_*_env_*_alone_vs_{c}.json"))]
-        fig, axes = plt.subplots(len(geos), len(MESURES), squeeze=False,
-                                 figsize=(5.4 * len(MESURES), 3.9 * len(geos)),
-                                 sharex=True)
+        # une seule mesure : les geometries en colonnes, c'est plus lisible
+        une = len(mesures) == 1
+        nl, nc = (1, len(geos)) if une else (len(geos), len(mesures))
+        fig, axes = plt.subplots(nl, nc, squeeze=False,
+                                 figsize=(5.4 * nc, (4.4 if une else 3.9) * nl),
+                                 sharex=True, sharey=une)
         for i, geo in enumerate(geos):
             for cond in conds:
                 # alone est lu dans le MEME fichier apparie que la condition
@@ -129,8 +138,8 @@ def main():
                     pref = None
                 if not len(x):
                     continue
-                for j, (k_vs, k_res, titre, unite) in enumerate(MESURES):
-                    ax = axes[i][j]
+                for j, (k_vs, k_res, titre, unite) in enumerate(mesures):
+                    ax = axes[0][i] if une else axes[i][j]
                     if pref is None:          # aucun fichier apparie : resumes
                         trace(ax, x, S, k_res, COULEUR_COND[cond], COND[cond],
                               a.chunk_size)
@@ -138,28 +147,36 @@ def main():
                         Sk = [s.get(k_vs, {}) for s in S]
                         trace(ax, x, Sk, pref, COULEUR_COND[cond], COND[cond],
                               a.chunk_size)
-                    ax.set_title(f"{NOMS.get(geo, geo)} — {titre}", fontsize=11)
+                    ax.set_title(NOMS.get(geo, geo) if une
+                                 else f"{NOMS.get(geo, geo)} — {titre}", fontsize=11)
                     ax.set_ylabel(unite)
                     ax.grid(alpha=.3)
-                    if i == len(geos) - 1:
+                    if une or i == len(geos) - 1:
                         ax.set_xlabel("simulation step")
-            axes[i][1].set_ylim(0, 1)
-        axes[0][0].legend(frameon=False, title="condition")
-        fig.suptitle("Social conditions within each test environment "
-                     "(median and p25–p75 over genomes)", fontsize=13)
-        fig.tight_layout(rect=[0, 0, 1, .96])
-        out = a.out or os.path.join(fig_dir, "lab_conditions_par_env.png")
+                    if k_vs == "greediness":
+                        ax.set_ylim(0, 1)
+        titres = " · ".join(t for _, _, t, _ in mesures)
+        fig.suptitle(f"Social conditions within each test environment — {titres}"
+                     r" (median and p25–p75 over genomes)", fontsize=13)
+        h, l = axes[0][0].get_legend_handles_labels()
+        fig.legend(h, l, title="condition", frameon=False,
+                   loc="center left", bbox_to_anchor=(.885, .5))
+        fig.tight_layout(rect=[0, 0, .88, .93])
+        nom = ("lab_conditions_par_env.png" if len(mesures) == len(MESURES)
+               else f"lab_conditions_par_env_{'_'.join(m[0] for m in mesures)}.png")
+        out = a.out or os.path.join(fig_dir, nom)
     else:
         cmap = plt.get_cmap(a.cmap)
         couleurs = [cmap(t) for t in np.linspace(.12, .82, len(geos))]
-        fig, axes = plt.subplots(1, len(MESURES),
-                                 figsize=(5.4 * len(MESURES), 4.6))
+        fig, axes = plt.subplots(1, len(mesures),
+                                 figsize=(5.4 * len(mesures), 4.6), squeeze=False)
+        axes = axes[0]
         for geo, couleur in zip(geos, couleurs):
             x, S, pref = serie(data_dir, geo, a.condition, a.chunks, a.pas)
             if not len(x):
                 print(f"  [info] rien pour {geo} en {a.condition}")
                 continue
-            for ax, (k_vs, k_res, titre, unite) in zip(axes, MESURES):
+            for ax, (k_vs, k_res, titre, unite) in zip(axes, mesures):
                 Sk = S if a.condition == "alone" else [s.get(k_vs, {}) for s in S]
                 trace(ax, x, Sk, k_res if a.condition == "alone" else pref,
                       couleur, NOMS.get(geo, geo), a.chunk_size)
@@ -167,11 +184,15 @@ def main():
                 ax.set_ylabel(unite)
                 ax.set_xlabel("simulation step")
                 ax.grid(alpha=.3)
-        axes[1].set_ylim(0, 1)
-        axes[0].legend(frameon=False, title="test environment")
+        for ax, (k_vs, *_) in zip(axes, mesures):
+            if k_vs == "greediness":
+                ax.set_ylim(0, 1)
+        h, l = axes[0].get_legend_handles_labels()
+        fig.legend(h, l, title="test environment", frameon=False,
+                   loc="center left", bbox_to_anchor=(.885, .5))
         fig.suptitle(f"Focal agent with {COND[a.condition]}, across test "
                      "geometries (median and p25–p75 over genomes)", fontsize=13)
-        fig.tight_layout(rect=[0, 0, 1, .93])
+        fig.tight_layout(rect=[0, 0, .88, .93])
         out = a.out or os.path.join(fig_dir, f"lab_geometries_{a.condition}.png")
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
