@@ -300,6 +300,8 @@ def main():
     p.add_argument("--plot-only", dest="plot_only", action="store_true",
                    help="ne rien copier ni reevaluer : retracer les figures "
                         "d'un dossier qui a deja son lab_data/")
+    p.add_argument("--no-resume", dest="no_resume", action="store_true",
+                   help="ne pas remonter la chaine des reprises avec --merge-only")
     p.add_argument("--merge-only", dest="merge_only", action="store_true",
                    help="ne RIEN reevaluer : fusionner des lab_data deja "
                         "produits et tracer. Les chemins donnes peuvent etre "
@@ -340,7 +342,17 @@ def main():
         return
 
     if a.merge_only:
-        fusionner(a.exp_dirs, a.out or os.path.join(a.exp_dirs[0], "replay_merge"),
+        donne = a.exp_dirs[0]            # la sortie va la, pas a la racine
+        # un seul dossier : ses ancetres sont retrouves par resume_from, comme
+        # dans tools/replot. Plusieurs : on prend exactement ce qui est donne.
+        if len(a.exp_dirs) == 1 and not a.no_resume:
+            from simulation.tools.replot import chaine_de_reprise
+            chaine = chaine_de_reprise(a.exp_dirs[0])
+            if len(chaine) > 1:
+                print("chaine de reprise suivie : " + " -> ".join(
+                    os.path.basename(d.rstrip("/")) for d in chaine))
+                a.exp_dirs = chaine
+        fusionner(a.exp_dirs, a.out or os.path.join(donne, "replay_merge"),
                   bornes=a.chunks_zoom, pas=a.pas_chunks)
         return
 
