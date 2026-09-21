@@ -195,7 +195,8 @@ def main(argv=None):
     cible = args.out
     if cible is None:
         cible = (exp_dir if not args.chunks else
-                 os.path.join(exp_dir, f"zoom_chunks_{args.chunks[0]}_{args.chunks[1]}"))
+                 os.path.join(os.path.abspath(args.exp_dirs[0]),
+                              f"zoom_chunks_{args.chunks[0]}_{args.chunks[1]}"))
     if cible != exp_dir:
         os.makedirs(os.path.join(cible, "fig"), exist_ok=True)
 
