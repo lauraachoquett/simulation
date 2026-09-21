@@ -166,7 +166,7 @@ def lab_data_de(chemin):
     return None
 
 
-def fusionner(chemins, sortie, bornes=None):
+def fusionner(chemins, sortie, bornes=None, pas=0):
     """Rassemble des lab_data deja produits, sans rien reevaluer.
 
     Les fichiers portent le numero de chunk dans leur nom : une simple copie
@@ -230,16 +230,16 @@ def fusionner(chemins, sortie, bornes=None):
                    "chevauchements": chevauchements}, f, indent=2)
     print(f"{len(os.listdir(dest))} fichier(s) apres dedoublonnage, "
           f"sources dans {os.path.join(sortie, 'exp.json')}")
-    tracer(sortie, bornes)
+    tracer(sortie, bornes, pas)
 
 
-def tracer(sortie, bornes=None):
+def tracer(sortie, bornes=None, pas=0):
     # les fonctions de trace ecrivent dans <sortie>/fig sans le creer : en mode
     # fusion rien d'autre ne l'a fait avant
     fig_dir = os.path.join(sortie, "fig" if not bornes else
                            f"zoom_chunks_{bornes[0]}_{bornes[1]}")
     os.makedirs(fig_dir, exist_ok=True)
-    plot_lab_metrics(exp_dir=sortie, bornes=bornes, fig_dir=fig_dir)
+    plot_lab_metrics(exp_dir=sortie, bornes=bornes, fig_dir=fig_dir, pas=pas)
     # une figure par geometrie supplementaire. Les suffixes sont decouverts sur
     # disque -- le rejeu n'a ainsi pas besoin de connaitre les noms choisis pour
     # le run -- et dedoublonnes : il y a un fichier par chunk et par geometrie.
@@ -249,8 +249,9 @@ def tracer(sortie, bornes=None):
         if m:
             suffixes.add(m.group(1))
     for suf in sorted(suffixes):
-        plot_lab_metrics(exp_dir=sortie, suffix=suf, bornes=bornes, fig_dir=fig_dir)
-    plot_lab_exploration(exp_dir=sortie, bornes=bornes, fig_dir=fig_dir)
+        plot_lab_metrics(exp_dir=sortie, suffix=suf, bornes=bornes,
+                         fig_dir=fig_dir, pas=pas)
+    plot_lab_exploration(exp_dir=sortie, bornes=bornes, fig_dir=fig_dir, pas=pas)
     # Familles alone_vs_* decouvertes sur disque : elles portent le suffixe de
     # geometrie, et figurants n'est pas toujours joue.
     etiq = {"clones": "clones (median of peers)", "figurants": "with inert peers"}
@@ -267,7 +268,8 @@ def tracer(sortie, bornes=None):
             titre=f"Focal agent alone vs {cond}"
                   + (f"  [{tag[4:-len('_alone_vs_' + cond)]}]"
                      if tag.startswith("env_") else ""),
-            fname=f"lab_{tag}_evolution.png", bornes=bornes, fig_dir=fig_dir)
+            fname=f"lab_{tag}_evolution.png", bornes=bornes, fig_dir=fig_dir,
+            pas=pas)
     print(f"Figures dans {fig_dir}")
 
 
@@ -293,6 +295,8 @@ def main():
                    default=None, metavar=("DEBUT", "FIN"),
                    help="ne tracer que cette plage de chunks (bornes incluses), "
                         "dans zoom_chunks_<DEBUT>_<FIN>/")
+    p.add_argument("--pas-chunks", dest="pas_chunks", type=int, default=0,
+                   metavar="N", help="un point tous les N chunks au moins")
     p.add_argument("--plot-only", dest="plot_only", action="store_true",
                    help="ne rien copier ni reevaluer : retracer les figures "
                         "d'un dossier qui a deja son lab_data/")
@@ -332,12 +336,12 @@ def main():
 
     if a.plot_only:
         for d in a.exp_dirs:
-            tracer(d, a.chunks_zoom)
+            tracer(d, a.chunks_zoom, a.pas_chunks)
         return
 
     if a.merge_only:
         fusionner(a.exp_dirs, a.out or os.path.join(a.exp_dirs[0], "replay_merge"),
-                  bornes=a.chunks_zoom)
+                  bornes=a.chunks_zoom, pas=a.pas_chunks)
         return
 
     for exp_dir in a.exp_dirs:
@@ -515,12 +519,12 @@ def main():
                           "figurants", stem)
 
         if not a.merge:
-            tracer(sortie, a.chunks_zoom)
+            tracer(sortie, a.chunks_zoom, a.pas_chunks)
 
     if a.merge:
         # une seule fois, sur le lab_data commun : les fonctions de trace lisent
         # tous les chunk_*_summary.json du dossier et les trient par numero
-        tracer(sortie, a.chunks_zoom)
+        tracer(sortie, a.chunks_zoom, a.pas_chunks)
 
 
 if __name__ == "__main__":
