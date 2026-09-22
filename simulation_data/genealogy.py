@@ -28,6 +28,7 @@ class GenealogyMixin:
         self.node_parent = {}
         self.node_children = {}
         self.tmrca_gen = []
+        self.tmrca_pas = []        # age du MRCA en pas de simulation
         self.prev_born = None
         self.prev_parent = None
         self.coalesced = False
@@ -53,11 +54,12 @@ class GenealogyMixin:
     def update_mrca_and_plot(self, outputs, exp_dir):
         outputs_mcra = coalescence_point(outputs, self.node_parent)
         self.coalesced = outputs_mcra['coalesced']
-        tmrca_generations = outputs_mcra['tmrca_generations']
-        self.tmrca_gen.append(tmrca_generations)
+        self.tmrca_gen.append(outputs_mcra['tmrca_generations'])
+        self.tmrca_pas.append(outputs_mcra.get('tmrca_pas_de_simu'))
         if self.coalesced:
             self.sauve_lignee(outputs_mcra['mrca'], exp_dir)
-            plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen, exp_dir)
+            plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen,
+                           exp_dir, tmrca_pas=self.tmrca_pas)
 
     def sauve_lignee(self, mrca, exp_dir):
         """Enregistre les ancetres fixes depuis le dernier changement de MRCA."""
@@ -105,7 +107,8 @@ class GenealogyMixin:
     def save_mrca_sim(self, data_dir):
         np.savez(
             os.path.join(data_dir, f"tmrca.npz"),
-            tmrca=np.array(self.tmrca_gen),
+            tmrca=np.array(self.tmrca_gen, dtype=float),
+            tmrca_pas=np.array(self.tmrca_pas, dtype=float),
         )
         
     def compute_R0_and_plot(self,state,current_step,exp_dir):

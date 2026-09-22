@@ -95,51 +95,56 @@ def coalescence_point(outputs, node_parent):
         "tmrca_generations":  max(tmrca),
         "tmrca_min":          min(tmrca),
         "tmrca_moyen":        sum(tmrca) / len(tmrca),
-        "tmrca_pas_de_simu":  (T - 1) - mrca[1],
+        "tmrca_pas_de_simu":  int(np.asarray(outputs.step)[-1]) - int(mrca[1]),
     }
     
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_tmrca_gen(pop_history, tmrca_series, exp_dir,
-                   t_points=None, filename="tmrca_gen.png"):
-    pop   = np.asarray(pop_history)
-    tmrca = np.array([np.nan if v is None else v for v in tmrca_series], dtype=float)
+def plot_tmrca_gen(pop_history, tmrca_series, exp_dir, t_points=None,
+                   filename="tmrca_gen.png", tmrca_pas=None):
+    """TMRCA en pas de simulation, et en generations sur l'axe de droite.
 
-    t_pop = np.arange(pop.shape[0])
+    Les deux ne disent pas la meme chose : les pas donnent l'age du MRCA, les
+    generations le nombre d'evenements de reproduction enchainés depuis lui,
+    donc la vitesse de reproduction de la lignee la plus rapide.
+    """
+    gen = np.array([np.nan if v is None else v for v in tmrca_series], dtype=float)
+    pas = (np.array([np.nan if v is None else v for v in tmrca_pas], dtype=float)
+           if tmrca_pas is not None else np.full(len(gen), np.nan))
+    n_pas_total = np.asarray(pop_history).shape[0]
+
     if t_points is not None:
-        t_tmrca = np.asarray(t_points, dtype=float)
-    elif len(tmrca) > 1:
-        t_tmrca = np.linspace(0, pop.shape[0] - 1, len(tmrca))
+        x = np.asarray(t_points, dtype=float)
+    elif len(gen) > 1:
+        x = np.linspace(0, n_pas_total - 1, len(gen))
     else:
-        t_tmrca = np.array([pop.shape[0] - 1], dtype=float)
+        x = np.array([n_pas_total - 1], dtype=float)
 
-    # --- commencer au premier TMRCA non-None ---
-    mask = np.isfinite(tmrca)
+    mask = np.isfinite(gen) | np.isfinite(pas)
     if not mask.any():
         return None                       # jamais coalescé : rien à tracer
-    first   = np.argmax(mask)             # premier indice où tmrca existe
-    t_start = t_tmrca[first]
-    t_tmrca, tmrca = t_tmrca[first:], tmrca[first:]
-    keep = t_pop >= t_start               # on coupe aussi la population avant t_start
-    t_pop, pop = t_pop[keep], pop[keep]
+    first = np.argmax(mask)               # premier point ou un TMRCA existe
+    x, gen, pas = x[first:], gen[first:], pas[first:]
 
     fig, ax1 = plt.subplots(figsize=(9, 4.5))
-    if pop.ndim == 1:
-        ax1.plot(t_pop, pop, color="tab:gray", lw=1, label="N")
-    else:
-        for s in range(pop.shape[1]):
-            ax1.plot(t_pop, pop[:, s], lw=1, label=f"espèce {s}")
+    if np.isfinite(pas).any():
+        ax1.plot(x, pas, color="tab:blue", marker=".", lw=1.4,
+                 label="TMRCA (steps)")
     ax1.set_xlabel("Steps")
-    ax1.set_ylabel("population size N")
-    ax1.legend(loc="upper left", fontsize=8)
+    ax1.set_ylabel("TMRCA (steps)", color="tab:blue")
+    ax1.tick_params(axis="y", labelcolor="tab:blue")
+    ax1.grid(alpha=.3)
 
     ax2 = ax1.twinx()
-    ax2.plot(t_tmrca, tmrca, color="tab:red", marker=".", lw=1.2, label="TMRCA")
-    ax2.set_ylabel("TMRCA", color="tab:red")
+    ax2.plot(x, gen, color="tab:red", marker=".", lw=1.2, alpha=.85,
+             label="TMRCA (generations)")
+    ax2.set_ylabel("TMRCA (generations)", color="tab:red")
     ax2.tick_params(axis="y", labelcolor="tab:red")
 
+    lignes = ax1.get_lines() + ax2.get_lines()
+    ax1.legend(lignes, [l.get_label() for l in lignes], loc="upper left", fontsize=8)
     fig.tight_layout()
     os.makedirs(exp_dir, exist_ok=True)
     path = os.path.join(exp_dir, 'fig',filename)
