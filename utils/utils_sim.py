@@ -483,6 +483,16 @@ def shuffle_resources(resources, key):
     return tuple(resources[int(i)] for i in perm)
 
 
+def rotation_resources(resources):
+    """Permutation CYCLIQUE des canaux : le canal k prend la ressource du k+1.
+
+    Deterministe, donc l'intervalle entre deux changements reels vaut exactement
+    cycle_period, la ou le tirage uniforme laisse parfois l'ordre inchange. A
+    n canaux, la suite revient a l'ordre de depart tous les n changements.
+    """
+    return tuple(resources[1:]) + (resources[0],)
+
+
 def shuffle_resources_v1(resources, key, max_essais=20):
     """Version d'avant b0f455d : identite EXCLUE, et split de la cle DANS la
     boucle. Conservee a l'identique pour rejouer les runs anterieurs -- les deux

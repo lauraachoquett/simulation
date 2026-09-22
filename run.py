@@ -19,7 +19,7 @@ os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 from jax import random
 import jax
 from simulation.one_simulation import run_simulation_chunk
-from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1
+from simulation.utils.utils_sim import save_checkpoint,_video_worker,save_config,create_exp_file,load_config,load_checkpoint,outputs_to_numpy,video_payload,sec_to_minutes,shuffle_resources,shuffle_resources_v1,rotation_resources
 from simulation.utils.plots import plot_current_config
 from simulation.data_class import (Config, ResourceConfig, BASE_RESOURCES, LABELS,
                                    MODEL_VERSIONS, resolve_model, label_of, color_of)
@@ -160,7 +160,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             [r.id for r in cfg.resources], load_shuffle_log(resume_exp),
             int(state.step), permutation_due(cfg, chunk_id))
         if source == "a_tirer":
-            if cfg.shuffle_version == "v1":
+            if cfg.shuffle_version == "cyclique":
+                nouv = rotation_resources(tuple(par_id[i] for i in ids_avant))
+            elif cfg.shuffle_version == "v1":
                 nouv = shuffle_resources_v1(BASE_RESOURCES, subkeys[chunk_id - 1])
             else:
                 key, k_sh = random.split(key)
@@ -360,7 +362,9 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             # qui laisse croire a un changement dans resource_shuffles.jsonl.
             if permutation_due(cfg, chunk_idx):
                 old_resources = cfg.resources
-                if cfg.shuffle_version == "v1":
+                if cfg.shuffle_version == "cyclique":
+                    new_resources = rotation_resources(old_resources)
+                elif cfg.shuffle_version == "v1":
                     # permute BASE_RESOURCES avec la cle du CHUNK, identite exclue
                     new_resources = shuffle_resources_v1(BASE_RESOURCES, subkey)
                 else:
@@ -491,9 +495,11 @@ def parse_cli(cfg):
     p.add_argument("--init", dest="init_scale", choices=["constant", "lecun"],
                    default=cfg.init_scale,
                    help="echelle des poids initiaux (defaut %(default)s)")
-    p.add_argument("--shuffle", dest="shuffle_version", choices=["v1", "v2"],
+    p.add_argument("--shuffle", dest="shuffle_version",
+                   choices=["v1", "v2", "cyclique"],
                    default=cfg.shuffle_version,
-                   help="version du shuffle (defaut %(default)s) ; v1 = avant le 18 aout")
+                   help="version du shuffle (defaut %(default)s) ; v1 = avant le "
+                        "18 aout ; cyclique = rotation deterministe des canaux")
     p.add_argument("-m", "--model", dest="model_version",
                    choices=sorted(MODEL_VERSIONS) + ["custom"],
                    default=cfg.model_version, help="version du reseau (defaut %(default)s)")
