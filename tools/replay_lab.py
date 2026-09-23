@@ -39,6 +39,7 @@ import numpy as np
 from jax import random
 
 from simulation.data_class import label_of
+from simulation.tools.lineage_lab import charge_genomes
 from simulation.lab_env import (env_file_pour,
                                 vmap_over_agents_env_lab_high_res,
                                 vmap_over_agents_env_lab_low_res,
@@ -329,6 +330,11 @@ def main():
                    help="filmer les N premiers genomes de CHAQUE env et de "
                         "chaque geometrie (defaut 0 = aucune video). Un rollout "
                         "separe avec log_grid : garder N petit")
+    p.add_argument("--lod", action="store_true",
+                   help="evaluer la ligne de descendance (lod/) au lieu de la "
+                        "population des checkpoints")
+    p.add_argument("--graines", type=int, default=1, metavar="N",
+                   help="evaluer chaque genome sur N graines d'env consecutives")
     p.add_argument("--vieux", type=int, default=0, metavar="N",
                    help="ne garder que les N agents les plus vieux du checkpoint "
                         "(age dans la simulation), au lieu des N premiers de -n")
@@ -423,35 +429,66 @@ def main():
               f"{cfg.lab_time_steps} pas est sequentiel, pas le lot.")
 
         sd = simulation_data(cfg, 0, 1)
+        graines = [graine_lab + k for k in range(max(1, a.graines))]
+        if len(graines) > 1:
+            print(f"{len(graines)} graines d'env : {graines[0]} a {graines[-1]}")
 
-        for chunk, _ in ckpts:
-            state = load_checkpoint(exp_dir, chunk)
-            step = int(state.step)
+        # source des genomes : la lignee, ou la population des checkpoints
+        if a.lod:
+            lod = charge_genomes(exp_dir)
+            if not lod:
+                print(f"{exp_dir} : pas de lod/params_chunk_*.npz, saute")
+                return
+            par_chunk = {}
+            for (slot, born), prm in sorted(lod.items(), key=lambda kv: kv[0][1]):
+                par_chunk.setdefault(int(born) // cfg.chunk_size, []).append((born, prm))
+            sources = [(c, int(max(b for b, _ in v)),
+                        jnp.asarray(np.stack([p for _, p in v])))
+                       for c, v in sorted(par_chunk.items())]
+            print(f"lignee : {len(lod)} ancetre(s) repartis sur {len(sources)} chunk(s)")
+        else:
+            sources = [(c, None, None) for c, _ in ckpts]
+
+        for chunk, step_lod, params_lod in sources:
+            if params_lod is None:
+                state = load_checkpoint(exp_dir, chunk)
+                step = int(state.step)
+            else:
+                state, step = None, step_lod
             res = resources_au_pas(cfg, exp_dir, step)
             cfg_c = cfg._replace(resources=res, log_grid=False)
             sd.cfg = cfg_c
             sd.chunk_idx = chunk
 
-            survivants = sd.compute_survivors(state)
-            if not survivants:
-                print(f"  chunk {chunk:>5} (step {step}) : aucun survivant, saute")
-                continue
-            ids = np.array([i for i, _ in survivants])
-            ages_sim = step - np.array([b for _, b in survivants])
-            if a.vieux:          # les plus vieux DANS LA SIMULATION, pas au lab
-                ordre = np.argsort(-ages_sim)[:a.vieux]
-                ids, ages_sim = ids[ordre], ages_sim[ordre]
-            elif a.n:
-                ids, ages_sim = ids[:a.n], ages_sim[:a.n]
-            params = state.agents.params[ids]
+            if params_lod is not None:
+                params, ages_sim = params_lod, np.zeros(len(params_lod))
+                cle, k_sim = random.split(cle)
+                cles = random.split(k_sim, len(params))
+                canaux = " ".join(label_of(r.id) for r in res)
+                print(f"  chunk {chunk:>5} (step {step:>8}) : {len(params)} "
+                      f"ancetre(s) de la lignee, canaux [{canaux}]", flush=True)
+                ids = np.arange(len(params))
+            else:
+                survivants = sd.compute_survivors(state)
+                if not survivants:
+                    print(f"  chunk {chunk:>5} (step {step}) : aucun survivant, saute")
+                    continue
+                ids = np.array([i for i, _ in survivants])
+                ages_sim = step - np.array([b for _, b in survivants])
+                if a.vieux:      # les plus vieux DANS LA SIMULATION, pas au lab
+                    ordre = np.argsort(-ages_sim)[:a.vieux]
+                    ids, ages_sim = ids[ordre], ages_sim[ordre]
+                elif a.n:
+                    ids, ages_sim = ids[:a.n], ages_sim[:a.n]
+                params = state.agents.params[ids]
 
-            cle, k_sim = random.split(cle)
-            cles = random.split(k_sim, len(ids))
-            canaux = " ".join(label_of(r.id) for r in res)
-            vieux = (f", ages {ages_sim.min()}-{ages_sim.max()} pas"
-                     if a.vieux else "")
-            print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} genomes{vieux}, "
-                  f"canaux [{canaux}]", flush=True)
+                cle, k_sim = random.split(cle)
+                cles = random.split(k_sim, len(ids))
+                canaux = " ".join(label_of(r.id) for r in res)
+                vieux = (f", ages {ages_sim.min()}-{ages_sim.max()} pas"
+                         if a.vieux else "")
+                print(f"  chunk {chunk:>5} (step {step:>8}) : {len(ids)} "
+                      f"genomes{vieux}, canaux [{canaux}]", flush=True)
 
             def video(fn, cfg_x, nom_env, sous="", ages=None):
                 """Rollout SEPARE avec log_grid : celui de mesure ne journalise
@@ -478,11 +515,17 @@ def main():
                     print(f"    video {chemin}", flush=True)
 
             def etape(nom, fn, cfg_x):
-                """Un rollout, chronometre. Les etapes silencieuses donnaient
-                l'impression que seules celles qui impriment un tableau
-                (compare_alone_vs_clones) etaient jouees."""
+                """Un rollout par graine d'env, recolles sur l'axe des genomes.
+
+                Avec plusieurs graines, la ligne b n'est plus un genome mais un
+                couple (genome, graine) : l'appariement alone / clones tient
+                toujours, les deux cotes empilant dans le meme ordre.
+                """
                 t = time.time()
-                out = par_lots(fn, params, key_env, cles, model, cfg_x, a.batch)
+                outs = [par_lots(fn, params, random.PRNGKey(g), cles, model,
+                                 cfg_x, a.batch) for g in graines]
+                out = (outs[0] if len(outs) == 1 else jax.tree.map(
+                    lambda *xs: np.concatenate([np.asarray(x) for x in xs]), *outs))
                 print(f"    {nom:<26} {time.time()-t:6.1f} s", flush=True)
                 return out
 
