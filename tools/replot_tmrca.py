@@ -74,10 +74,14 @@ def serie(exp_dir, taille):
     return x, tmrca_pas, gen, len(ev)
 
 
-def boite(series, noms, out, titre):
+def boite(series, noms, out, titre, unite="steps"):
     """Un box plot par experience : distribution du TMRCA au fil des chunks."""
     fig, ax = plt.subplots(figsize=(1.9 * len(series) + 3.2, 5.2))
     donnees = [v[np.isfinite(v)] for v in series]
+    if not any(len(v) for v in donnees):
+        print(f"  [info] aucune valeur en {unite}, figure sautee")
+        plt.close(fig)
+        return
     bp = ax.boxplot(donnees, labels=noms, showfliers=False, widths=.55,
                     medianprops=dict(color="#C1121F", lw=2),
                     boxprops=dict(color="#4C4C4C"),
@@ -87,7 +91,7 @@ def boite(series, noms, out, titre):
     for k, v in enumerate(donnees, start=1):     # nuage : la boite seule cache n
         ax.scatter(k + rng.uniform(-.13, .13, len(v)), v, s=7, alpha=.25,
                    color="#1D5C8F", zorder=1)
-    ax.set_ylabel("TMRCA (steps)")
+    ax.set_ylabel(f"TMRCA ({unite})")
     ax.set_title(titre, fontsize=12)
     ax.grid(alpha=.3, axis="y")
     fig.tight_layout()
@@ -108,8 +112,8 @@ def main():
                    help="defaut <exp_dir>/fig/tmrca_gen.png")
     a = p.parse_args()
 
-    series, noms = [], a.labels or [os.path.basename(os.path.normpath(d))
-                                    for d in a.exp_dir]
+    series, gens, noms = [], [], a.labels or [
+        os.path.basename(os.path.normpath(d)) for d in a.exp_dir]
     for d in a.exp_dir:
         cfg = {}
         f = os.path.join(d, "config.json")
@@ -122,6 +126,7 @@ def main():
               f"{len(x)} chunk(s), TMRCA median "
               f"{np.nanmedian(tmrca_pas[fini]) if fini.any() else float('nan'):.0f} pas")
         series.append(tmrca_pas)
+        gens.append(gen)
         if not a.box:
             out = a.out or os.path.join(d, "fig", "tmrca_gen.png")
             os.makedirs(os.path.dirname(out), exist_ok=True)
@@ -140,6 +145,10 @@ def main():
         out = a.out or os.path.join(a.exp_dir[0], "fig", "tmrca_box.png")
         boite(series, noms, out,
               "Age of the MRCA over the run (one value per chunk)")
+        racine, ext = os.path.splitext(out)
+        boite(gens, noms, f"{racine}_generations{ext}",
+              "Depth of the MRCA over the run (one value per chunk)",
+              unite="generations")
 
 
 if __name__ == "__main__":
