@@ -103,7 +103,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def plot_tmrca_gen(pop_history, tmrca_series, exp_dir, t_points=None,
-                   filename="tmrca_gen.png", tmrca_pas=None):
+                   filename="tmrca_gen.png", tmrca_pas=None, permutations=None):
     """TMRCA en pas de simulation, et en generations sur l'axe de droite.
 
     Les deux ne disent pas la meme chose : les pas donnent l'age du MRCA, les
@@ -142,6 +142,11 @@ def plot_tmrca_gen(pop_history, tmrca_series, exp_dir, t_points=None,
              label="TMRCA (generations)")
     ax2.set_ylabel("TMRCA (generations)", color="tab:red")
     ax2.tick_params(axis="y", labelcolor="tab:red")
+
+    for k, pas_perm in enumerate(permutations or []):
+        if x[0] <= pas_perm <= x[-1]:
+            ax1.axvline(pas_perm, color="0.35", ls=(0, (4, 3)), lw=1.1, zorder=0,
+                        label="channel permutation" if k == 0 else None)
 
     lignes = ax1.get_lines() + ax2.get_lines()
     ax1.legend(lignes, [l.get_label() for l in lignes], loc="upper left", fontsize=8)

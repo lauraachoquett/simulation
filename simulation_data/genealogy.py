@@ -20,6 +20,7 @@ from simulation.genealogy.lod import (segment_fixe, params_du_segment,
 from simulation.genealogy.pca import save_alive_snapshot
 from simulation.genealogy.r0 import plot_r0, r0_by_birth_window
 from simulation.genealogy.mrca import coalescence_point, plot_tmrca_gen
+from simulation.utils.utils_sim import load_shuffle_log
 
 
 class GenealogyMixin:
@@ -58,8 +59,10 @@ class GenealogyMixin:
         self.tmrca_pas.append(outputs_mcra.get('tmrca_pas_de_simu'))
         if self.coalesced:
             self.sauve_lignee(outputs_mcra['mrca'], exp_dir)
+            journal = load_shuffle_log(exp_dir)
             plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen,
-                           exp_dir, tmrca_pas=self.tmrca_pas)
+                           exp_dir, tmrca_pas=self.tmrca_pas,
+                           permutations=[e["step"] for e in journal])
 
     def sauve_lignee(self, mrca, exp_dir):
         """Enregistre les ancetres fixes depuis le dernier changement de MRCA."""
