@@ -445,7 +445,16 @@ def main():
             sources = [(c, int(max(b for b, _ in v)),
                         jnp.asarray(np.stack([p for _, p in v])))
                        for c, v in sorted(par_chunk.items())]
-            print(f"lignee : {len(lod)} ancetre(s) repartis sur {len(sources)} chunk(s)")
+            if a.saut:      # un ancetre tous les N chunks de naissance au moins
+                garde, dernier = [], None
+                for src in sources:
+                    if dernier is None or src[0] - dernier >= a.saut:
+                        garde.append((src[0], src[1], src[2][:1]))
+                        dernier = src[0]
+                sources = garde
+            n_gen = sum(len(src[2]) for src in sources)
+            print(f"lignee : {len(lod)} ancetre(s), {n_gen} evalue(s) sur "
+                  f"{len(sources)} chunk(s)")
         else:
             sources = [(c, None, None) for c, _ in ckpts]
 
