@@ -36,8 +36,12 @@ def generations(exp_dir):
     for f in (os.path.join(exp_dir, "data", "tmrca.npz"),
               os.path.join(exp_dir, "tmrca.npz")):
         if os.path.exists(f):
-            with np.load(f) as z:
-                return np.asarray(z["tmrca"], dtype=float)
+            # les runs d'avant portent des None : numpy les a ecrits en tableau
+            # d'objets, illisible sans allow_pickle
+            with np.load(f, allow_pickle=True) as z:
+                brut = z["tmrca"]
+            return np.array([np.nan if v is None else float(v) for v in brut],
+                            dtype=float)
     return None
 
 
