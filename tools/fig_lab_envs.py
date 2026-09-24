@@ -46,7 +46,7 @@ def charge(nom, dossier):
     return g.sum(axis=0) if g.ndim == 3 else g
 
 
-def encart_vision(ax, grille, couleur, vue, centre):
+def encart_vision(ax, grille, couleur, vue, centre, res=None, ids=None):
     """Fenetre d'observation (2*vue+1) autour d'un agent, montree en zoom."""
     c = 2 * vue + 1
     y0, x0 = centre[0] - vue, centre[1] - vue
@@ -55,10 +55,14 @@ def encart_vision(ax, grille, couleur, vue, centre):
     for k in range(c + 1):
         iax.axhline(y0 - .5 + k, color=GRILLE, lw=.5)
         iax.axvline(x0 - .5 + k, color=GRILLE, lw=.5)
-    sous = grille[max(y0, 0):y0 + c, max(x0, 0):x0 + c]
-    yy, xx = np.nonzero(sous)
-    iax.scatter(xx + max(x0, 0), yy + max(y0, 0), s=70, marker="s",
-                color=couleur, edgecolor="white", linewidth=.5)
+    # une couleur par identite quand la grille en porte plusieurs
+    couches = ([(res[k], color_of(i)) for k, i in enumerate(ids)]
+               if res is not None else [(grille, couleur)])
+    for couche, col in couches:
+        sous = couche[max(y0, 0):y0 + c, max(x0, 0):x0 + c]
+        yy, xx = np.nonzero(sous)
+        iax.scatter(xx + max(x0, 0), yy + max(y0, 0), s=70, marker="s",
+                    color=col, edgecolor="white", linewidth=.5)
     iax.scatter([centre[1]], [centre[0]], s=110, marker="o", color=VUE,
                 edgecolor="white", linewidth=1.2, zorder=5)
     iax.set_xlim(x0 - .5, x0 + c - .5), iax.set_ylim(y0 + c - .5, y0 - .5)
@@ -71,7 +75,7 @@ def encart_vision(ax, grille, couleur, vue, centre):
     iax.set_title(f"agent view, {c} × {c}", fontsize=9.5, color=VUE, pad=5)
 
 
-def panneau_multi(ax, res, ids, titre, sous_titre):
+def panneau_multi(ax, res, ids, titre, sous_titre, vue=0):
     """Plusieurs identites de ressource sur la meme grille."""
     L = res.shape[1]
     panneau(ax, np.zeros((L, L)), color_of(ids[0]), titre, sous_titre)
@@ -79,6 +83,12 @@ def panneau_multi(ax, res, ids, titre, sous_titre):
         y, x = np.nonzero(res[c])
         ax.scatter(x, y, s=46, marker="s", color=color_of(i), edgecolor="white",
                    linewidth=.5, zorder=4, label=f"{label_of(i)} ({int(res[c].sum())})")
+    total = res.sum(axis=0)
+    if vue and total.any():
+        yy, xx = np.nonzero(total)
+        centre = tuple(int(np.clip(round(v), vue + 1, L - vue - 2))
+                       for v in (yy.mean(), xx.mean()))
+        encart_vision(ax, total, color_of(ids[0]), vue, centre, res=res, ids=ids)
 
 
 
@@ -163,10 +173,8 @@ def main():
     for k, (titre, sous, res, ids, graine) in enumerate(tires):
         ax = axes[len(grilles) + k]
         total = int(res.sum())
-        panneau_multi(ax, res, ids, titre, f"{sous} — {total} cells, seed {graine}")
-        if a.vue and k == len(tires) - 1:
-            panneau(ax, res.sum(axis=0), couleur, titre,
-                    f"{sous} — {total} cells, seed {graine}", vue=a.vue)
+        panneau_multi(ax, res, ids, titre, f"{sous} — {total} cells, seed {graine}",
+                      vue=a.vue if k == len(tires) - 1 else 0)
 
     titre = ("Fixed test environments" if not tires else
              "Lab environments" if grilles else "Lab environments, drawn from the seed")
