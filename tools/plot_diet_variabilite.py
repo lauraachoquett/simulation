@@ -91,12 +91,20 @@ def main():
                    help="defaut <source>/fig/diet_variabilite.png")
     a = p.parse_args()
 
+    data_dir = None if a.lod else data_dir_de(a.source)
+    # un dossier de lignee (ou de fusion) n'a pas de simplex de population :
+    # bascule automatique plutot qu'un message d'erreur
+    if data_dir is None and os.path.exists(
+            os.path.join(a.source, "lod", "lab", "evaluation.npz")):
+        if not a.lod:
+            print("pas de simplex de population : la lignee est utilisee")
+        a.lod = True
     if a.lod:
         etapes = charge_lod(a.source, a.fenetre)
     else:
-        data_dir = data_dir_de(a.source)
         if data_dir is None:
-            raise SystemExit(f"pas de simplex_chunk_*.npz sous {a.source}")
+            raise SystemExit(f"ni simplex_chunk_*.npz ni lod/lab/evaluation.npz "
+                             f"sous {a.source}")
         etapes = charge(data_dir, a.pas)
     if len(etapes) < 2:
         raise SystemExit("moins de deux chunks exploitables")
