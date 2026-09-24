@@ -145,6 +145,8 @@ def main():
     p.add_argument("--vue", type=int, default=5,
                    help="rayon du champ de vision, encart sur le dernier panneau "
                         "(defaut %(default)s ; 0 = pas d'encart)")
+    p.add_argument("--texte", action=argparse.BooleanOptionalAction, default=True,
+                   help="phrase explicative sous la figure (--no-texte pour l'enlever)")
     p.add_argument("-o", "--out", default="fig/lab_envs.png")
     a = p.parse_args()
 
@@ -186,16 +188,16 @@ def main():
                                        markeredgecolor="white", markersize=11,
                                        label=label_of(i)) for i in ids_vus],
                    loc="lower center", ncol=len(ids_vus), frameon=False,
-                   fontsize=10, bbox_to_anchor=(.5, .085))
+                   fontsize=10, bbox_to_anchor=(.5, .075 if a.texte else .01))
     legende = ("30 × 30 arena, border wall in dark, agents start inside the "
                "dashed area.")
     if grilles:
         legende += " The fixed environments hold 40 resource cells each."
     if a.vue:
         legende += " Blue: what one agent sees from its position."
-    fig.text(.5, .028, legende,
-             ha="center", fontsize=10, color="#4A4A4A")
-    fig.tight_layout(rect=[0, .17 if len(ids_vus) > 1 else .11,
+    if a.texte:
+        fig.text(.5, .028, legende, ha="center", fontsize=10, color="#4A4A4A")
+    fig.tight_layout(rect=[0, .13 if len(ids_vus) > 1 else .08,
                            .88 if a.vue else 1, .95])
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     fig.savefig(a.out, dpi=200, facecolor="white")
