@@ -8,6 +8,7 @@ par le run ou par tools/replay_lab. Rien n'est reevalue.
 """
 import argparse
 import glob
+import json
 import os
 import re
 
@@ -54,7 +55,26 @@ def charge(data_dir, pas):
     return etapes
 
 
-def charge_lod(exp_dir, fenetre):
+def pas_de_reprise(exp_dir):
+    """Pas des reprises : coutures inscrites par lineage_global, ou resume_chunk.
+
+    L'arbre genealogique repart de zero a une reprise : la fenetre qui la
+    contient melange deux lignees et donne un ecart-type aberrant.
+    """
+    pas = []
+    j = os.path.join(exp_dir, "resource_shuffles.jsonl")
+    if os.path.exists(j):
+        pas += [json.loads(l)["step"] for l in open(j)
+                if l.strip() and json.loads(l).get("couture")]
+    c = os.path.join(exp_dir, "config.json")
+    if os.path.exists(c):
+        cfg = json.load(open(c))
+        if cfg.get("resume_from"):
+            pas.append(int(cfg.get("resume_chunk", 0)) * int(cfg.get("chunk_size", 1000)))
+    return sorted(set(pas))
+
+
+def charge_lod(exp_dir, fenetre, reprises=()):
     """[(pas milieu, compositions (n,3) par identite, ids)] par fenetre de temps.
 
     La dispersion mesuree est alors celle des ancetres SUCCESSIFS de la lignee,
@@ -71,10 +91,16 @@ def charge_lod(exp_dir, fenetre):
     comp, born = regime[ok] / total[ok, None], born[ok]
     bords = np.arange(0, born.max() + fenetre, fenetre)
     etapes = []
+    saute = 0
     for lo, hi in zip(bords[:-1], bords[1:]):
+        if any(lo <= r < hi for r in reprises):
+            saute += 1
+            continue
         m = (born >= lo) & (born < hi)
         if m.sum() >= 3:
             etapes.append((int((lo + hi) // 2), comp[m], [0, 1, 2]))
+    if saute:
+        print(f"{saute} fenetre(s) ecartee(s) : elles contiennent une reprise")
     return etapes
 
 
@@ -87,6 +113,10 @@ def main():
                    help="la ligne de descendance au lieu de la population")
     p.add_argument("--fenetre", type=int, default=200_000, metavar="N",
                    help="largeur d'une fenetre avec --lod (defaut %(default)s)")
+    p.add_argument("--garder-reprises", dest="garder_reprises",
+                   action="store_true",
+                   help="garder les fenetres qui contiennent une reprise "
+                        "(ecartees par defaut : l'arbre y repart de zero)")
     p.add_argument("-o", "--out", default=None,
                    help="defaut <source>/fig/diet_variabilite.png")
     a = p.parse_args()
@@ -100,7 +130,10 @@ def main():
             print("pas de simplex de population : la lignee est utilisee")
         a.lod = True
     if a.lod:
-        etapes = charge_lod(a.source, a.fenetre)
+        rep = () if a.garder_reprises else pas_de_reprise(a.source)
+        if rep:
+            print(f"reprise(s) au pas {rep}")
+        etapes = charge_lod(a.source, a.fenetre, rep)
     else:
         if data_dir is None:
             raise SystemExit(f"ni simplex_chunk_*.npz ni lod/lab/evaluation.npz "
