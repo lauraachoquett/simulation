@@ -238,6 +238,12 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
 
     sim_data = simulation_data(cfg=cfg,start_step=start_step, start_chunk =start_chunk)
 
+    # L'arbre genealogique du checkpoint : sans lui tous les vivants deviennent
+    # des racines et le MRCA disparait jusqu'a la recoalescence.
+    if reprend:
+        sim_data.charge_genealogie(os.path.join(
+            resume_exp, "checkpoints", f"genealogie_chunk_{chunk_id}.pkl"))
+
     # Reprise : recharger les series du run d'origine, sinon les figures ne
     # couvrent que depuis la reprise et life_expectancy est biaisee (ses casiers
     # de naissance anciens ne retiennent que les agents morts apres, donc les
@@ -347,6 +353,8 @@ def launch_simulation_chunked(key, cfg, resume_exp=None, n_video_workers=2, chun
             if (chunk_idx) % cfg.checkpoint_freq == 0:
                 ckpt_path = os.path.join(exp_dir, "checkpoints", f"state_chunk_{chunk_idx}.pkl")
                 save_checkpoint(state, ckpt_path)
+                sim_data.sauve_genealogie(state, ckpt_path.replace(
+                    "state_chunk_", "genealogie_chunk_"))
 
             # --- Vidéo (asynchrone) ---
             if (chunk_idx) % cfg.video_freq == 0 or chunk_idx==start_chunk or (phase in [1]) :

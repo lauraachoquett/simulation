@@ -103,7 +103,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def plot_tmrca_gen(pop_history, tmrca_series, exp_dir, t_points=None,
-                   filename="tmrca_gen.png", tmrca_pas=None, permutations=None):
+                   filename="tmrca_gen.png", tmrca_pas=None, permutations=None,
+                   reprises=None):
     """TMRCA en pas de simulation, et en generations sur l'axe de droite.
 
     Les deux ne disent pas la meme chose : les pas donnent l'age du MRCA, les
@@ -142,6 +143,15 @@ def plot_tmrca_gen(pop_history, tmrca_series, exp_dir, t_points=None,
              label="TMRCA (generations)")
     ax2.set_ylabel("TMRCA (generations)", color="tab:red")
     ax2.tick_params(axis="y", labelcolor="tab:red")
+
+    # Une reprise repart d'un arbre vide tant que la genealogie n'est pas
+    # sauvee avec le checkpoint : le TMRCA y est borne par le temps ecoule
+    # depuis la reprise, donc sous-estime.
+    for k, pas_rep in enumerate(reprises or []):
+        if x[0] <= pas_rep <= x[-1]:
+            ax1.axvline(pas_rep, color="black", lw=1.8, zorder=1,
+                        label="resume" if k == 0 else None)
+            ax1.axvspan(pas_rep, x[-1], color="black", alpha=.05, zorder=0)
 
     for k, pas_perm in enumerate(permutations or []):
         if x[0] <= pas_perm <= x[-1]:

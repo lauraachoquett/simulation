@@ -136,9 +136,11 @@ def main():
                 if prec is None or e["order_ids"] != prec:
                     perms.append(e["step"])
                 prec = e["order_ids"]
+            rep = ([int(cfg.get("resume_chunk", 0)) * taille]
+                   if cfg.get("resume_from") else None)
             plot_tmrca_gen(np.zeros(int(x[-1])), gen, d, t_points=x,
                            filename=os.path.basename(out), tmrca_pas=tmrca_pas,
-                           permutations=perms)
+                           permutations=perms, reprises=rep)
             print(f"Figure saved: {out}")
 
     if a.box:

@@ -19,6 +19,8 @@ from simulation.genealogy.lod import (segment_fixe, params_du_segment,
                                       elague_cache, feuilles_vivantes)
 from simulation.genealogy.pca import save_alive_snapshot
 from simulation.genealogy.r0 import plot_r0, r0_by_birth_window
+import pickle
+
 from simulation.genealogy.mrca import coalescence_point, plot_tmrca_gen
 from simulation.utils.utils_sim import load_shuffle_log
 
@@ -60,9 +62,50 @@ class GenealogyMixin:
         if self.coalesced:
             self.sauve_lignee(outputs_mcra['mrca'], exp_dir)
             journal = load_shuffle_log(exp_dir)
+            rep = ([self.cfg.resume_chunk * self.cfg.chunk_size]
+                   if getattr(self.cfg, "resume_from", "") else None)
             plot_tmrca_gen(np.concatenate(self.pop_history, axis=0), self.tmrca_gen,
                            exp_dir, tmrca_pas=self.tmrca_pas,
-                           permutations=[e["step"] for e in journal])
+                           permutations=[e["step"] for e in journal],
+                           reprises=rep)
+
+    def sauve_genealogie(self, state, chemin):
+        """Arbre elague aux ancetres des vivants, a cote du checkpoint.
+
+        Sans lui, une reprise repart d'une foret de racines : plus de MRCA
+        jusqu'a ce que l'arbre recoalesce, donc un trou dans la lignee.
+        """
+        garde = {}
+        for feuille in feuilles_vivantes(state):
+            n = feuille
+            while n is not None and n not in garde:
+                garde[n] = self.node_parent.get(n)
+                n = garde[n]
+        with open(chemin, "wb") as f:
+            pickle.dump({"node_parent": garde, "mrca_prev": self.mrca_prev,
+                         "lod_cache": self.lod_cache if self.cfg.track_lod else {}},
+                        f)
+
+    def charge_genealogie(self, chemin):
+        """Restaure l'arbre d'un checkpoint. `update_genealogy` fait ensuite des
+        setdefault : les noeuds restaures gardent donc leur parent."""
+        if not os.path.exists(chemin):
+            print(f"[reprise] {os.path.basename(chemin)} absent : l'arbre repart "
+                  "de zero, la lignee aura un trou jusqu'a la recoalescence")
+            return False
+        with open(chemin, "rb") as f:
+            d = pickle.load(f)
+        self.node_parent.update(d["node_parent"])
+        self.mrca_prev = d.get("mrca_prev")
+        self.lod_cache.update(d.get("lod_cache") or {})
+        for n in self.node_parent:
+            self.node_children.setdefault(n, set())
+        for n, p in self.node_parent.items():
+            if p is not None:
+                self.node_children.setdefault(p, set()).add(n)
+        print(f"[reprise] arbre restaure : {len(d['node_parent'])} noeud(s), "
+              f"MRCA precedent {self.mrca_prev}")
+        return True
 
     def sauve_lignee(self, mrca, exp_dir):
         """Enregistre les ancetres fixes depuis le dernier changement de MRCA."""
