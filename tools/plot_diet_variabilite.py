@@ -54,19 +54,50 @@ def charge(data_dir, pas):
     return etapes
 
 
+def charge_lod(exp_dir, fenetre):
+    """[(pas milieu, compositions (n,3) par identite, ids)] par fenetre de temps.
+
+    La dispersion mesuree est alors celle des ancetres SUCCESSIFS de la lignee,
+    pas celle de la population : elle dit si le regime derive ou se fixe.
+    """
+    f = os.path.join(exp_dir, "lod", "lab", "evaluation.npz")
+    if not os.path.exists(f):
+        raise SystemExit(f"{f} absent : lancer d'abord "
+                         "python -m simulation.tools.lineage_lab <exp_dir>")
+    with np.load(f) as d:
+        regime, born = np.asarray(d["regime"], float), np.asarray(d["born"])
+    total = regime.sum(axis=1)
+    ok = np.isfinite(regime).all(axis=1) & (total > 0)
+    comp, born = regime[ok] / total[ok, None], born[ok]
+    bords = np.arange(0, born.max() + fenetre, fenetre)
+    etapes = []
+    for lo, hi in zip(bords[:-1], bords[1:]):
+        m = (born >= lo) & (born < hi)
+        if m.sum() >= 3:
+            etapes.append((int((lo + hi) // 2), comp[m], [0, 1, 2]))
+    return etapes
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("source")
     p.add_argument("--pas", type=int, default=0, metavar="N",
                    help="un point tous les N pas de simulation au moins")
+    p.add_argument("--lod", action="store_true",
+                   help="la ligne de descendance au lieu de la population")
+    p.add_argument("--fenetre", type=int, default=200_000, metavar="N",
+                   help="largeur d'une fenetre avec --lod (defaut %(default)s)")
     p.add_argument("-o", "--out", default=None,
                    help="defaut <source>/fig/diet_variabilite.png")
     a = p.parse_args()
 
-    data_dir = data_dir_de(a.source)
-    if data_dir is None:
-        raise SystemExit(f"pas de simplex_chunk_*.npz sous {a.source}")
-    etapes = charge(data_dir, a.pas)
+    if a.lod:
+        etapes = charge_lod(a.source, a.fenetre)
+    else:
+        data_dir = data_dir_de(a.source)
+        if data_dir is None:
+            raise SystemExit(f"pas de simplex_chunk_*.npz sous {a.source}")
+        etapes = charge(data_dir, a.pas)
     if len(etapes) < 2:
         raise SystemExit("moins de deux chunks exploitables")
 
@@ -93,18 +124,20 @@ def main():
     h.set_ylim(0, 1)
     h.grid(alpha=.3)
     h.legend(frameon=False, ncol=len(ids))
-    h.set_title("Diet composition in the population: median and p25–p75 across genomes",
-                fontsize=12)
+    quoi = ("along the line of descent" if a.lod else "in the population")
+    h.set_title(f"Diet composition {quoi}: median and p25–p75", fontsize=12)
 
     b.plot(x, etal, color="#4C4C4C", lw=2)
     b.set_ylabel("spread in the simplex")
     b.set_xlabel("simulation step")
     b.grid(alpha=.3)
+    unite = "ancestors per window" if a.lod else "genomes per point"
     b.set_title("Dispersion: mean distance to the centroid "
-                f"({n.min()}–{n.max()} genomes per point)", fontsize=11)
+                f"({n.min()}–{n.max()} {unite})", fontsize=11)
 
     fig.tight_layout()
-    out = a.out or os.path.join(a.source, "fig", "diet_variabilite.png")
+    out = a.out or os.path.join(a.source, "fig", "lod" if a.lod else "",
+                                "diet_variabilite.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"{len(etapes)} chunk(s), pas {x[0]} a {x[-1]}")
