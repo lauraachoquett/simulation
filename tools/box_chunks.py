@@ -69,6 +69,9 @@ def main():
                    help="colonnes brutes des fichiers pheno, par exemple "
                         "age greediness mean_speed")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
+    p.add_argument("--separer", action="store_true",
+                   help="separer ceux qui ont trouve de la nourriture (ever_ate) "
+                        "de ceux qui n'en ont jamais trouve")
     p.add_argument("--cmap", default="Blues",
                    help="palette des instants, du clair au fonce (defaut %(default)s)")
     p.add_argument("--no-erreur", dest="no_erreur", action="store_true",
@@ -94,7 +97,7 @@ def main():
         demandees = ["lifespan", "motion", "greediness"]
     demandees = list(dict.fromkeys(demandees))
 
-    colonnes = []
+    colonnes = ["ever_ate"] if a.separer else []
     for n in demandees:
         c = MESURES.get(n, (n,))[0]
         colonnes += list(c) if isinstance(c, tuple) else [c]
@@ -115,48 +118,72 @@ def main():
     fig, axes = plt.subplots(1, len(demandees),
                              figsize=(3.9 * len(demandees) + 1, 4.8), squeeze=False)
     rng = np.random.default_rng(0)
+    # deux sous-populations : celle qui a trouve de la nourriture et l'autre. Dans
+    # un env a un seul amas la distribution est souvent bimodale, et une boite
+    # unique melange deux comportements sans rapport.
+    groupes = ([(1., "found food", -.17, .78), (0., "never ate", .17, .38)]
+               if a.separer else [(None, None, 0., .85)])
+
+    def valeurs(c, col, garde):
+        """Valeurs d'un chunk pour une colonne, ou proportion si col est un couple."""
+        d = par_chunk[c]
+        m = np.ones(len(next(iter(d.values()))), bool) if garde is None else garde
+        if isinstance(col, tuple):
+            mur, morts = col
+            nm = float(np.nansum(d.get(morts, np.zeros(1))[m]))
+            nw = float(np.nansum(d.get(mur, np.zeros(1))[m]))
+            if nm == 0:
+                return np.array([])
+            return np.repeat([1., 0.], [int(round(nw)), int(round(nm - nw))])
+        v = d.get(col, np.array([]))
+        return v[m][np.isfinite(v[m])] if len(v) else v
+
     for ax, nom in zip(axes[0], demandees):
         col, titre, binaire = MESURES.get(nom, (nom, nom, False))
-        if isinstance(col, tuple):      # rapport de deux colonnes, par chunk
-            mur, morts = col
+        effectifs = []
+        for gi, (trouve, etiquette, dx, alpha) in enumerate(groupes):
             vals = []
             for c in chunks:
-                m = par_chunk[c].get(mur, np.array([]))
-                d_ = par_chunk[c].get(morts, np.array([]))
-                n_morts = float(np.nansum(d_))
-                vals.append(np.array([]) if n_morts == 0 else
-                            np.repeat([1., 0.], [int(round(np.nansum(m))),
-                                                 int(round(n_morts - np.nansum(m)))]))
-        else:
-            vals = [par_chunk[c].get(col, np.array([])) for c in chunks]
-        vals = [v[np.isfinite(v)] for v in vals]
-        if binaire:      # une part n'a pas de quartiles : barre de la moyenne
-            moy = [float(v.mean()) if len(v) else np.nan for v in vals]
-            err = [float(v.std() / max(np.sqrt(len(v)), 1)) if len(v) else np.nan
-                   for v in vals]
-            ax.bar(range(len(chunks)), moy, yerr=None if a.no_erreur else err,
-                   color=couleurs, width=.6, capsize=4, edgecolor="white")
-            ax.set_ylim(0, 1)
-        else:
-            bp = ax.boxplot(vals, positions=range(len(chunks)), widths=.55,
-                            showfliers=False, patch_artist=True,
-                            medianprops=dict(color="#2B2B2B", lw=2),
-                            whiskerprops=dict(color="#6B6B6B"),
-                            capprops=dict(color="#6B6B6B"),
-                            boxprops=dict(edgecolor="#6B6B6B"))
-            for corps, coul in zip(bp["boxes"], couleurs):
-                corps.set_facecolor(coul), corps.set_alpha(.85)
-            if a.points:
-                for k, v in enumerate(vals):
-                    ax.scatter(k + rng.uniform(-.14, .14, len(v)), v, s=8,
-                               color="#2B2B2B", alpha=.3, edgecolors="none", zorder=3)
+                garde = None
+                if trouve is not None:
+                    e = par_chunk[c].get("ever_ate")
+                    garde = (np.nan_to_num(e) > .5) if trouve else (np.nan_to_num(e) <= .5)
+                vals.append(valeurs(c, col, garde))
+            effectifs += [len(v) for v in vals]
+            xs = np.arange(len(chunks)) + dx
+            if binaire:      # une part n'a pas de quartiles : barre de la moyenne
+                moy = [float(v.mean()) if len(v) else np.nan for v in vals]
+                err = [float(v.std() / max(np.sqrt(len(v)), 1)) if len(v) else np.nan
+                       for v in vals]
+                ax.bar(xs, moy, yerr=None if a.no_erreur else err, color=couleurs,
+                       width=.3 if a.separer else .6, capsize=4, edgecolor="white",
+                       alpha=alpha, label=etiquette if nom == demandees[0] else None)
+                ax.set_ylim(0, 1)
+            else:
+                bp = ax.boxplot([v if len(v) else [np.nan] for v in vals],
+                                positions=xs, widths=.3 if a.separer else .55,
+                                showfliers=False, patch_artist=True,
+                                medianprops=dict(color="#2B2B2B", lw=2),
+                                whiskerprops=dict(color="#6B6B6B"),
+                                capprops=dict(color="#6B6B6B"),
+                                boxprops=dict(edgecolor="#6B6B6B"))
+                for corps, coul in zip(bp["boxes"], couleurs):
+                    corps.set_facecolor(coul), corps.set_alpha(alpha)
+                if etiquette and nom == demandees[0]:
+                    ax.plot([], [], color="#6B6B6B", lw=8, alpha=alpha, label=etiquette)
+                if a.points:
+                    for k, v in enumerate(vals):
+                        ax.scatter(xs[k] + rng.uniform(-.07, .07, len(v)), v, s=8,
+                                   color="#2B2B2B", alpha=.3, edgecolors="none",
+                                   zorder=3)
         ax.set_xticks(range(len(chunks)))
         ax.set_xticklabels([f"chunk {c}" for c in chunks], rotation=20, ha="right")
         ax.set_title(titre, fontsize=11)
         ax.grid(alpha=.3, axis="y")
-        n = [len(v) for v in vals]
         quoi = "deaths" if isinstance(col, tuple) else "genomes"
-        ax.set_xlabel(f"{min(n)}–{max(n)} {quoi}" if n else "")
+        ax.set_xlabel(f"{min(effectifs)}–{max(effectifs)} {quoi}" if effectifs else "")
+        if a.separer and nom == demandees[0]:
+            ax.legend(frameon=False, fontsize=9, loc="best")
 
     fig.suptitle(f"Comparison across chunks — {env}", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, .94])
