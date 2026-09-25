@@ -40,6 +40,46 @@ def pas_de_reprise(d):
             if cfg.get("resume_from") else None)
 
 
+def fusionne_graines(dossiers, fins):
+    """lod/lab/graines_avant.npz des experiences, concatene et tronque de meme.
+
+    Sans ca, la variabilite par graine n'existe pas sur une chaine fusionnee.
+    """
+    blocs, vus = [], set()
+    for k, d in enumerate(dossiers):
+        f = os.path.join(d, "lod", "lab", "graines_avant.npz")
+        if not os.path.exists(f):
+            continue
+        with np.load(f) as z:
+            e = {c: np.asarray(z[c]) for c in z.files}
+        garde = []
+        for i, cle in enumerate(zip(e["slot"].tolist(), e["born"].tolist())):
+            if fins[k] is not None and e["born"][i] >= fins[k]:
+                continue
+            if cle not in vus:
+                vus.add(cle)
+                garde.append(i)
+        if garde:
+            blocs.append({c: (v[garde] if isinstance(v, np.ndarray)
+                              and v.shape[:1] == e["born"].shape else v)
+                          for c, v in e.items()})
+    if not blocs:
+        return None
+    S = min(b["regime"].shape[1] for b in blocs)      # meme nombre de graines
+    out = {"born": np.concatenate([b["born"] for b in blocs]),
+           "slot": np.concatenate([b["slot"] for b in blocs]),
+           "regime": np.concatenate([b["regime"][:, :S] for b in blocs]),
+           "graines": blocs[0]["graines"][:S]}
+    for c in ("age", "disponible"):
+        dispo = [b[c] for b in blocs if c in b]
+        if dispo:
+            out[c] = (np.concatenate([d[:, :S] for d in dispo]) if c == "age"
+                      else dispo[0][:S])
+    ordre = np.argsort(out["born"])
+    return {c: (v[ordre] if isinstance(v, np.ndarray) and v.shape[:1] == out["born"].shape
+                else v) for c, v in out.items()}
+
+
 def fusionne(dossiers):
     """Evaluations concatenees dans l'ordre de la chaine, doublons retires.
 
@@ -98,7 +138,8 @@ def fusionne(dossiers):
     g["post_shuffle"] = np.zeros(len(g["born"]), bool)
     g["post_shuffle"][1:] = (g["ordres"][1:] != g["ordres"][:-1]).any(axis=1)
     dispo = next((b["disponible"] for b in blocs if "disponible" in b), None)
-    return g, sorted(journal, key=lambda e: e["step"]), dispo
+    return (g, sorted(journal, key=lambda e: e["step"]), dispo,
+            fusionne_graines(dossiers, fins))
 
 
 def main():
@@ -111,7 +152,7 @@ def main():
     dossiers = (chaine_de_reprise(a.exp_dirs[0]) if len(a.exp_dirs) == 1
                 else [os.path.abspath(d) for d in a.exp_dirs])
     print(f"{len(dossiers)} experience(s) :")
-    g, journal, dispo = fusionne(dossiers)
+    g, journal, dispo, graines = fusionne(dossiers)
     coutures = np.flatnonzero(np.diff(g["experience"])) + 1
     print(f"{len(g['born'])} ancetre(s) au total, {len(coutures)} couture(s), "
           f"{int(g['post_shuffle'].sum())} changement(s) de canaux")
@@ -120,6 +161,11 @@ def main():
     os.makedirs(os.path.join(sortie, "lod", "lab"), exist_ok=True)
     np.savez_compressed(os.path.join(sortie, "lod", "lab", "evaluation.npz"),
                         **g, **({"disponible": dispo} if dispo is not None else {}))
+    if graines is not None:
+        np.savez_compressed(os.path.join(sortie, "lod", "lab",
+                                         "graines_avant.npz"), **graines)
+        print(f"{len(graines['born'])} ancetre(s) d'avant permutation, "
+              f"{graines['regime'].shape[1]} graines")
     # config.json et journal minimaux : video_lod lit ce dossier sans modification
     cfg0 = config(dossiers[0])
     json.dump({"resources": cfg0.get("resources", []),
