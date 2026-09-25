@@ -34,9 +34,22 @@ def _largeur(v, n, S):
     return out
 
 
+def pas_de_reprise(d):
+    cfg = config(d)
+    return (int(cfg.get("resume_chunk", 0)) * int(cfg.get("chunk_size", 1000))
+            if cfg.get("resume_from") else None)
+
+
 def fusionne(dossiers):
-    """Evaluations concatenees dans l'ordre de la chaine, doublons retires."""
+    """Evaluations concatenees dans l'ordre de la chaine, doublons retires.
+
+    Une experience reprise est TRONQUEE au pas de reprise de la suivante : si
+    elle a continue au-dela, ses ancetres d'apres appartiennent a une branche
+    divergente, pas a la lignee de la reprise.
+    """
     blocs, journal, vus = [], [], set()
+    fins = [pas_de_reprise(dossiers[k + 1]) if k + 1 < len(dossiers) else None
+            for k in range(len(dossiers))]
     for k, d in enumerate(dossiers):
         f = os.path.join(d, "lod", "lab", "evaluation.npz")
         if not os.path.exists(f):
@@ -54,8 +67,15 @@ def fusionne(dossiers):
         with np.load(f) as z:
             e = {c: np.asarray(z[c]) for c in z.files}
         e["ordres"] = build_id_timeline(e["born"], log, ids0)
+        fin = fins[k]
+        n_coupes = int((e["born"] >= fin).sum()) if fin is not None else 0
+        if n_coupes:
+            print(f"    {n_coupes} ancetre(s) ne(s) apres le pas {fin} : branche "
+                  "divergente, ecartee")
         garde = []
         for i, cle in enumerate(zip(e["slot"].tolist(), e["born"].tolist())):
+            if fin is not None and e["born"][i] >= fin:
+                continue
             if cle not in vus:
                 vus.add(cle)
                 garde.append(i)
