@@ -94,7 +94,7 @@ def main():
         inverse = {v[0]: k for k, v in MESURES.items()}
         demandees += [inverse.get(m, m) for m in a.mesures]
     if not demandees:
-        demandees = ["lifespan", "motion", "greediness"]
+        demandees = ["lifespan", "motion", "wallpart"]
     demandees = list(dict.fromkeys(demandees))
 
     colonnes = ["ever_ate"] if a.separer else []
