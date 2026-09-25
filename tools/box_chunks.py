@@ -27,6 +27,8 @@ MESURES = {
     "explore":    ("t_explore", "Steps before first resource", False),
     "death":      ("died", "Fraction dead", True),
     "wall":       ("wall_death", "Fraction wall deaths", True),
+    # part des morts dues au mur PARMI les morts : deux colonnes, cas a part
+    "wallpart":   (("wall_death", "died"), "Wall deaths among deaths", True),
 }
 
 
@@ -64,7 +66,8 @@ def main():
     p.add_argument("--env", default=None,
                    help="environnement des phenotypes (defaut : alone s'il existe)")
     p.add_argument("--mesures", nargs="+", default=None,
-                   help=f"colonnes brutes, parmi {sorted({v[0] for v in MESURES.values()})}")
+                   help="colonnes brutes des fichiers pheno, par exemple "
+                        "age greediness mean_speed")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
     p.add_argument("--cmap", default="Blues",
                    help="palette des instants, du clair au fonce (defaut %(default)s)")
@@ -91,7 +94,10 @@ def main():
         demandees = ["lifespan", "motion", "greediness"]
     demandees = list(dict.fromkeys(demandees))
 
-    colonnes = [MESURES[n][0] for n in demandees if n in MESURES]
+    colonnes = []
+    for n in demandees:
+        c = MESURES.get(n, (n,))[0]
+        colonnes += list(c) if isinstance(c, tuple) else [c]
     par_chunk = {}
     for c in a.chunks:
         d = charge(data_dir, c, env, colonnes)
@@ -111,7 +117,18 @@ def main():
     rng = np.random.default_rng(0)
     for ax, nom in zip(axes[0], demandees):
         col, titre, binaire = MESURES.get(nom, (nom, nom, False))
-        vals = [par_chunk[c].get(col, np.array([])) for c in chunks]
+        if isinstance(col, tuple):      # rapport de deux colonnes, par chunk
+            mur, morts = col
+            vals = []
+            for c in chunks:
+                m = par_chunk[c].get(mur, np.array([]))
+                d_ = par_chunk[c].get(morts, np.array([]))
+                n_morts = float(np.nansum(d_))
+                vals.append(np.array([]) if n_morts == 0 else
+                            np.repeat([1., 0.], [int(round(np.nansum(m))),
+                                                 int(round(n_morts - np.nansum(m)))]))
+        else:
+            vals = [par_chunk[c].get(col, np.array([])) for c in chunks]
         vals = [v[np.isfinite(v)] for v in vals]
         if binaire:      # une part n'a pas de quartiles : barre de la moyenne
             moy = [float(v.mean()) if len(v) else np.nan for v in vals]
@@ -138,7 +155,8 @@ def main():
         ax.set_title(titre, fontsize=11)
         ax.grid(alpha=.3, axis="y")
         n = [len(v) for v in vals]
-        ax.set_xlabel(f"{min(n)}–{max(n)} genomes" if n else "")
+        quoi = "deaths" if isinstance(col, tuple) else "genomes"
+        ax.set_xlabel(f"{min(n)}–{max(n)} {quoi}" if n else "")
 
     fig.suptitle(f"Comparison across chunks — {env}", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, .94])
