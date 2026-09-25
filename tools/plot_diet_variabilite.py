@@ -184,8 +184,9 @@ def main():
         etal.append(np.hypot(px - px.mean(), py - py.mean()).mean())
     etal = np.array(etal)
 
-    fig, (h, b) = plt.subplots(2, 1, figsize=(max(11, 1.1 * len(etapes) + 3), 7.6),
-                               sharex=True, gridspec_kw={"height_ratios": [2.4, 1]})
+    nom = "diet_variabilite_graines.png" if a.graines else "diet_variabilite.png"
+    largeur = max(11, 1.1 * len(etapes) + 3)
+    fig, h = plt.subplots(figsize=(largeur, 5.6))
     pos = np.arange(len(etapes), dtype=float)
     ecart = .26
     rng = np.random.default_rng(0)
@@ -218,6 +219,21 @@ def main():
         quoi, par = "in the population", "per window"
     h.set_title(f"Diet composition {quoi}: full distribution {par}", fontsize=12)
 
+    h.set_xticks(pos[::max(1, len(pos) // 12)])
+    h.set_xticklabels([f"{v / 1e6:.2f}M" for v in x[::max(1, len(pos) // 12)]],
+                      rotation=45, ha="right", fontsize=9)
+    h.set_xlabel("simulation step")
+    fig.tight_layout()
+    out = a.out or os.path.join(a.source, "fig",
+                                "lod" if (a.lod or a.graines) else "", nom)
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"{len(etapes)} fenetre(s), pas {x[0]} a {x[-1]}")
+    print(f"Figure saved: {out}")
+
+    # dispersion : figure a part, ce n'est pas la meme grandeur que les parts
+    fig2, b = plt.subplots(figsize=(largeur, 3.6))
     b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
     b.set_ylabel("spread in the simplex")
     b.set_xlabel("simulation step")
@@ -227,18 +243,15 @@ def main():
                       ha="right", fontsize=9)
     b.grid(alpha=.3)
     unite = ("seeds per ancestor" if a.graines else
-              "ancestors per window" if a.lod else "genomes per point")
-    b.set_title("Dispersion: mean distance to the centroid "
+             "ancestors per window" if a.lod else "genomes per point")
+    b.set_title("Dispersion in the simplex: mean distance to the centroid "
                 f"({n.min()}–{n.max()} {unite})", fontsize=11)
-
-    fig.tight_layout()
-    nom = "diet_variabilite_graines.png" if a.graines else "diet_variabilite.png"
-    out = a.out or os.path.join(a.source, "fig",
-                                "lod" if (a.lod or a.graines) else "", nom)
-    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    fig.savefig(out, dpi=150)
-    print(f"{len(etapes)} chunk(s), pas {x[0]} a {x[-1]}")
-    print(f"Figure saved: {out}")
+    fig2.tight_layout()
+    racine, ext = os.path.splitext(out)
+    out2 = f"{racine}_dispersion{ext}"
+    fig2.savefig(out2, dpi=150)
+    plt.close(fig2)
+    print(f"Figure saved: {out2}")
 
 
 if __name__ == "__main__":
