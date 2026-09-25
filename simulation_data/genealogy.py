@@ -59,6 +59,9 @@ class GenealogyMixin:
         self.coalesced = outputs_mcra['coalesced']
         self.tmrca_gen.append(outputs_mcra['tmrca_generations'])
         self.tmrca_pas.append(outputs_mcra.get('tmrca_pas_de_simu'))
+        # ecrit a CHAQUE chunk : ce fichier n'etait sauve qu'a la fin du run,
+        # donc perdu des qu'un job etait tue ou qu'une extinction arretait tout
+        self.save_mrca_sim(os.path.join(exp_dir, "data"))
         if self.coalesced:
             self.sauve_lignee(outputs_mcra['mrca'], exp_dir)
             journal = load_shuffle_log(exp_dir)
@@ -151,6 +154,7 @@ class GenealogyMixin:
             #plot_clade_pca_html(node_params, os.path.join(exp_dir),name_fig=f'{self.chunk_idx}')
 
     def save_mrca_sim(self, data_dir):
+        os.makedirs(data_dir, exist_ok=True)
         np.savez(
             os.path.join(data_dir, f"tmrca.npz"),
             tmrca=np.array(self.tmrca_gen, dtype=float),
