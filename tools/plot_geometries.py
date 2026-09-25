@@ -13,6 +13,7 @@ import glob
 import json
 import os
 import re
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -134,38 +135,47 @@ def trace(ax, x, S, prefix, couleur, label, chunk_size):
 
 
 def separe(a, mesures, data_dir, geos, fig_dir):
-    """Une ligne par geometrie, deux courbes par panneau : les deux modes."""
-    modes = [(True, "ate at least once", "-"), (False, "never ate", "--")]
+    """Les deux modes, dans le seul env ou ils existent : l'amas unique.
+
+    Ailleurs la nourriture est partout, presque tous les agents mangent, et la
+    separation n'aurait qu'un mode peuple.
+    """
+    if not a.geos_donnes:
+        blob = [g for g in geos if "blob" in g]
+        if not blob:
+            raise SystemExit("aucune geometrie 'blob' : donner --geos explicitement")
+        geos = blob[:1]
+    modes = [(True, "ate at least once", "#1D5C8F"),
+             (False, "never ate", "#C1121F")]
     nl, nc = len(geos), len(mesures)
     fig, axes = plt.subplots(nl, nc, squeeze=False, sharex=True,
-                             figsize=(5.4 * nc, 3.9 * nl))
-    cmap = plt.get_cmap(a.cmap)
-    couleurs = [cmap(t) for t in np.linspace(.12, .82, len(geos))]
+                             figsize=(5.2 * nc, 4.4 * nl))
     for i, geo in enumerate(geos):
         x, par_mode = serie_pheno(data_dir, geo, a.condition, a.chunks, a.pas)
         if not len(x):
             print(f"  [info] pas de phenotypes pour {geo} en {a.condition}")
             continue
-        for mode, etiquette, style in modes:
+        for mode, etiquette, couleur in modes:
+            n_moy = np.mean([e["_n"] for e in par_mode[mode]])
+            print(f"  {NOMS.get(geo, geo)} / {etiquette} : {n_moy:.0f} genomes en moyenne")
             for j, (k_vs, k_res, titre, unite) in enumerate(mesures):
                 ax = axes[i][j]
-                trace_mode(ax, x, par_mode[mode], k_vs, couleurs[i], style,
-                           etiquette if (i == 0 and j == 0) else None, a.chunk_size)
-                ax.set_title(f"{NOMS.get(geo, geo)} — {titre}", fontsize=11)
+                trace_mode(ax, x, par_mode[mode], k_vs, couleur, "-",
+                           etiquette if j == 0 else None, a.chunk_size)
+                ax.set_title(titre, fontsize=11)
                 ax.set_ylabel(unite)
                 ax.grid(alpha=.3)
                 if k_vs == "greediness":
                     ax.set_ylim(0, 1)
-                if i == nl - 1:
-                    ax.set_xlabel("simulation step")
+                ax.set_xlabel("simulation step")
     frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
     h, l = axes[0][0].get_legend_handles_labels()
     fig.legend(h, l, title="mode", frameon=False, loc="center left",
                bbox_to_anchor=(frac + .01, .5))
     quoi = "alone" if a.condition == "alone" else f"with {COND[a.condition]}"
-    fig.suptitle(f"Focal agent {quoi}, split by mode "
-                 "(median and p25–p75 within each mode)", fontsize=13)
-    fig.tight_layout(rect=[0, 0, frac, .94])
+    fig.suptitle(f"{NOMS.get(geos[0], geos[0])}, focal agent {quoi} — "
+                 "median and p25–p75 within each mode", fontsize=13)
+    fig.tight_layout(rect=[0, 0, frac, .93])
     out = a.out or os.path.join(fig_dir, f"lab_modes_{a.condition}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
@@ -252,6 +262,7 @@ def main():
     p.add_argument("--chunk-size", dest="chunk_size", type=int, default=1000)
     p.add_argument("-o", "--out", default=None)
     a = p.parse_args()
+    a.geos_donnes = any(arg == "--geos" for arg in sys.argv)
 
     mesures = ([m for m in MESURES if m[0] in a.mesures] if a.mesures
                else list(MESURES))
