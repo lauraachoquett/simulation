@@ -66,6 +66,10 @@ def main():
     p.add_argument("--mesures", nargs="+", default=None,
                    help=f"colonnes brutes, parmi {sorted({v[0] for v in MESURES.values()})}")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
+    p.add_argument("--cmap", default="Blues",
+                   help="palette des instants, du clair au fonce (defaut %(default)s)")
+    p.add_argument("--no-erreur", dest="no_erreur", action="store_true",
+                   help="barres de proportion sans erreur d'echantillonnage")
     p.add_argument("-o", "--out", default=None,
                    help="defaut <source>/fig/box_chunks.png")
     for nom in MESURES:
@@ -99,7 +103,9 @@ def main():
         raise SystemExit("aucun chunk exploitable")
 
     chunks = sorted(par_chunk)
-    couleurs = plt.get_cmap("viridis")(np.linspace(.15, .8, len(chunks)))
+    # un seul ton, du clair au fonce : l'ordre des chunks est un ordre de temps,
+    # une palette arc-en-ciel ne le dit pas
+    couleurs = plt.get_cmap(a.cmap)(np.linspace(.35, .85, len(chunks)))
     fig, axes = plt.subplots(1, len(demandees),
                              figsize=(3.9 * len(demandees) + 1, 4.8), squeeze=False)
     rng = np.random.default_rng(0)
@@ -111,19 +117,22 @@ def main():
             moy = [float(v.mean()) if len(v) else np.nan for v in vals]
             err = [float(v.std() / max(np.sqrt(len(v)), 1)) if len(v) else np.nan
                    for v in vals]
-            ax.bar(range(len(chunks)), moy, yerr=err, color=couleurs, width=.6,
-                   capsize=4)
+            ax.bar(range(len(chunks)), moy, yerr=None if a.no_erreur else err,
+                   color=couleurs, width=.6, capsize=4, edgecolor="white")
             ax.set_ylim(0, 1)
         else:
             bp = ax.boxplot(vals, positions=range(len(chunks)), widths=.55,
                             showfliers=False, patch_artist=True,
-                            medianprops=dict(color="#C1121F", lw=2))
+                            medianprops=dict(color="#2B2B2B", lw=2),
+                            whiskerprops=dict(color="#6B6B6B"),
+                            capprops=dict(color="#6B6B6B"),
+                            boxprops=dict(edgecolor="#6B6B6B"))
             for corps, coul in zip(bp["boxes"], couleurs):
-                corps.set_facecolor(coul), corps.set_alpha(.55)
+                corps.set_facecolor(coul), corps.set_alpha(.85)
             if a.points:
                 for k, v in enumerate(vals):
                     ax.scatter(k + rng.uniform(-.14, .14, len(v)), v, s=8,
-                               color="#1D5C8F", alpha=.35, edgecolors="none", zorder=3)
+                               color="#2B2B2B", alpha=.3, edgecolors="none", zorder=3)
         ax.set_xticks(range(len(chunks)))
         ax.set_xticklabels([f"chunk {c}" for c in chunks], rotation=20, ha="right")
         ax.set_title(titre, fontsize=11)
