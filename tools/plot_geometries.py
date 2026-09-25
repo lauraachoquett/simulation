@@ -75,6 +75,51 @@ def serie(data_dir, geo, condition, bornes, pas):
     return np.array([p["chunk"] for p in P]), [p["metrics"] for p in P], condition
 
 
+def serie_pheno(data_dir, geo, condition, bornes, pas):
+    """Par chunk et par MODE : mediane et quartiles, calcules genome par genome.
+
+    Les resumes agregent toute la population : dans un env a un seul amas, ils
+    melangent ceux qui ont mange et ceux qui n'ont jamais mange, et la mediane
+    tombe dans le creux entre les deux modes.
+    """
+    marque = f"{condition}_{geo}" if geo else condition
+    files = _chunks_dans(glob.glob(os.path.join(
+        data_dir, f"chunk_*_pheno_{marque}.npz")), bornes, pas)
+    x, par_mode = [], {True: [], False: []}
+    for f in _tries(files):
+        with np.load(f) as z:
+            if "ever_ate" not in z.files:
+                continue
+            d = {c: np.asarray(z[c], float) for c in z.files}
+        mange = np.nan_to_num(d["ever_ate"]) > .5
+        x.append(int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1)))
+        for mode in (True, False):
+            m = mange if mode else ~mange
+            e = {}
+            for k_vs, *_ in MESURES:
+                v = d.get(k_vs, np.array([]))
+                v = v[m] if len(v) else v
+                v = v[np.isfinite(v)]
+                e[k_vs] = ((np.median(v), np.percentile(v, 25), np.percentile(v, 75))
+                           if len(v) >= 3 else (np.nan, np.nan, np.nan))
+            e["_n"] = int(m.sum())
+            par_mode[mode].append(e)
+    return np.array(x), par_mode
+
+
+def trace_mode(ax, x, entrees, cle, couleur, style, label, chunk_size):
+    m = np.array([e[cle][0] for e in entrees])
+    lo = np.array([e[cle][1] for e in entrees])
+    hi = np.array([e[cle][2] for e in entrees])
+    ok = ~np.isnan(m)
+    if not ok.any():
+        return
+    xs = x * chunk_size
+    ax.plot(xs[ok], m[ok], color=couleur, lw=2, ls=style, marker="o", ms=3.5,
+            label=label)
+    ax.fill_between(xs[ok], lo[ok], hi[ok], color=couleur, alpha=.13)
+
+
 def trace(ax, x, S, prefix, couleur, label, chunk_size):
     """Mediane et p25-p75 d'une mesure ; rien si la mesure manque partout."""
     m, lo, hi = _band(S, prefix)
@@ -86,6 +131,45 @@ def trace(ax, x, S, prefix, couleur, label, chunk_size):
     okb = ~(np.isnan(lo) | np.isnan(hi))
     ax.fill_between(xs[okb], lo[okb], hi[okb], color=couleur, alpha=.15)
     return True
+
+
+def separe(a, mesures, data_dir, geos, fig_dir):
+    """Une ligne par geometrie, deux courbes par panneau : les deux modes."""
+    modes = [(True, "ate at least once", "-"), (False, "never ate", "--")]
+    nl, nc = len(geos), len(mesures)
+    fig, axes = plt.subplots(nl, nc, squeeze=False, sharex=True,
+                             figsize=(5.4 * nc, 3.9 * nl))
+    cmap = plt.get_cmap(a.cmap)
+    couleurs = [cmap(t) for t in np.linspace(.12, .82, len(geos))]
+    for i, geo in enumerate(geos):
+        x, par_mode = serie_pheno(data_dir, geo, a.condition, a.chunks, a.pas)
+        if not len(x):
+            print(f"  [info] pas de phenotypes pour {geo} en {a.condition}")
+            continue
+        for mode, etiquette, style in modes:
+            for j, (k_vs, k_res, titre, unite) in enumerate(mesures):
+                ax = axes[i][j]
+                trace_mode(ax, x, par_mode[mode], k_vs, couleurs[i], style,
+                           etiquette if (i == 0 and j == 0) else None, a.chunk_size)
+                ax.set_title(f"{NOMS.get(geo, geo)} — {titre}", fontsize=11)
+                ax.set_ylabel(unite)
+                ax.grid(alpha=.3)
+                if k_vs == "greediness":
+                    ax.set_ylim(0, 1)
+                if i == nl - 1:
+                    ax.set_xlabel("simulation step")
+    frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, title="mode", frameon=False, loc="center left",
+               bbox_to_anchor=(frac + .01, .5))
+    quoi = "alone" if a.condition == "alone" else f"with {COND[a.condition]}"
+    fig.suptitle(f"Focal agent {quoi}, split by mode "
+                 "(median and p25–p75 within each mode)", fontsize=13)
+    fig.tight_layout(rect=[0, 0, frac, .94])
+    out = a.out or os.path.join(fig_dir, f"lab_modes_{a.condition}.png")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    fig.savefig(out, dpi=150)
+    print(f"Figure saved: {out}")
 
 
 def compare(a, mesures):
@@ -154,6 +238,9 @@ def main():
                    metavar="M", choices=[m[0] for m in MESURES],
                    help="mesures a tracer parmi age, greediness, mean_speed "
                         "(defaut : les trois)")
+    p.add_argument("--separer", action="store_true",
+                   help="separer ceux qui ont mange au moins une fois des autres "
+                        "(lu genome par genome, pas dans les resumes)")
     p.add_argument("--par-env", dest="par_env", action="store_true",
                    help="une ligne par geometrie, les trois conditions ensemble")
     p.add_argument("--geos", nargs="+", default=list(NOMS),
@@ -181,6 +268,8 @@ def main():
         raise SystemExit(f"aucun resume par geometrie dans {data_dir}")
     fig_dir = os.path.join(a.source, "fig")
 
+    if a.separer:
+        return separe(a, mesures, data_dir, geos, fig_dir)
     if a.par_env:
         conds = ["alone"] + [c for c in ("figurants", "clones") if glob.glob(
             os.path.join(data_dir, f"chunk_*_env_*_alone_vs_{c}.json"))]
