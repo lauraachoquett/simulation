@@ -233,7 +233,7 @@ def main():
     print(f"Figure saved: {out}")
 
     # dispersion : figure a part, ce n'est pas la meme grandeur que les parts
-    fig2, b = plt.subplots(figsize=(largeur, 3.6))
+    fig2, b = plt.subplots(figsize=(min(largeur, 8.5), 3.4))
     b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
     b.set_ylabel("spread in the simplex")
     b.set_xlabel("simulation step")
