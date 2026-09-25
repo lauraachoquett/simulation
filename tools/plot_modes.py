@@ -82,16 +82,16 @@ def main():
         raise SystemExit(f"aucun phenotype pour {env} (dispo : {', '.join(envs)})")
     x = np.array([s for s, _, _, _ in etapes])
     part = np.array([m.mean() for _, _, m, _ in etapes])
-    print(f"{env} : {len(etapes)} chunk(s), part qui trouve "
+    print(f"{env} : {len(etapes)} chunk(s), part qui mange "
           f"{part.min():.2f} a {part.max():.2f}")
 
     fig, (h, b) = plt.subplots(2, 1, figsize=(11, 7.4), sharex=True,
                                gridspec_kw={"height_ratios": [1, 1.6]})
     h.plot(x, part, color=TROUVE, lw=2, marker="o", ms=3.5)
-    h.set_ylabel("share that found food")
+    h.set_ylabel("share that ate at least once")
     h.set_ylim(0, 1)
     h.grid(alpha=.3)
-    h.set_title(f"Two modes in {env}: reaching the resources, or never finding them",
+    h.set_title(f"Two modes in {env}: eating at least once, or never eating",
                 fontsize=12)
 
     rng = np.random.default_rng(0)
@@ -101,7 +101,7 @@ def main():
             if m.any():
                 b.scatter(s + rng.uniform(-largeur, largeur, m.sum()), age[m],
                           s=9, color=coul, alpha=.45, edgecolors="none")
-    b.scatter([], [], color=TROUVE, s=28, label="found food")
+    b.scatter([], [], color=TROUVE, s=28, label="ate at least once")
     b.scatter([], [], color=JAMAIS, s=28, label="never ate")
     b.set_ylabel("lifespan in the lab (steps)")
     b.set_xlabel("simulation step")

@@ -70,8 +70,8 @@ def main():
                         "age greediness mean_speed")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
     p.add_argument("--separer", action="store_true",
-                   help="separer ceux qui ont trouve de la nourriture (ever_ate) "
-                        "de ceux qui n'en ont jamais trouve")
+                   help="separer ceux qui ont mange au moins une fois (ever_ate) "
+                        "de ceux qui n'ont jamais mange")
     p.add_argument("--cmap", default="Blues",
                    help="palette des instants, du clair au fonce (defaut %(default)s)")
     p.add_argument("--no-erreur", dest="no_erreur", action="store_true",
@@ -121,7 +121,7 @@ def main():
     # deux sous-populations : celle qui a trouve de la nourriture et l'autre. Dans
     # un env a un seul amas la distribution est souvent bimodale, et une boite
     # unique melange deux comportements sans rapport.
-    groupes = ([(1., "found food", -.17, .78), (0., "never ate", .17, .38)]
+    groupes = ([(1., "ate at least once", -.17, .78), (0., "never ate", .17, .38)]
                if a.separer else [(None, None, 0., .85)])
 
     def valeurs(c, col, garde):
