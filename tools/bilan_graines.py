@@ -79,6 +79,7 @@ def bilan_run(exp_dir, depuis, chaine=True):
         "nom": os.path.basename(os.path.normpath(exp_dir)),
         "chemin": os.path.abspath(exp_dir),
         "pas_total": int(s["_debut"] + len(pop)),
+        "duree_millions_de_pas": round((s["_debut"] + len(pop)) / 1e6, 3),
         "dossiers": [os.path.basename(os.path.normpath(x)) for x in dossiers],
         "population_stabilisee": float(np.mean(stable)),
         "population_stabilisee_ecart_type": float(np.std(stable)),
@@ -120,8 +121,8 @@ def agrege(runs):
     """Moyenne et ecart-type entre graines, et part des fins de chaque type."""
     ok = [r for r in runs if "erreur" not in r]
     out = {"n_graines": len(ok)}
-    for cle in ("population_stabilisee", "part_stay", "age_max",
-                "generations_jusqu_au_mrca_moyen"):
+    for cle in ("duree_millions_de_pas", "population_stabilisee", "part_stay",
+                "age_max", "generations_jusqu_au_mrca_moyen"):
         v = [r[cle] for r in ok if cle in r]
         if v:
             out[cle] = {"moyenne": float(np.mean(v)), "ecart_type": float(np.std(v)),
@@ -142,10 +143,10 @@ def figure(bilan, chemin):
     import matplotlib.pyplot as plt
 
     groupes = list(bilan["groupes"])
-    mesures = [("population_stabilisee", "Stabilised population"),
+    mesures = [("duree_millions_de_pas", "Run length (M steps)"),
+               ("population_stabilisee", "Stabilised population"),
                ("part_stay", "Share of 'stay still'"),
-               ("age_max", "Oldest agent (steps)"),
-               ("generations_jusqu_au_mrca_moyen", "Generations to the MRCA")]
+               ("age_max", "Oldest agent (steps)")]
     fig, axes = plt.subplots(1, len(mesures), figsize=(4.4 * len(mesures), 4.4))
     couleurs = plt.get_cmap("viridis")(np.linspace(.15, .8, len(groupes)))
     for ax, (cle, titre) in zip(axes, mesures):
@@ -190,7 +191,8 @@ def main():
             if "erreur" in r:
                 print(f"  {r['nom']} : {r['erreur']}")
             else:
-                print(f"  {r['nom']:<24} pop {r['population_stabilisee']:7.1f} "
+                print(f"  {r['nom']:<24} {r['duree_millions_de_pas']:5.2f} M pas "
+                      f"| pop {r['population_stabilisee']:7.1f} "
                       f"| stay {r.get('part_stay', float('nan')):.3f} "
                       f"| age max {r.get('age_max', float('nan')):.0f} "
                       f"| fin {r['fin']}")
