@@ -41,10 +41,9 @@ def charge(data_dir, pas):
         par_id = np.zeros_like(eaten)
         for k, i in enumerate(ids):
             par_id[:, int(i)] = eaten[:, k]
-        total = par_id.sum(axis=1)
-        ok = total > 0
+        ok = par_id.sum(axis=1) > 0
         if ok.sum() >= 3:
-            etapes.append((step, par_id[ok] / total[ok, None], [int(i) for i in ids]))
+            etapes.append((step, par_id[ok], [int(i) for i in ids]))
     if pas:              # un point tous les `pas` pas au moins
         garde, dernier = [], None
         for e in etapes:
@@ -69,10 +68,9 @@ def charge_graines(exp_dir):
     etapes = []
     for k, b in enumerate(born):
         c = regime[k]
-        total = c.sum(axis=1)
-        ok = np.isfinite(c).all(axis=1) & (total > 0)
+        ok = np.isfinite(c).all(axis=1) & (c.sum(axis=1) > 0)
         if ok.sum() >= 3:
-            etapes.append((int(b), c[ok] / total[ok, None], [0, 1, 2]))
+            etapes.append((int(b), c[ok], [0, 1, 2]))
     return sorted(etapes)
 
 
@@ -109,7 +107,7 @@ def charge_lod(exp_dir, fenetre, reprises=()):
         regime, born = np.asarray(d["regime"], float), np.asarray(d["born"])
     total = regime.sum(axis=1)
     ok = np.isfinite(regime).all(axis=1) & (total > 0)
-    comp, born = regime[ok] / total[ok, None], born[ok]
+    comp, born = regime[ok], born[ok]
     bords = np.arange(0, born.max() + fenetre, fenetre)
     etapes = []
     saute = 0
@@ -141,6 +139,8 @@ def main():
                    action="store_true",
                    help="garder les fenetres qui contiennent une reprise "
                         "(ecartees par defaut : l'arbre y repart de zero)")
+    p.add_argument("--quantite", action="store_true",
+                   help="quantites mangees au lieu des parts, plus le total")
     p.add_argument("--style", choices=["violon", "nuage", "les-deux"],
                    default="violon", help="forme de la distribution (defaut %(default)s)")
     p.add_argument("-o", "--out", default=None,
@@ -172,6 +172,9 @@ def main():
 
     x = np.array([s for s, _, _ in etapes])
     ids = etapes[0][2]
+    brut = [c for _, c, _ in etapes]                       # bouchees par identite
+    comps = [c / c.sum(axis=1, keepdims=True) for c in brut]   # parts du regime
+    donnees_id = brut if a.quantite else comps
     med = np.array([np.median(c, axis=0) for _, c, _ in etapes])
     p25 = np.array([np.percentile(c, 25, axis=0) for _, c, _ in etapes])
     p75 = np.array([np.percentile(c, 75, axis=0) for _, c, _ in etapes])
@@ -179,12 +182,14 @@ def main():
     # dispersion dans le simplex : distance moyenne au barycentre, en coordonnees
     # du triangle, donc comparable d'un chunk a l'autre
     etal = []
-    for _, c, _ in etapes:
+    for c in comps:
         px, py = _bary(c[:, 0], c[:, 1], c[:, 2])
         etal.append(np.hypot(px - px.mean(), py - py.mean()).mean())
     etal = np.array(etal)
 
-    nom = "diet_variabilite_graines.png" if a.graines else "diet_variabilite.png"
+    quoi_nom = "quantite" if a.quantite else "variabilite"
+    nom = (f"diet_{quoi_nom}_graines.png" if a.graines
+           else f"diet_{quoi_nom}.png")
     largeur = max(11, 1.1 * len(etapes) + 3)
     fig, h = plt.subplots(figsize=(largeur, 5.6))
     pos = np.arange(len(etapes), dtype=float)
@@ -192,7 +197,7 @@ def main():
     rng = np.random.default_rng(0)
     for k, i in enumerate(ids):
         dx = (k - (len(ids) - 1) / 2) * ecart
-        donnees = [c[:, i] for _, c, _ in etapes]
+        donnees = [c[:, i] for c in donnees_id]
         if a.style in ("violon", "les-deux"):
             vp = h.violinplot(donnees, positions=pos + dx, widths=ecart * .92,
                               showextrema=False, showmedians=False)
@@ -207,8 +212,9 @@ def main():
                           edgecolors="none", zorder=3)
         h.plot([], [], color=color_of(i), lw=6, label=label_of(i))
 
-    h.set_ylabel("share of the diet")
-    h.set_ylim(0, 1)
+    h.set_ylabel("resources eaten" if a.quantite else "share of the diet")
+    if not a.quantite:
+        h.set_ylim(0, 1)
     h.grid(alpha=.3, axis="y")
     h.legend(frameon=False, ncol=len(ids))
     if a.graines:
@@ -217,7 +223,8 @@ def main():
         quoi, par = "along the line of descent", "per window"
     else:
         quoi, par = "in the population", "per window"
-    h.set_title(f"Diet composition {quoi}: full distribution {par}", fontsize=12)
+    mesure = "Resources eaten" if a.quantite else "Diet composition"
+    h.set_title(f"{mesure} {quoi}: full distribution {par}", fontsize=12)
 
     h.set_xticks(pos[::max(1, len(pos) // 12)])
     h.set_xticklabels([f"{v / 1e6:.2f}M" for v in x[::max(1, len(pos) // 12)]],
@@ -233,9 +240,20 @@ def main():
     print(f"Figure saved: {out}")
 
     # dispersion : figure a part, ce n'est pas la meme grandeur que les parts
-    fig2, b = plt.subplots(figsize=(min(largeur, 8.5), 3.4))
-    b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
-    b.set_ylabel("spread in the simplex")
+    fig2, b = plt.subplots(figsize=(min(largeur, 8.5) if not a.quantite else largeur,
+                                    3.4 if not a.quantite else 4.6))
+    if a.quantite:
+        totaux = [c.sum(axis=1) for c in brut]
+        vp = b.violinplot(totaux, positions=pos, widths=.7, showextrema=False)
+        for corps in vp["bodies"]:
+            corps.set_facecolor("#4C4C4C"), corps.set_alpha(.45)
+        for p_, d_ in zip(pos, totaux):
+            b.scatter(p_ + rng.uniform(-.12, .12, len(d_)), d_, s=10,
+                      color="#1D5C8F", alpha=.6, edgecolors="none", zorder=3)
+        b.set_ylabel("total resources eaten")
+    else:
+        b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
+        b.set_ylabel("spread in the simplex")
     b.set_xlabel("simulation step")
     pas_etiq = max(1, len(pos) // 12)      # une etiquette sur douze au plus
     b.set_xticks(pos[::pas_etiq])
@@ -244,11 +262,13 @@ def main():
     b.grid(alpha=.3)
     unite = ("seeds per ancestor" if a.graines else
              "ancestors per window" if a.lod else "genomes per point")
-    b.set_title("Dispersion in the simplex: mean distance to the centroid "
-                f"({n.min()}–{n.max()} {unite})", fontsize=11)
+    b.set_title((f"Total intake per rollout ({n.min()}–{n.max()} {unite})"
+                 if a.quantite else
+                 "Dispersion in the simplex: mean distance to the centroid "
+                 f"({n.min()}–{n.max()} {unite})"), fontsize=11)
     fig2.tight_layout()
     racine, ext = os.path.splitext(out)
-    out2 = f"{racine}_dispersion{ext}"
+    out2 = f"{racine}_{'total' if a.quantite else 'dispersion'}{ext}"
     fig2.savefig(out2, dpi=150)
     plt.close(fig2)
     print(f"Figure saved: {out2}")
