@@ -55,6 +55,27 @@ def charge(data_dir, pas):
     return etapes
 
 
+def charge_graines(exp_dir):
+    """[(pas de naissance, compositions (S,3), ids)] : un ancetre par permutation.
+
+    Chaque point est une GRAINE d'environnement, pas un ancetre : la dispersion
+    mesuree est celle des grilles, a genome fixe.
+    """
+    f = os.path.join(exp_dir, "lod", "lab", "graines_avant.npz")
+    if not os.path.exists(f):
+        raise SystemExit(f"{f} absent : lancer lineage_lab avec --graines-avant N")
+    with np.load(f) as d:
+        regime, born = np.asarray(d["regime"], float), np.asarray(d["born"])
+    etapes = []
+    for k, b in enumerate(born):
+        c = regime[k]
+        total = c.sum(axis=1)
+        ok = np.isfinite(c).all(axis=1) & (total > 0)
+        if ok.sum() >= 3:
+            etapes.append((int(b), c[ok] / total[ok, None], [0, 1, 2]))
+    return sorted(etapes)
+
+
 def pas_de_reprise(exp_dir):
     """Pas des reprises : coutures inscrites par lineage_global, ou resume_chunk.
 
@@ -111,6 +132,9 @@ def main():
                    help="un point tous les N pas de simulation au moins")
     p.add_argument("--lod", action="store_true",
                    help="la ligne de descendance au lieu de la population")
+    p.add_argument("--graines", action="store_true",
+                   help="les ancetres d'avant permutation, un point par graine "
+                        "d'environnement (lod/lab/graines_avant.npz)")
     p.add_argument("--fenetre", type=int, default=200_000, metavar="N",
                    help="largeur d'une fenetre avec --lod (defaut %(default)s)")
     p.add_argument("--garder-reprises", dest="garder_reprises",
@@ -131,7 +155,9 @@ def main():
         if not a.lod:
             print("pas de simplex de population : la lignee est utilisee")
         a.lod = True
-    if a.lod:
+    if a.graines:
+        etapes = charge_graines(a.source)
+    elif a.lod:
         rep = () if a.garder_reprises else pas_de_reprise(a.source)
         if rep:
             print(f"reprise(s) au pas {rep}")
@@ -184,8 +210,13 @@ def main():
     h.set_ylim(0, 1)
     h.grid(alpha=.3, axis="y")
     h.legend(frameon=False, ncol=len(ids))
-    quoi = ("along the line of descent" if a.lod else "in the population")
-    h.set_title(f"Diet composition {quoi}: full distribution per window", fontsize=12)
+    if a.graines:
+        quoi, par = "of the ancestor born before each permutation", "per lab seed"
+    elif a.lod:
+        quoi, par = "along the line of descent", "per window"
+    else:
+        quoi, par = "in the population", "per window"
+    h.set_title(f"Diet composition {quoi}: full distribution {par}", fontsize=12)
 
     b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
     b.set_ylabel("spread in the simplex")
@@ -195,13 +226,15 @@ def main():
     b.set_xticklabels([f"{v / 1e6:.2f}M" for v in x[::pas_etiq]], rotation=45,
                       ha="right", fontsize=9)
     b.grid(alpha=.3)
-    unite = "ancestors per window" if a.lod else "genomes per point"
+    unite = ("seeds per ancestor" if a.graines else
+              "ancestors per window" if a.lod else "genomes per point")
     b.set_title("Dispersion: mean distance to the centroid "
                 f"({n.min()}–{n.max()} {unite})", fontsize=11)
 
     fig.tight_layout()
-    out = a.out or os.path.join(a.source, "fig", "lod" if a.lod else "",
-                                "diet_variabilite.png")
+    nom = "diet_variabilite_graines.png" if a.graines else "diet_variabilite.png"
+    out = a.out or os.path.join(a.source, "fig",
+                                "lod" if (a.lod or a.graines) else "", nom)
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"{len(etapes)} chunk(s), pas {x[0]} a {x[-1]}")
