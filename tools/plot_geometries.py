@@ -86,7 +86,7 @@ def serie_pheno(data_dir, geo, condition, bornes, pas):
     marque = f"{condition}_{geo}" if geo else condition
     files = _chunks_dans(glob.glob(os.path.join(
         data_dir, f"chunk_*_pheno_{marque}.npz")), bornes, pas)
-    x, par_mode = [], {True: [], False: []}
+    x, par_mode = [], {True: [], False: [], "tous": []}
     for f in _tries(files):
         with np.load(f) as z:
             if "ever_ate" not in z.files:
@@ -94,8 +94,9 @@ def serie_pheno(data_dir, geo, condition, bornes, pas):
             d = {c: np.asarray(z[c], float) for c in z.files}
         mange = np.nan_to_num(d["ever_ate"]) > .5
         x.append(int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1)))
-        for mode in (True, False):
-            m = mange if mode else ~mange
+        for mode in (True, False, "tous"):
+            m = np.ones(len(mange), bool) if mode == "tous" else (
+                mange if mode else ~mange)
             e = {}
             for k_vs, *_ in MESURES:
                 v = d.get(k_vs, np.array([]))
@@ -132,6 +133,56 @@ def trace(ax, x, S, prefix, couleur, label, chunk_size):
     okb = ~(np.isnan(lo) | np.isnan(hi))
     ax.fill_between(xs[okb], lo[okb], hi[okb], color=couleur, alpha=.15)
     return True
+
+
+PALETTE = {"scatter": "#5B3A8E", "patch": "#1B7F79",
+           "blob_mange": "#1D5C8F", "blob_jamais": "#C1121F"}
+
+
+def modes_blob(a, mesures, data_dir, geos, fig_dir):
+    """Toutes les geometries, l'amas unique separe en ses deux modes.
+
+    Tout est calcule genome par genome, y compris les geometries non separees :
+    sans ca les courbes ne viendraient pas de la meme definition.
+    """
+    fig, axes = plt.subplots(1, len(mesures), squeeze=False,
+                             figsize=(5.2 * len(mesures) + 1.4, 4.6))
+    for geo in geos:
+        x, par_mode = serie_pheno(data_dir, geo, a.condition, a.chunks, a.pas)
+        if not len(x):
+            print(f"  [info] pas de phenotypes pour {geo} en {a.condition}")
+            continue
+        est_blob = "blob" in geo
+        courbes = ([(True, f"{NOMS.get(geo, geo)}, ate", PALETTE["blob_mange"]),
+                    (False, f"{NOMS.get(geo, geo)}, never ate", PALETTE["blob_jamais"])]
+                   if est_blob else
+                   [("tous", NOMS.get(geo, geo),
+                     PALETTE["scatter"] if "scatter" in geo else PALETTE["patch"])])
+        for mode, etiquette, couleur in courbes:
+            n_moy = np.mean([e["_n"] for e in par_mode[mode]])
+            print(f"  {etiquette} : {n_moy:.0f} genomes en moyenne")
+            for j, (k_vs, k_res, titre, unite) in enumerate(mesures):
+                ax = axes[0][j]
+                trace_mode(ax, x, par_mode[mode], k_vs, couleur, "-",
+                           etiquette if j == 0 else None, a.chunk_size)
+                ax.set_title(titre, fontsize=11)
+                ax.set_ylabel(unite)
+                ax.set_xlabel("simulation step")
+                ax.grid(alpha=.3)
+                if k_vs == "greediness":
+                    ax.set_ylim(0, 1)
+    frac = 1 - LARGEUR_LEGENDE / fig.get_figwidth()
+    h, l = axes[0][0].get_legend_handles_labels()
+    fig.legend(h, l, title="test environment", frameon=False, loc="center left",
+               bbox_to_anchor=(frac + .01, .5))
+    quoi = "alone" if a.condition == "alone" else f"with {COND[a.condition]}"
+    fig.suptitle(f"Focal agent {quoi}, the single blob split by mode "
+                 "(median and p25–p75)", fontsize=13)
+    fig.tight_layout(rect=[0, 0, frac, .93])
+    out = a.out or os.path.join(fig_dir, f"lab_geometries_modes_{a.condition}.png")
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    fig.savefig(out, dpi=150)
+    print(f"Figure saved: {out}")
 
 
 def separe(a, mesures, data_dir, geos, fig_dir):
@@ -248,6 +299,8 @@ def main():
                    metavar="M", choices=[m[0] for m in MESURES],
                    help="mesures a tracer parmi age, greediness, mean_speed "
                         "(defaut : les trois)")
+    p.add_argument("--modes-blob", dest="modes_blob", action="store_true",
+                   help="toutes les geometries, l'amas unique separe en deux modes")
     p.add_argument("--separer", action="store_true",
                    help="separer ceux qui ont mange au moins une fois des autres "
                         "(lu genome par genome, pas dans les resumes)")
@@ -279,6 +332,8 @@ def main():
         raise SystemExit(f"aucun resume par geometrie dans {data_dir}")
     fig_dir = os.path.join(a.source, "fig")
 
+    if a.modes_blob:
+        return modes_blob(a, mesures, data_dir, geos, fig_dir)
     if a.separer:
         return separe(a, mesures, data_dir, geos, fig_dir)
     if a.par_env:
