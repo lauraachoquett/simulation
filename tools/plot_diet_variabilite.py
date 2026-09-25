@@ -117,6 +117,8 @@ def main():
                    action="store_true",
                    help="garder les fenetres qui contiennent une reprise "
                         "(ecartees par defaut : l'arbre y repart de zero)")
+    p.add_argument("--style", choices=["violon", "nuage", "les-deux"],
+                   default="violon", help="forme de la distribution (defaut %(default)s)")
     p.add_argument("-o", "--out", default=None,
                    help="defaut <source>/fig/diet_variabilite.png")
     a = p.parse_args()
@@ -156,21 +158,42 @@ def main():
         etal.append(np.hypot(px - px.mean(), py - py.mean()).mean())
     etal = np.array(etal)
 
-    fig, (h, b) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
-                               gridspec_kw={"height_ratios": [2, 1]})
+    fig, (h, b) = plt.subplots(2, 1, figsize=(max(11, 1.1 * len(etapes) + 3), 7.6),
+                               sharex=True, gridspec_kw={"height_ratios": [2.4, 1]})
+    pos = np.arange(len(etapes), dtype=float)
+    ecart = .26
+    rng = np.random.default_rng(0)
     for k, i in enumerate(ids):
-        h.plot(x, med[:, i], color=color_of(i), lw=2, label=label_of(i))
-        h.fill_between(x, p25[:, i], p75[:, i], color=color_of(i), alpha=.18)
+        dx = (k - (len(ids) - 1) / 2) * ecart
+        donnees = [c[:, i] for _, c, _ in etapes]
+        if a.style in ("violon", "les-deux"):
+            vp = h.violinplot(donnees, positions=pos + dx, widths=ecart * .92,
+                              showextrema=False, showmedians=False)
+            for corps in vp["bodies"]:
+                corps.set_facecolor(color_of(i))
+                corps.set_edgecolor("white")
+                corps.set_alpha(.75)
+        if a.style in ("nuage", "les-deux"):
+            for p_, d_ in zip(pos + dx, donnees):
+                h.scatter(p_ + rng.uniform(-.06, .06, len(d_)), d_, s=9,
+                          color=color_of(i), alpha=.45 if a.style == "les-deux" else .7,
+                          edgecolors="none", zorder=3)
+        h.plot([], [], color=color_of(i), lw=6, label=label_of(i))
+
     h.set_ylabel("share of the diet")
     h.set_ylim(0, 1)
-    h.grid(alpha=.3)
+    h.grid(alpha=.3, axis="y")
     h.legend(frameon=False, ncol=len(ids))
     quoi = ("along the line of descent" if a.lod else "in the population")
-    h.set_title(f"Diet composition {quoi}: median and p25–p75", fontsize=12)
+    h.set_title(f"Diet composition {quoi}: full distribution per window", fontsize=12)
 
-    b.plot(x, etal, color="#4C4C4C", lw=2)
+    b.plot(pos, etal, color="#4C4C4C", lw=2, marker="o", ms=3.5)
     b.set_ylabel("spread in the simplex")
     b.set_xlabel("simulation step")
+    pas_etiq = max(1, len(pos) // 12)      # une etiquette sur douze au plus
+    b.set_xticks(pos[::pas_etiq])
+    b.set_xticklabels([f"{v / 1e6:.2f}M" for v in x[::pas_etiq]], rotation=45,
+                      ha="right", fontsize=9)
     b.grid(alpha=.3)
     unite = "ancestors per window" if a.lod else "genomes per point"
     b.set_title("Dispersion: mean distance to the centroid "
