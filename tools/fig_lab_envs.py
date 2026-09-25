@@ -142,6 +142,8 @@ def main():
                    help="config d'un run, pour ses ressources et sa lab_seed")
     p.add_argument("--graine", type=int, default=None,
                    help="graine du low_res (defaut : cfg.lab_seed)")
+    p.add_argument("--colonnes", type=int, default=0, metavar="N",
+                   help="panneaux par ligne (defaut : tous sur une ligne)")
     p.add_argument("--vue", type=int, default=5,
                    help="rayon du champ de vision, encart sur le dernier panneau "
                         "(defaut %(default)s ; 0 = pas d'encart)")
@@ -163,10 +165,14 @@ def main():
     bas = tires[-1][2:] if tires else None
     couleur = color_of(0)
     n_pan = len(grilles) + len(tires)
-    fig, axes = plt.subplots(1, n_pan,
-                             figsize=(4.5 * n_pan + (1.9 if a.vue else 0), 5.1))
+    nc = a.colonnes or n_pan
+    nl = -(-n_pan // nc)
+    fig, axes = plt.subplots(nl, nc, squeeze=False,
+                             figsize=(4.5 * nc + (1.9 if a.vue else 0), 5.1 * nl))
     fig.patch.set_facecolor("white")
-    axes = np.atleast_1d(axes)
+    axes = axes.ravel()
+    for ax in axes[n_pan:]:
+        ax.axis("off")
     for ax, (nom, g) in zip(axes, grilles):
         cle = os.path.splitext(os.path.basename(nom))[0]
         dernier = nom == grilles[-1][0] and not tires
@@ -196,7 +202,8 @@ def main():
     if a.vue:
         legende += " Blue: what one agent sees from its position."
     if a.texte:
-        fig.text(.5, .028, legende, ha="center", fontsize=10, color="#4A4A4A")
+        fig.text(.5, .028, legende, ha="center", fontsize=9.5, color="#4A4A4A",
+                 wrap=True).set_in_layout(False)
     fig.tight_layout(rect=[0, .13 if len(ids_vus) > 1 else .08,
                            .88 if a.vue else 1, .95])
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
