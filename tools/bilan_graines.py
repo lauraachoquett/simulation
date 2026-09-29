@@ -48,6 +48,29 @@ def series(dossiers, depuis, taille):
     return out
 
 
+def chaine_de_reprise(exp_dir):
+    """[ancetres..., exp_dir] en remontant resume_from de config en config.
+
+    Relu ici plutot qu'importe de tools.replot : cet outil ne lit que des .npz
+    et des .json, il n'a pas besoin de jax ni de flax.
+    """
+    chaine, vus = [], set()
+    courant = os.path.abspath(exp_dir)
+    while courant and courant not in vus:
+        vus.add(courant)
+        chaine.append(courant)
+        f = os.path.join(courant, "config.json")
+        if not os.path.exists(f):
+            break
+        parent = json.load(open(f)).get("resume_from") or ""
+        if not parent or not os.path.isdir(parent):
+            if parent:
+                print(f"    [info] parent introuvable : {parent}")
+            break
+        courant = parent
+    return list(reversed(chaine))
+
+
 def bilan_run(exp_dir, depuis, chaine=True):
     cfg = {}
     f = os.path.join(exp_dir, "config.json")
@@ -56,7 +79,6 @@ def bilan_run(exp_dir, depuis, chaine=True):
     taille = int(cfg.get("chunk_size", 1000))
     dossiers = [exp_dir]
     if chaine and cfg.get("resume_from"):
-        from simulation.tools.replot import chaine_de_reprise
         dossiers = chaine_de_reprise(exp_dir)
     s = series(dossiers, depuis, taille)
     if s is None:
