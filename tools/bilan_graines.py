@@ -137,7 +137,7 @@ def agrege(runs):
     return out
 
 
-def figure(bilan, chemin):
+def figure(bilan, chemin, titre_general=True):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -147,23 +147,27 @@ def figure(bilan, chemin):
                ("population_stabilisee", "Stabilised population"),
                ("part_stay", "Share of 'stay still'"),
                ("age_max", "Oldest agent (steps)")]
-    fig, axes = plt.subplots(1, len(mesures), figsize=(4.4 * len(mesures), 4.4))
+    fig, axes = plt.subplots(1, len(mesures), figsize=(3.3 * len(mesures), 3.4))
     couleurs = plt.get_cmap("viridis")(np.linspace(.15, .8, len(groupes)))
     for ax, (cle, titre) in zip(axes, mesures):
         for k, g in enumerate(groupes):
             vals = [r[cle] for r in bilan["groupes"][g]["runs"] if cle in r]
             if not vals:
                 continue
-            ax.scatter([k] * len(vals), vals, s=70, color=couleurs[k], zorder=3,
-                       edgecolor="white")
-            ax.hlines(np.mean(vals), k - .25, k + .25, color=couleurs[k], lw=2.4)
+            ax.scatter([k] * len(vals), vals, s=44, color=couleurs[k], zorder=3,
+                       edgecolor="white", linewidth=.8)
+            ax.hlines(np.mean(vals), k - .25, k + .25, color=couleurs[k], lw=2.2)
         ax.set_xticks(range(len(groupes)))
-        ax.set_xticklabels(groupes, rotation=30, ha="right", fontsize=9)
-        ax.set_title(titre, fontsize=11)
+        ax.set_xticklabels(groupes, rotation=30, ha="right", fontsize=8)
+        ax.set_ylabel(titre, fontsize=9)
+        ax.tick_params(labelsize=8)
         ax.grid(alpha=.3, axis="y")
-    fig.suptitle("One value per seed, bar = group mean", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, .94])
-    fig.savefig(chemin, dpi=150)
+        for c in ("top", "right"):
+            ax.spines[c].set_visible(False)
+    if titre_general:
+        fig.suptitle("One value per seed, bar = group mean", fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, .94 if titre_general else 1])
+    fig.savefig(chemin, dpi=200, bbox_inches="tight")
     print(f"Figure saved: {chemin}")
 
 
@@ -178,6 +182,10 @@ def main():
     p.add_argument("--no-chaine", dest="no_chaine", action="store_true",
                    help="ne pas remonter la chaine des reprises")
     p.add_argument("--figure", action="store_true", help="tracer le bilan")
+    p.add_argument("--fig-format", dest="fig_format", default="png",
+                   choices=["png", "pdf"], help="format de la figure (defaut %(default)s)")
+    p.add_argument("--no-titre", dest="no_titre", action="store_true",
+                   help="figure sans titre general, pour un article")
     p.add_argument("-o", "--out", default="bilan_graines.json")
     a = p.parse_args()
 
@@ -204,7 +212,8 @@ def main():
         json.dump(bilan, f, indent=2)
     print(f"Bilan ecrit dans {a.out}")
     if a.figure:
-        figure(bilan, os.path.splitext(a.out)[0] + ".png")
+        figure(bilan, f"{os.path.splitext(a.out)[0]}.{a.fig_format}",
+               titre_general=not a.no_titre)
 
 
 if __name__ == "__main__":
