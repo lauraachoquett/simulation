@@ -7,6 +7,7 @@ Lit les lab_data/chunk_N_pheno_<env>.npz : une ligne par genome, rien n'est rejo
 """
 import argparse
 import glob
+import json
 import os
 import re
 
@@ -62,7 +63,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("source")
     p.add_argument("--chunks", type=int, nargs="+", required=True,
-                   help="instants a comparer")
+                   help="instants a comparer, en chunks")
+    p.add_argument("--chunk-size", dest="chunk_size", type=int, default=None,
+                   help="pas par chunk (defaut : lu dans config.json)")
     p.add_argument("--env", default=None,
                    help="environnement des phenotypes (defaut : alone s'il existe)")
     p.add_argument("--mesures", nargs="+", default=None,
@@ -88,6 +91,14 @@ def main():
     envs = envs_dispo(data_dir)
     env = a.env or next((e for e in envs if e.startswith("alone")), envs[0])
     print(f"environnement : {env}   (dispo : {', '.join(envs)})")
+    taille = a.chunk_size
+    if taille is None:      # l'axe est en pas de simulation, pas en chunks
+        ici = os.path.join(a.source, "config.json")
+        parent = os.path.join(os.path.dirname(os.path.abspath(a.source)),
+                              "config.json")
+        f_cfg = ici if os.path.exists(ici) else parent
+        taille = (int(json.load(open(f_cfg)).get("chunk_size", 1000))
+                  if os.path.exists(f_cfg) else 1000)
 
     demandees = [n for n in MESURES if getattr(a, n)]
     if a.mesures:
@@ -177,7 +188,8 @@ def main():
                                    color="#2B2B2B", alpha=.3, edgecolors="none",
                                    zorder=3)
         ax.set_xticks(range(len(chunks)))
-        ax.set_xticklabels([f"chunk {c}" for c in chunks], rotation=20, ha="right")
+        ax.set_xticklabels([f"{c * taille / 1e6:.2f} M steps" for c in chunks],
+                           rotation=20, ha="right")
         ax.set_title(titre, fontsize=11)
         ax.grid(alpha=.3, axis="y")
         quoi = "deaths" if isinstance(col, tuple) else "genomes"
@@ -185,9 +197,13 @@ def main():
         if a.separer and nom == demandees[0]:
             ax.legend(frameon=False, fontsize=9, loc="best")
 
-    fig.suptitle(f"Comparison across chunks — {env}", fontsize=13)
+    fig.suptitle(f"Comparison across simulation steps — {env}", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, .94])
-    out = a.out or os.path.join(a.source, "fig", "box_chunks.png")
+    # le nom porte les mesures et les pas : plusieurs figures cohabitent
+    etiq = "_".join(demandees)
+    pas_txt = "_".join(f"{c * taille // 1000}k" for c in chunks)
+    out = a.out or os.path.join(a.source, "fig",
+                                f"box_{etiq}_{pas_txt}_{env}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"Figure saved: {out}")

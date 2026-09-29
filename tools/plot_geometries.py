@@ -135,8 +135,10 @@ def trace(ax, x, S, prefix, couleur, label, chunk_size):
     return True
 
 
-PALETTE = {"scatter": "#5B3A8E", "patch": "#1B7F79",
-           "blob_mange": "#1D5C8F", "blob_jamais": "#C1121F"}
+# les deux modes portent l'information, en bleu et vert ; les autres geometries
+# sont du contexte, en gris
+PALETTE = {"scatter": "#7A7A7A", "patch": "#BBBBBB",
+           "blob_mange": "#1D5C8F", "blob_jamais": "#2E8B57"}
 
 
 def modes_blob(a, mesures, data_dir, geos, fig_dir):
@@ -179,7 +181,9 @@ def modes_blob(a, mesures, data_dir, geos, fig_dir):
     fig.suptitle(f"Focal agent {quoi}, the single blob split by mode "
                  "(median and p25–p75)", fontsize=13)
     fig.tight_layout(rect=[0, 0, frac, .93])
-    out = a.out or os.path.join(fig_dir, f"lab_geometries_modes_{a.condition}.png")
+    etiq = "_".join(m[0] for m in mesures)
+    out = a.out or os.path.join(
+        fig_dir, f"lab_geometries_modes_{a.condition}_{etiq}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"Figure saved: {out}")
@@ -196,8 +200,8 @@ def separe(a, mesures, data_dir, geos, fig_dir):
         if not blob:
             raise SystemExit("aucune geometrie 'blob' : donner --geos explicitement")
         geos = blob[:1]
-    modes = [(True, "ate at least once", "#1D5C8F"),
-             (False, "never ate", "#C1121F")]
+    modes = [(True, "ate at least once", PALETTE["blob_mange"]),
+             (False, "never ate", PALETTE["blob_jamais"])]
     nl, nc = len(geos), len(mesures)
     fig, axes = plt.subplots(nl, nc, squeeze=False, sharex=True,
                              figsize=(5.2 * nc, 4.4 * nl))
@@ -227,7 +231,8 @@ def separe(a, mesures, data_dir, geos, fig_dir):
     fig.suptitle(f"{NOMS.get(geos[0], geos[0])}, focal agent {quoi} — "
                  "median and p25–p75 within each mode", fontsize=13)
     fig.tight_layout(rect=[0, 0, frac, .93])
-    out = a.out or os.path.join(fig_dir, f"lab_modes_{a.condition}.png")
+    etiq = "_".join(m[0] for m in mesures)
+    out = a.out or os.path.join(fig_dir, f"lab_modes_{a.condition}_{etiq}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150)
     print(f"Figure saved: {out}")
