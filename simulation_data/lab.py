@@ -984,10 +984,19 @@ class LabMixin:
             # 8) Exploration : temps jusqu'à la 1re ressource mangée
             #    t_explore = min{ t in [birth_row, death_row] : rew[t, slot] > 0 } - birth_row
             #    NaN si l'agent n'a jamais mangé (censuré : pas trouvé de ressource).
+            # rewards[t] est gagne au pas t-1 : on realigne AVANT de decouper la
+            # fenetre de vie, sinon un repas pris au dernier pas tombe dehors
+            # (ever_ate faux negatif) et celui du precedent occupant du slot y
+            # entre (faux positif). Meme serie que la greediness, donc
+            # ever_ate = False implique Cr = 0.
+            ate_step = np.zeros(rew.shape, dtype=bool)                 # (T, N)
+            if REWARD_LAG > 0:
+                ate_step[:-REWARD_LAG] = rew[REWARD_LAG:] > 0
+            else:
+                ate_step = rew > 0
             row_idx   = np.arange(T)[:, None]                          # (T, 1)
-            series    = rew[:, slot]                                   # (T, E)
             in_win    = (row_idx >= birth_row[None, :]) & (row_idx <= death_row[None, :])
-            ate       = (series > 0) & in_win                         # (T, E)
+            ate       = ate_step[:, slot] & in_win                     # (T, E)
             ever_ate  = ate.any(axis=0)                               # (E,)
             first_r   = np.where(ever_ate, ate.argmax(axis=0), -1)    # 1re ligne positive
             t_explore = np.where(ever_ate, first_r - birth_row, np.nan)  # (E,)
@@ -998,11 +1007,6 @@ class LabMixin:
             n_channels    = len(res_ch) + 2                   # ressources + agents + murs
             good_channels = np.where(delta_e > 0)[0]
             saw = _resource_in_view(outputs.obs, good_channels, n_channels)
-            ate_step = np.zeros_like(saw, dtype=bool)          # consommation alignee
-            if REWARD_LAG > 0:
-                ate_step[:-REWARD_LAG] = rew[REWARD_LAG:] > 0
-            else:
-                ate_step = rew > 0
             greediness, greed_Tr, greed_Cr = _greediness(
                 saw, ate_step, slot, birth_row, death_row)
 

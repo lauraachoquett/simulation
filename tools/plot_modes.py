@@ -38,7 +38,8 @@ def charge(data_dir, env, taille, pas):
             if "ever_ate" not in z.files:
                 continue
             age = np.asarray(z["age"], float)
-            mange = np.nan_to_num(np.asarray(z["ever_ate"], float)) > .5
+            # en clones ever_ate est une part : "jamais" = aucun clone n'a mange
+            mange = np.nan_to_num(np.asarray(z["ever_ate"], float)) > 0
             t_exp = (np.asarray(z["t_explore"], float) if "t_explore" in z.files
                      else np.full(len(age), np.nan))
         etapes.append((chunk * taille, age, mange, t_exp))

@@ -211,8 +211,9 @@ def main():
                 garde = None
                 if trouve is not None and c in par_env[env_g]:
                     ea = par_env[env_g][c].get("ever_ate")
-                    garde = ((np.nan_to_num(ea) > .5) if trouve
-                             else (np.nan_to_num(ea) <= .5))
+                    # en clones ever_ate est une part : "jamais" = aucun clone
+                    garde = ((np.nan_to_num(ea) > 0) if trouve
+                             else (np.nan_to_num(ea) <= 0))
                 vals.append(valeurs(env_g, c, col, garde))
             effectifs += [len(v) for v in vals]
             xs = np.arange(len(chunks)) + dx

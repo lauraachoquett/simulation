@@ -92,7 +92,7 @@ def serie_pheno(data_dir, geo, condition, bornes, pas):
             if "ever_ate" not in z.files:
                 continue
             d = {c: np.asarray(z[c], float) for c in z.files}
-        mange = np.nan_to_num(d["ever_ate"]) > .5
+        mange = np.nan_to_num(d["ever_ate"]) > 0   # aucun clone n'a mange
         x.append(int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1)))
         for mode in (True, False, "tous"):
             m = np.ones(len(mange), bool) if mode == "tous" else (

@@ -72,7 +72,7 @@ def main():
         if colonnes[:2] != ["voisinage", "greediness"]:
             raise SystemExit(f"{env} : colonnes manquantes ({colonnes})")
         ok = np.isfinite(X[:, 0]) & np.isfinite(X[:, 1])
-        mange = (np.nan_to_num(X[ok, 2]) > .5 if "ever_ate" in colonnes
+        mange = (np.nan_to_num(X[ok, 2]) > 0 if "ever_ate" in colonnes
                  else np.ones(int(ok.sum()), bool))
         par_env[env] = (X[ok, 0], X[ok, 1], chunk[ok] * a.chunk_size, mange)
 
