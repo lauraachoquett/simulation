@@ -21,7 +21,7 @@ POS_AUTRES = [(11, 18), (19, 11), (17, 21), (12, 11)]
 
 PANNEAUX = [
     ("Alone", "one tested agent", 0, None),
-    ("Identical clones", "4 peers, same genome, they eat", 4, PAIR),
+    ("Identical clones", "3 peers, same genome, they eat", 3, PAIR),
     ("Inert peers", "3 peers, random moves, no eating", 3, INERTE),
 ]
 
