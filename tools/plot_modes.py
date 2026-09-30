@@ -20,6 +20,19 @@ TROUVE, JAMAIS = "#1D5C8F", "#C1121F"
 _NUM = re.compile(r"chunk_(\d+)_pheno_")
 
 
+def a_mange(ever_ate, greediness=None):
+    """Qui a mange au moins une fois, par genome.
+
+    En clones ever_ate est une part : "jamais" veut dire aucun clone. Et les
+    pheno ecrits avant le correctif du decalage d'un pas ratent un repas pris
+    au dernier pas vecu ; G > 0 le prouve, on rattrape a la lecture.
+    """
+    m = np.nan_to_num(np.asarray(ever_ate, float)) > 0
+    if greediness is not None:
+        m |= np.nan_to_num(np.asarray(greediness, float)) > 0
+    return m
+
+
 def data_dir_de(chemin):
     for c in (os.path.join(chemin, "replay", "lab_data"),
               os.path.join(chemin, "lab_data"), chemin):
@@ -39,7 +52,8 @@ def charge(data_dir, env, taille, pas):
                 continue
             age = np.asarray(z["age"], float)
             # en clones ever_ate est une part : "jamais" = aucun clone n'a mange
-            mange = np.nan_to_num(np.asarray(z["ever_ate"], float)) > 0
+            mange = a_mange(z["ever_ate"],
+                            z["greediness"] if "greediness" in z.files else None)
             t_exp = (np.asarray(z["t_explore"], float) if "t_explore" in z.files
                      else np.full(len(age), np.nan))
         etapes.append((chunk * taille, age, mange, t_exp))

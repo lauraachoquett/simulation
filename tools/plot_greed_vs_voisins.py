@@ -14,6 +14,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+def a_mange(ever_ate, greediness=None):
+    """Qui a mange au moins une fois, par genome.
+
+    En clones ever_ate est une part : "jamais" veut dire aucun clone. Et les
+    pheno ecrits avant le correctif du decalage d'un pas ratent un repas pris
+    au dernier pas vecu ; G > 0 le prouve, on rattrape a la lecture.
+    """
+    m = np.nan_to_num(np.asarray(ever_ate, float)) > 0
+    if greediness is not None:
+        m |= np.nan_to_num(np.asarray(greediness, float)) > 0
+    return m
+
+
+
 from simulation.tools.pca_phenotypes import charge, familles, filtre, lab_data_de
 
 
@@ -72,7 +87,7 @@ def main():
         if colonnes[:2] != ["voisinage", "greediness"]:
             raise SystemExit(f"{env} : colonnes manquantes ({colonnes})")
         ok = np.isfinite(X[:, 0]) & np.isfinite(X[:, 1])
-        mange = (np.nan_to_num(X[ok, 2]) > 0 if "ever_ate" in colonnes
+        mange = (a_mange(X[ok, 2], X[ok, 1]) if "ever_ate" in colonnes
                  else np.ones(int(ok.sum()), bool))
         par_env[env] = (X[ok, 0], X[ok, 1], chunk[ok] * a.chunk_size, mange)
 

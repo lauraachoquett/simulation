@@ -20,6 +20,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+def a_mange(ever_ate, greediness=None):
+    """Qui a mange au moins une fois, par genome.
+
+    En clones ever_ate est une part : "jamais" veut dire aucun clone. Et les
+    pheno ecrits avant le correctif du decalage d'un pas ratent un repas pris
+    au dernier pas vecu ; G > 0 le prouve, on rattrape a la lecture.
+    """
+    m = np.nan_to_num(np.asarray(ever_ate, float)) > 0
+    if greediness is not None:
+        m |= np.nan_to_num(np.asarray(greediness, float)) > 0
+    return m
+
+
+
 from simulation.utils.plots import _band, _chunks_dans
 
 LARGEUR_LEGENDE = 1.7      # pouces reserves a droite pour la legende
@@ -92,7 +107,7 @@ def serie_pheno(data_dir, geo, condition, bornes, pas):
             if "ever_ate" not in z.files:
                 continue
             d = {c: np.asarray(z[c], float) for c in z.files}
-        mange = np.nan_to_num(d["ever_ate"]) > 0   # aucun clone n'a mange
+        mange = a_mange(d["ever_ate"], d.get("greediness"))
         x.append(int(re.search(r"chunk_(\d+)", os.path.basename(f)).group(1)))
         for mode in (True, False, "tous"):
             m = np.ones(len(mange), bool) if mode == "tous" else (

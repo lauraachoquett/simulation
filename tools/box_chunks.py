@@ -47,6 +47,19 @@ def nom_court(env):
     return NOMS.get(geo, geo)
 
 
+def a_mange(ever_ate, greediness=None):
+    """Qui a mange au moins une fois, par genome.
+
+    En clones ever_ate est une part : "jamais" veut dire aucun clone. Et les
+    pheno ecrits avant le correctif du decalage d'un pas ratent un repas pris
+    au dernier pas vecu ; G > 0 le prouve, on rattrape a la lecture.
+    """
+    m = np.nan_to_num(np.asarray(ever_ate, float)) > 0
+    if greediness is not None:
+        m |= np.nan_to_num(np.asarray(greediness, float)) > 0
+    return m
+
+
 def data_dir_de(chemin):
     for c in (os.path.join(chemin, "replay", "lab_data"),
               os.path.join(chemin, "lab_data"), chemin):
@@ -128,7 +141,7 @@ def main():
         demandees = ["lifespan", "motion", "wallpart"]
     demandees = list(dict.fromkeys(demandees))
 
-    colonnes = ["ever_ate"] if (a.separer or a.modes) else []
+    colonnes = ["ever_ate", "greediness"] if (a.separer or a.modes) else []
     for n in demandees:
         c = MESURES.get(n, (n,))[0]
         colonnes += list(c) if isinstance(c, tuple) else [c]
@@ -211,11 +224,10 @@ def main():
                 garde = None
                 if trouve is not None and c in par_env[env_g]:
                     ea = par_env[env_g][c].get("ever_ate")
-                    # en clones ever_ate est une part : "jamais" = aucun clone
-                    garde = ((np.nan_to_num(ea) > 0) if trouve
-                             else (np.nan_to_num(ea) <= 0))
+                    m = a_mange(ea, par_env[env_g][c].get("greediness"))
+                    garde = m if trouve else ~m
                 vals.append(valeurs(env_g, c, col, garde))
-            effectifs += [len(v) for v in vals]
+            effectifs += [len(v) for v in vals if len(v)]
             xs = np.arange(len(chunks)) + dx
             teinte = [coul] * len(chunks) if coul is not None else couleurs
             largeur = (.3 if a.separer else
@@ -238,7 +250,7 @@ def main():
                                 boxprops=dict(edgecolor="#6B6B6B"))
                 for corps, coul in zip(bp["boxes"], teinte):
                     corps.set_facecolor(coul), corps.set_alpha(alpha)
-                if etiquette and nom == demandees[0]:
+                if etiquette and nom == demandees[0] and any(len(v) for v in vals):
                     ax.plot([], [], lw=8, alpha=alpha, label=etiquette,
                             color=coul if coul is not None else "#6B6B6B")
                 if a.points:
