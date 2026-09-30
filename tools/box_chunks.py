@@ -37,6 +37,11 @@ NOMS = {"scatter40_s0": "scattered", "patch8x5_s0": "patchy",
         "blob1x40_s1": "single blob", "low_res": "low resources"}
 
 
+# memes teintes que plot_geometries --modes-blob
+PALETTE = {"scatter": "#7A7A7A", "patch": "#BBBBBB",
+           "blob_mange": "#1D5C8F", "blob_jamais": "#2E8B57"}
+
+
 def nom_court(env):
     """clones_patch8x5_s0 -> patchy : la legende ne redit pas la condition."""
     geo = env.split("_", 1)[1] if "_" in env else env
@@ -83,6 +88,9 @@ def main():
                    help="colonnes brutes des fichiers pheno, par exemple "
                         "age greediness mean_speed")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
+    p.add_argument("--modes", action="store_true",
+                   help="dans l'amas unique, separer ceux qui ont mange au moins "
+                        "une fois de ceux qui n'ont jamais mange")
     p.add_argument("--separer", action="store_true",
                    help="separer ceux qui ont mange au moins une fois (ever_ate) "
                         "de ceux qui n'ont jamais mange")
@@ -121,7 +129,7 @@ def main():
         demandees = ["lifespan", "motion", "wallpart"]
     demandees = list(dict.fromkeys(demandees))
 
-    colonnes = ["ever_ate"] if a.separer else []
+    colonnes = ["ever_ate"] if (a.separer or a.modes) else []
     for n in demandees:
         c = MESURES.get(n, (n,))[0]
         colonnes += list(c) if isinstance(c, tuple) else [c]
@@ -160,15 +168,28 @@ def main():
     if a.separer and multi:
         raise SystemExit("--separer ne se combine pas avec plusieurs environnements")
     if a.separer:
-        groupes = [(next(iter(par_env)), 1., "ate at least once", -.17, .78),
-                   (next(iter(par_env)), 0., "never ate", .17, .38)]
-    elif multi:
-        n_e = len(par_env)
-        ecart = .8 / n_e
-        groupes = [(e, None, nom_court(e), (k - (n_e - 1) / 2) * ecart, .85)
-                   for k, e in enumerate(par_env)]
+        groupes = [(next(iter(par_env)), 1., "ate at least once", -.17, .78, None),
+                   (next(iter(par_env)), 0., "never ate", .17, .38, None)]
     else:
-        groupes = [(next(iter(par_env)), None, None, 0., .85)]
+        # --modes : seul l'amas unique porte deux comportements, les autres
+        # geometries n'en ont qu'un et gardent une boite
+        entrees = []
+        for e in par_env:
+            if a.modes and "blob" in e:
+                entrees += [(e, 1., f"{nom_court(e)}, ate", PALETTE["blob_mange"]),
+                            (e, 0., f"{nom_court(e)}, never ate",
+                             PALETTE["blob_jamais"])]
+            elif a.modes:
+                entrees.append((e, None, nom_court(e),
+                                PALETTE["scatter"] if "scatter" in e
+                                else PALETTE["patch"]))
+            else:
+                entrees.append((e, None, nom_court(e) if multi else None, None))
+        n_g = len(entrees)
+        ecart = .8 / n_g
+        groupes = [(e, t, lab, (k - (n_g - 1) / 2) * ecart if n_g > 1 else 0., .85,
+                    coul if coul is not None else (teintes[e] if multi else None))
+                   for k, (e, t, lab, coul) in enumerate(entrees)]
 
     def valeurs(e, c, col, garde):
         """Valeurs d'un chunk pour une colonne, ou proportion si col est un couple."""
@@ -189,7 +210,7 @@ def main():
     for ax, nom in zip(axes[0], demandees):
         col, titre, binaire = MESURES.get(nom, (nom, nom, False))
         effectifs = []
-        for gi, (env_g, trouve, etiquette, dx, alpha) in enumerate(groupes):
+        for gi, (env_g, trouve, etiquette, dx, alpha, coul) in enumerate(groupes):
             vals = []
             for c in chunks:
                 garde = None
@@ -200,9 +221,9 @@ def main():
                 vals.append(valeurs(env_g, c, col, garde))
             effectifs += [len(v) for v in vals]
             xs = np.arange(len(chunks)) + dx
-            teinte = ([teintes[env_g]] * len(chunks) if multi else couleurs)
-            largeur = (.8 / len(par_env) * .8 if multi
-                       else .3 if a.separer else .55)
+            teinte = [coul] * len(chunks) if coul is not None else couleurs
+            largeur = (.3 if a.separer else
+                       .8 / len(groupes) * .8 if len(groupes) > 1 else .55)
             if binaire:      # une part n'a pas de quartiles : barre de la moyenne
                 moy = [float(v.mean()) if len(v) else np.nan for v in vals]
                 err = [float(v.std() / max(np.sqrt(len(v)), 1)) if len(v) else np.nan
@@ -223,7 +244,7 @@ def main():
                     corps.set_facecolor(coul), corps.set_alpha(alpha)
                 if etiquette and nom == demandees[0]:
                     ax.plot([], [], lw=8, alpha=alpha, label=etiquette,
-                            color=teintes[env_g] if multi else "#6B6B6B")
+                            color=coul if coul is not None else "#6B6B6B")
                 if a.points:
                     for k, v in enumerate(vals):
                         ax.scatter(xs[k] + rng.uniform(-.07, .07, len(v)), v, s=8,
@@ -238,7 +259,7 @@ def main():
         ax.set_xlabel(f"{min(effectifs)}–{max(effectifs)} {quoi}" if effectifs else "")
 
     # legende hors des axes : elle ne recouvre aucune boite
-    if a.separer or multi:
+    if a.separer or multi or a.modes:
         h, l = axes[0][0].get_legend_handles_labels()
         if h:
             fig.legend(h, l, frameon=False, fontsize=9, loc="center left",
@@ -254,6 +275,8 @@ def main():
     conds = {e.split("_", 1)[0] for e in par_env}      # alone, clones, figurants
     nom_env = (f"{conds.pop()}_envs" if multi and len(conds) == 1
                else "envs" if multi else next(iter(par_env)))
+    if a.modes:
+        nom_env += "_modes"
     out = a.out or os.path.join(a.source, "fig",
                                 f"box_{etiq}_{pas_txt}_{nom_env}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
