@@ -236,10 +236,14 @@ def main():
         ax.grid(alpha=.3, axis="y")
         quoi = "deaths" if isinstance(col, tuple) else "genomes"
         ax.set_xlabel(f"{min(effectifs)}–{max(effectifs)} {quoi}" if effectifs else "")
-        if (a.separer or multi) and nom == demandees[0]:
-            ax.legend(frameon=False, fontsize=9, loc="best",
-                      title="test environment" if multi else None)
 
+    # legende hors des axes : elle ne recouvre aucune boite
+    if a.separer or multi:
+        h, l = axes[0][0].get_legend_handles_labels()
+        if h:
+            fig.legend(h, l, frameon=False, fontsize=9, loc="center left",
+                       bbox_to_anchor=(1., .5),
+                       title="test environment" if multi else None)
     if not a.no_titre:
         quoi = " · ".join(par_env) if multi else next(iter(par_env))
         fig.suptitle(f"Comparison across simulation steps — {quoi}", fontsize=13)
@@ -253,7 +257,7 @@ def main():
     out = a.out or os.path.join(a.source, "fig",
                                 f"box_{etiq}_{pas_txt}_{nom_env}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Figure saved: {out}")
 
 
