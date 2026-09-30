@@ -184,9 +184,12 @@ def main():
     def etiq_env(e):
         return condition(e) if par_condition else nom_court(e)
     if multi:
-        cmap = plt.get_cmap("viridis")
+        # deux palettes distinctes : on ne confond pas une figure ou varie la
+        # geometrie avec une figure ou varie la condition sociale
+        cmap = plt.get_cmap("magma" if par_condition else "viridis")
+        bornes = (.30, .72) if par_condition else (.12, .82)
         teintes = {e: cmap(t) for e, t in
-                   zip(par_env, np.linspace(.12, .82, len(par_env)))}
+                   zip(par_env, np.linspace(*bornes, len(par_env)))}
     else:
         couleurs = plt.get_cmap(a.cmap)(np.linspace(.35, .85, len(chunks)))
 
