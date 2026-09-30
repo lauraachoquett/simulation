@@ -37,10 +37,8 @@ NOMS = {"scatter40_s0": "scattered", "patch8x5_s0": "patchy",
         "blob1x40_s1": "single blob", "low_res": "low resources"}
 
 
-# une teinte par geometrie ; dans l'amas unique, ceux qui n'ont jamais mange
-# passent en gris, ils ne portent pas le comportement qu'on regarde
-PALETTE = {"scatter": "#1D5C8F", "patch": "#2E8B57", "autre": "#7A7A7A",
-           "blob_mange": "#123F63", "blob_jamais": "#9A9A9A"}
+# chaque env garde sa teinte ; seuls ceux qui n'ont jamais mange passent en gris
+GRIS = "#9A9A9A"
 
 
 def nom_court(env):
@@ -177,16 +175,11 @@ def main():
         entrees = []
         for e in par_env:
             if a.modes and "blob" in e:
-                entrees += [(e, 1., f"{nom_court(e)}, ate", PALETTE["blob_mange"]),
-                            (e, 0., f"{nom_court(e)}, never ate",
-                             PALETTE["blob_jamais"])]
-            elif a.modes:
-                entrees.append((e, None, nom_court(e),
-                                PALETTE["scatter"] if "scatter" in e else
-                                PALETTE["patch"] if "patch" in e
-                                else PALETTE["autre"]))
+                entrees += [(e, 1., f"{nom_court(e)}, ate", None),
+                            (e, 0., f"{nom_court(e)}, never ate", GRIS)]
             else:
-                entrees.append((e, None, nom_court(e) if multi else None, None))
+                entrees.append((e, None, nom_court(e) if (multi or a.modes)
+                                else None, None))
         n_g = len(entrees)
         ecart = .8 / n_g
         groupes = [(e, t, lab, (k - (n_g - 1) / 2) * ecart if n_g > 1 else 0., .85,
