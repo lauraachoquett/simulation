@@ -101,7 +101,8 @@ def main():
     else:
         print("\\begin{tabular}{llrrrr}")
         print("\\toprule")
-        print(" & ".join(entete) + " \\\\")
+        # sans echappement, le % du dernier en-tete commenterait la ligne
+        print(" & ".join(e.replace("%", "\\%") for e in entete) + " \\\\")
         print("\\midrule")
         for l in lignes:
             print(" & ".join(c.replace("±", "$\\pm$") for c in cellule(l)) + " \\\\")
