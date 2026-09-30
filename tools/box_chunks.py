@@ -258,6 +258,8 @@ def main():
                         ax.scatter(xs[k] + rng.uniform(-.07, .07, len(v)), v, s=8,
                                    color="#2B2B2B", alpha=.3, edgecolors="none",
                                    zorder=3)
+        for k in range(len(chunks) - 1):   # separer les instants
+            ax.axvline(k + .5, color="#BBBBBB", lw=.8, ls=":", zorder=0)
         ax.set_xticks(range(len(chunks)))
         ax.set_xticklabels([f"{c * taille / 1e6:.2f} M steps" for c in chunks],
                            rotation=20, ha="right")
