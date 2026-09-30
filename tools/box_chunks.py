@@ -32,6 +32,16 @@ MESURES = {
     "wallpart":   (("wall_death", "died"), "Wall deaths among deaths", True),
 }
 
+# meme vocabulaire que plot_geometries pour les legendes
+NOMS = {"scatter40_s0": "scattered", "patch8x5_s0": "patchy",
+        "blob1x40_s1": "single blob", "low_res": "low resources"}
+
+
+def nom_court(env):
+    """clones_patch8x5_s0 -> patchy : la legende ne redit pas la condition."""
+    geo = env.split("_", 1)[1] if "_" in env else env
+    return NOMS.get(geo, geo)
+
 
 def data_dir_de(chemin):
     for c in (os.path.join(chemin, "replay", "lab_data"),
@@ -78,6 +88,8 @@ def main():
                         "de ceux qui n'ont jamais mange")
     p.add_argument("--cmap", default="Blues",
                    help="palette des instants, du clair au fonce (defaut %(default)s)")
+    p.add_argument("--no-titre", dest="no_titre", action="store_true",
+                   help="figure sans titre general, pour un article")
     p.add_argument("--no-erreur", dest="no_erreur", action="store_true",
                    help="barres de proportion sans erreur d'echantillonnage")
     p.add_argument("-o", "--out", default=None,
@@ -153,7 +165,7 @@ def main():
     elif multi:
         n_e = len(par_env)
         ecart = .8 / n_e
-        groupes = [(e, None, e, (k - (n_e - 1) / 2) * ecart, .85)
+        groupes = [(e, None, nom_court(e), (k - (n_e - 1) / 2) * ecart, .85)
                    for k, e in enumerate(par_env)]
     else:
         groupes = [(next(iter(par_env)), None, None, 0., .85)]
@@ -228,13 +240,16 @@ def main():
             ax.legend(frameon=False, fontsize=9, loc="best",
                       title="test environment" if multi else None)
 
-    quoi = " · ".join(par_env) if multi else next(iter(par_env))
-    fig.suptitle(f"Comparison across simulation steps — {quoi}", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, .94])
+    if not a.no_titre:
+        quoi = " · ".join(par_env) if multi else next(iter(par_env))
+        fig.suptitle(f"Comparison across simulation steps — {quoi}", fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, .94 if not a.no_titre else 1])
     # le nom porte les mesures et les pas : plusieurs figures cohabitent
     etiq = "_".join(demandees)
     pas_txt = "_".join(f"{c * taille // 1000}k" for c in chunks)
-    nom_env = "envs" if multi else next(iter(par_env))
+    conds = {e.split("_", 1)[0] for e in par_env}      # alone, clones, figurants
+    nom_env = (f"{conds.pop()}_envs" if multi and len(conds) == 1
+               else "envs" if multi else next(iter(par_env)))
     out = a.out or os.path.join(a.source, "fig",
                                 f"box_{etiq}_{pas_txt}_{nom_env}.png")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
