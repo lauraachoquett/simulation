@@ -37,9 +37,10 @@ NOMS = {"scatter40_s0": "scattered", "patch8x5_s0": "patchy",
         "blob1x40_s1": "single blob", "low_res": "low resources"}
 
 
-# memes teintes que plot_geometries --modes-blob
-PALETTE = {"scatter": "#7A7A7A", "patch": "#BBBBBB",
-           "blob_mange": "#1D5C8F", "blob_jamais": "#2E8B57"}
+# une teinte par geometrie ; dans l'amas unique, ceux qui n'ont jamais mange
+# passent en gris, ils ne portent pas le comportement qu'on regarde
+PALETTE = {"scatter": "#1D5C8F", "patch": "#2E8B57", "autre": "#7A7A7A",
+           "blob_mange": "#123F63", "blob_jamais": "#9A9A9A"}
 
 
 def nom_court(env):
@@ -181,8 +182,9 @@ def main():
                              PALETTE["blob_jamais"])]
             elif a.modes:
                 entrees.append((e, None, nom_court(e),
-                                PALETTE["scatter"] if "scatter" in e
-                                else PALETTE["patch"]))
+                                PALETTE["scatter"] if "scatter" in e else
+                                PALETTE["patch"] if "patch" in e
+                                else PALETTE["autre"]))
             else:
                 entrees.append((e, None, nom_court(e) if multi else None, None))
         n_g = len(entrees)
