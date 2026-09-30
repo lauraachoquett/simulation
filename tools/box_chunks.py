@@ -110,6 +110,9 @@ def main():
                    help="palette des instants, du clair au fonce (defaut %(default)s)")
     p.add_argument("--no-titre", dest="no_titre", action="store_true",
                    help="figure sans titre general, pour un article")
+    p.add_argument("--fig-format", dest="fig_format", default="png",
+                   choices=["png", "pdf"],
+                   help="format de la figure (defaut %(default)s)")
     p.add_argument("--no-erreur", dest="no_erreur", action="store_true",
                    help="barres de proportion sans erreur d'echantillonnage")
     p.add_argument("-o", "--out", default=None,
@@ -288,7 +291,7 @@ def main():
     if a.modes:
         nom_env += "_modes"
     out = a.out or os.path.join(a.source, "fig",
-                                f"box_{etiq}_{pas_txt}_{nom_env}.png")
+                                f"box_{etiq}_{pas_txt}_{nom_env}.{a.fig_format}")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"Figure saved: {out}")
