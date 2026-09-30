@@ -14,6 +14,7 @@ import re
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import numpy as np
 
 # nom court -> colonne des fichiers pheno, titre, et si la mesure est binaire
@@ -41,10 +42,18 @@ NOMS = {"scatter40_s0": "scattered", "patch8x5_s0": "patchy",
 GRIS = "#9A9A9A"
 
 
+def condition(env):
+    """alone / clones / figurants."""
+    return env.split("_", 1)[0]
+
+
+def geometrie(env):
+    return env.split("_", 1)[1] if "_" in env else env
+
+
 def nom_court(env):
     """clones_patch8x5_s0 -> patchy : la legende ne redit pas la condition."""
-    geo = env.split("_", 1)[1] if "_" in env else env
-    return NOMS.get(geo, geo)
+    return NOMS.get(geometrie(env), geometrie(env))
 
 
 def a_mange(ever_ate, greediness=None):
@@ -167,6 +176,13 @@ def main():
     # plusieurs environnements : la couleur les distingue, et les boites se
     # decalent autour du pas. Un seul : la couleur redit l'ordre du temps.
     multi = len(par_env) > 1
+    # si la geometrie est commune, c'est la condition sociale qui varie : la
+    # couleur et la legende suivent alors alone / figurants / clones
+    conds = {condition(e) for e in par_env}
+    geos  = {geometrie(e) for e in par_env}
+    par_condition = multi and len(geos) == 1 and len(conds) > 1
+    def etiq_env(e):
+        return condition(e) if par_condition else nom_court(e)
     if multi:
         cmap = plt.get_cmap("viridis")
         teintes = {e: cmap(t) for e, t in
@@ -183,24 +199,29 @@ def main():
     if a.separer and multi:
         raise SystemExit("--separer ne se combine pas avec plusieurs environnements")
     if a.separer:
-        groupes = [(next(iter(par_env)), 1., "ate at least once", -.17, .78, None),
-                   (next(iter(par_env)), 0., "never ate", .17, .38, None)]
+        groupes = [(next(iter(par_env)), 1., "ate at least once", -.17, .78, None, None),
+                   (next(iter(par_env)), 0., "never ate", .17, .38, None, None)]
     else:
         # --modes : seul l'amas unique porte deux comportements, les autres
         # geometries n'en ont qu'un et gardent une boite
         entrees = []
         for e in par_env:
             if a.modes and "blob" in e:
-                entrees += [(e, 1., f"{nom_court(e)}, ate", None),
-                            (e, 0., f"{nom_court(e)}, never ate", GRIS)]
+                # a geometrie commune la couleur dit la condition : le mode se
+                # lit alors a la hachure, pas au gris
+                entrees += [(e, 1., f"{etiq_env(e)}, ate", None, None),
+                            (e, 0., f"{etiq_env(e)}, never ate",
+                             None if par_condition else GRIS,
+                             "///" if par_condition else None)]
             else:
-                entrees.append((e, None, nom_court(e) if (multi or a.modes)
-                                else None, None))
+                entrees.append((e, None, etiq_env(e) if (multi or a.modes)
+                                else None, None, None))
         n_g = len(entrees)
         ecart = .8 / n_g
         groupes = [(e, t, lab, (k - (n_g - 1) / 2) * ecart if n_g > 1 else 0., .85,
-                    coul if coul is not None else (teintes[e] if multi else None))
-                   for k, (e, t, lab, coul) in enumerate(entrees)]
+                    coul if coul is not None else (teintes[e] if multi else None),
+                    hach)
+                   for k, (e, t, lab, coul, hach) in enumerate(entrees)]
 
     def valeurs(e, c, col, garde):
         """Valeurs d'un chunk pour une colonne, ou proportion si col est un couple."""
@@ -218,10 +239,11 @@ def main():
         v = d.get(col, np.array([]))
         return v[m][np.isfinite(v[m])] if len(v) else v
 
+    proxies, etiquettes = [], []       # legende : un aplat par groupe
     for ax, nom in zip(axes[0], demandees):
         col, titre, binaire = MESURES.get(nom, (nom, nom, False))
         effectifs = []
-        for gi, (env_g, trouve, etiquette, dx, alpha, coul) in enumerate(groupes):
+        for gi, (env_g, trouve, etiquette, dx, alpha, coul, hach) in enumerate(groupes):
             vals = []
             for c in chunks:
                 garde = None
@@ -231,6 +253,11 @@ def main():
                     garde = m if trouve else ~m
                 vals.append(valeurs(env_g, c, col, garde))
             effectifs += [len(v) for v in vals if len(v)]
+            if etiquette and nom == demandees[0] and any(len(v) for v in vals):
+                proxies.append(Patch(facecolor=coul if coul is not None else "#6B6B6B",
+                                     alpha=alpha, hatch=hach,
+                                     edgecolor="#4A4A4A" if hach else "none"))
+                etiquettes.append(etiquette)
             xs = np.arange(len(chunks)) + dx
             teinte = [coul] * len(chunks) if coul is not None else couleurs
             largeur = (.3 if a.separer else
@@ -240,8 +267,7 @@ def main():
                 err = [float(v.std() / max(np.sqrt(len(v)), 1)) if len(v) else np.nan
                        for v in vals]
                 ax.bar(xs, moy, yerr=None if a.no_erreur else err, color=teinte,
-                       width=largeur, capsize=4, edgecolor="white",
-                       alpha=alpha, label=etiquette if nom == demandees[0] else None)
+                       width=largeur, capsize=4, edgecolor="white", alpha=alpha)
                 ax.set_ylim(0, 1)
             else:
                 bp = ax.boxplot([v if len(v) else [np.nan] for v in vals],
@@ -251,11 +277,11 @@ def main():
                                 whiskerprops=dict(color="#6B6B6B"),
                                 capprops=dict(color="#6B6B6B"),
                                 boxprops=dict(edgecolor="#6B6B6B"))
-                for corps, coul in zip(bp["boxes"], teinte):
-                    corps.set_facecolor(coul), corps.set_alpha(alpha)
-                if etiquette and nom == demandees[0] and any(len(v) for v in vals):
-                    ax.plot([], [], lw=8, alpha=alpha, label=etiquette,
-                            color=coul if coul is not None else "#6B6B6B")
+                for corps, c_b in zip(bp["boxes"], teinte):
+                    corps.set_facecolor(c_b), corps.set_alpha(alpha)
+                    if hach:
+                        corps.set_hatch(hach), corps.set_edgecolor("#4A4A4A")
+
                 if a.points:
                     for k, v in enumerate(vals):
                         ax.scatter(xs[k] + rng.uniform(-.07, .07, len(v)), v, s=8,
@@ -272,12 +298,11 @@ def main():
         ax.set_xlabel(f"{min(effectifs)}–{max(effectifs)} {quoi}" if effectifs else "")
 
     # legende hors des axes : elle ne recouvre aucune boite
-    if a.separer or multi or a.modes:
-        h, l = axes[0][0].get_legend_handles_labels()
-        if h:
-            fig.legend(h, l, frameon=False, fontsize=9, loc="center left",
-                       bbox_to_anchor=(1., .5),
-                       title="test environment" if multi else None)
+    if proxies:
+        fig.legend(proxies, etiquettes, frameon=False, fontsize=9,
+                   loc="center left", bbox_to_anchor=(1., .5),
+                   title=("social condition" if par_condition else
+                          "test environment" if multi else None))
     if not a.no_titre:
         quoi = " · ".join(par_env) if multi else next(iter(par_env))
         fig.suptitle(f"Comparison across simulation steps — {quoi}", fontsize=13)
@@ -285,9 +310,9 @@ def main():
     # le nom porte les mesures et les pas : plusieurs figures cohabitent
     etiq = "_".join(demandees)
     pas_txt = "_".join(f"{c * taille // 1000}k" for c in chunks)
-    conds = {e.split("_", 1)[0] for e in par_env}      # alone, clones, figurants
-    nom_env = (f"{conds.pop()}_envs" if multi and len(conds) == 1
-               else "envs" if multi else next(iter(par_env)))
+    nom_env = (f"{next(iter(geos))}_conditions" if par_condition else
+               f"{next(iter(conds))}_envs" if multi and len(conds) == 1 else
+               "envs" if multi else next(iter(par_env)))
     if a.modes:
         nom_env += "_modes"
     out = a.out or os.path.join(a.source, "fig",
