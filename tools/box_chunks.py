@@ -51,6 +51,14 @@ def geometrie(env):
     return env.split("_", 1)[1] if "_" in env else env
 
 
+def nom_run(chemin):
+    """Nom lisible d'une experience : <run> plutot que fusion/ ou replay/."""
+    p = os.path.normpath(os.path.abspath(chemin))
+    b = os.path.basename(p)
+    return os.path.basename(os.path.dirname(p)) if b in (
+        "fusion", "replay", "lab_data", "replay_merge") else b
+
+
 def nom_court(env):
     """clones_patch8x5_s0 -> patchy : la legende ne redit pas la condition."""
     return NOMS.get(geometrie(env), geometrie(env))
@@ -108,6 +116,11 @@ def main():
     p.add_argument("--mesures", nargs="+", default=None,
                    help="colonnes brutes des fichiers pheno, par exemple "
                         "age greediness mean_speed")
+    p.add_argument("--vs", nargs="+", default=None, metavar="DIR",
+                   help="autres experiences a comparer au meme instant : la "
+                        "couleur distingue alors les runs, pas les environnements")
+    p.add_argument("--labels", nargs="+", default=None,
+                   help="noms des runs dans la legende, avec --vs")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
     p.add_argument("--modes", action="store_true",
                    help="dans l'amas unique, separer ceux qui ont mange au moins "
@@ -162,17 +175,36 @@ def main():
         c = MESURES.get(n, (n,))[0]
         colonnes += list(c) if isinstance(c, tuple) else [c]
 
-    par_env = {}
-    for e in env:
+    # comparer des runs : meme environnement, un dossier par experience
+    compare_runs = bool(a.vs)
+    if compare_runs:
+        if len(env) > 1:
+            raise SystemExit("--vs compare des runs : donner un seul --env")
+        sources = [a.source] + list(a.vs)
+        noms = a.labels or [nom_run(s) for s in sources]
+        if len(noms) != len(sources):
+            raise SystemExit("--labels doit donner un nom par experience")
+        series = []
+        for nom, src in zip(noms, sources):
+            dd = data_dir_de(src)
+            if dd is None:
+                raise SystemExit(f"pas de chunk_*_pheno_*.npz sous {src}")
+            series.append((nom, dd, env[0]))
+    else:
+        series = [(e, data_dir, e) for e in env]
+
+    par_env, env_de = {}, {}
+    for cle, dd, e in series:
         d_env = {}
         for c in a.chunks:
-            d = charge(data_dir, c, e, colonnes)
+            d = charge(dd, c, e, colonnes)
             if d is None:
-                print(f"  [info] chunk {c} absent pour {e}, ignore")
+                print(f"  [info] chunk {c} absent pour {cle}, ignore")
                 continue
             d_env[c] = d
         if d_env:
-            par_env[e] = d_env
+            par_env[cle] = d_env
+            env_de[cle] = e
     if not par_env:
         raise SystemExit("aucun chunk exploitable")
     chunks = sorted({c for d in par_env.values() for c in d})
@@ -184,14 +216,18 @@ def main():
     # couleur et la legende suivent alors alone / figurants / clones
     conds = {condition(e) for e in par_env}
     geos  = {geometrie(e) for e in par_env}
-    par_condition = multi and len(geos) == 1 and len(conds) > 1
+    par_condition = (multi and not compare_runs
+                     and len(geos) == 1 and len(conds) > 1)
     def etiq_env(e):
-        return condition(e) if par_condition else nom_court(e)
+        return (e if compare_runs else
+                condition(e) if par_condition else nom_court(e))
     if multi:
         # deux palettes distinctes : on ne confond pas une figure ou varie la
         # geometrie avec une figure ou varie la condition sociale
-        cmap = plt.get_cmap("magma" if par_condition else "viridis")
-        bornes = (.30, .72) if par_condition else (.12, .82)
+        cmap = plt.get_cmap("cividis" if compare_runs else
+                            "magma" if par_condition else "viridis")
+        bornes = ((.15, .80) if compare_runs else
+                  (.30, .72) if par_condition else (.12, .82))
         teintes = {e: cmap(t) for e, t in
                    zip(par_env, np.linspace(*bornes, len(par_env)))}
     else:
@@ -216,7 +252,7 @@ def main():
             if a.mange:          # un seul groupe, restreint a ceux qui ont mange
                 entrees.append((e, 1., etiq_env(e) if (multi or a.modes) else None,
                                 None, None))
-            elif a.modes and "blob" in e:
+            elif a.modes and "blob" in env_de[e]:
                 # a geometrie commune la couleur dit la condition : le mode se
                 # lit alors a la hachure, pas au gris
                 entrees += [(e, 1., f"{etiq_env(e)}, ate", None, None),
@@ -311,7 +347,8 @@ def main():
     if proxies:
         fig.legend(proxies, etiquettes, frameon=False, fontsize=9,
                    loc="center left", bbox_to_anchor=(1., .5),
-                   title=("social condition" if par_condition else
+                   title=("run" if compare_runs else
+                          "social condition" if par_condition else
                           "test environment" if multi else None))
     if not a.no_titre:
         quoi = " · ".join(par_env) if multi else next(iter(par_env))
@@ -320,7 +357,8 @@ def main():
     # le nom porte les mesures et les pas : plusieurs figures cohabitent
     etiq = "_".join(demandees)
     pas_txt = "_".join(f"{c * taille // 1000}k" for c in chunks)
-    nom_env = (f"{next(iter(geos))}_conditions" if par_condition else
+    nom_env = (f"{env[0]}_runs" if compare_runs else
+               f"{next(iter(geos))}_conditions" if par_condition else
                f"{next(iter(conds))}_envs" if multi and len(conds) == 1 else
                "envs" if multi else next(iter(par_env)))
     if a.modes:
