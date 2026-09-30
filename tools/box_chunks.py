@@ -121,6 +121,9 @@ def main():
                         "couleur distingue alors les runs, pas les environnements")
     p.add_argument("--labels", nargs="+", default=None,
                    help="noms des runs dans la legende, avec --vs")
+    p.add_argument("--titre-legende", dest="titre_legende", default=None,
+                   help="en-tete de la legende (defaut : run, social condition "
+                        "ou test environment selon ce qui varie)")
     p.add_argument("--points", action="store_true", help="superposer les genomes")
     p.add_argument("--modes", action="store_true",
                    help="dans l'amas unique, separer ceux qui ont mange au moins "
@@ -350,9 +353,10 @@ def main():
     if proxies:
         fig.legend(proxies, etiquettes, frameon=False, fontsize=9,
                    loc="center left", bbox_to_anchor=(1., .5),
-                   title=("run" if compare_runs else
-                          "social condition" if par_condition else
-                          "test environment" if multi else None))
+                   title=(a.titre_legende or
+                          ("run" if compare_runs else
+                           "social condition" if par_condition else
+                           "test environment" if multi else None)))
     if not a.no_titre:
         quoi = " · ".join(par_env) if multi else next(iter(par_env))
         fig.suptitle(f"Comparison across simulation steps — {quoi}", fontsize=13)
