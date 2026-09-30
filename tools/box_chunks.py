@@ -255,10 +255,13 @@ def main():
             elif a.modes and "blob" in env_de[e]:
                 # a geometrie commune la couleur dit la condition : le mode se
                 # lit alors a la hachure, pas au gris
+                # gris tant qu'une seule serie varie ; sinon la couleur sert
+                # deja a la distinguer et le mode se lit a la hachure
+                distinct = par_condition or compare_runs
                 entrees += [(e, 1., f"{etiq_env(e)}, ate", None, None),
                             (e, 0., f"{etiq_env(e)}, never ate",
-                             None if par_condition else GRIS,
-                             "///" if par_condition else None)]
+                             None if distinct else GRIS,
+                             "///" if distinct else None)]
             else:
                 entrees.append((e, None, etiq_env(e) if (multi or a.modes)
                                 else None, None, None))
