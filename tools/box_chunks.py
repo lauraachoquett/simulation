@@ -112,6 +112,9 @@ def main():
     p.add_argument("--modes", action="store_true",
                    help="dans l'amas unique, separer ceux qui ont mange au moins "
                         "une fois de ceux qui n'ont jamais mange")
+    p.add_argument("--mange", action="store_true",
+                   help="ne garder que les genomes ayant mange au moins une fois "
+                        "(le groupe jamais est retire au lieu d'etre trace)")
     p.add_argument("--separer", action="store_true",
                    help="separer ceux qui ont mange au moins une fois (ever_ate) "
                         "de ceux qui n'ont jamais mange")
@@ -153,7 +156,8 @@ def main():
         demandees = ["lifespan", "motion", "wallpart"]
     demandees = list(dict.fromkeys(demandees))
 
-    colonnes = ["ever_ate", "greediness"] if (a.separer or a.modes) else []
+    colonnes = (["ever_ate", "greediness"]
+                if (a.separer or a.modes or a.mange) else [])
     for n in demandees:
         c = MESURES.get(n, (n,))[0]
         colonnes += list(c) if isinstance(c, tuple) else [c]
@@ -209,7 +213,10 @@ def main():
         # geometries n'en ont qu'un et gardent une boite
         entrees = []
         for e in par_env:
-            if a.modes and "blob" in e:
+            if a.mange:          # un seul groupe, restreint a ceux qui ont mange
+                entrees.append((e, 1., etiq_env(e) if (multi or a.modes) else None,
+                                None, None))
+            elif a.modes and "blob" in e:
                 # a geometrie commune la couleur dit la condition : le mode se
                 # lit alors a la hachure, pas au gris
                 entrees += [(e, 1., f"{etiq_env(e)}, ate", None, None),
@@ -318,6 +325,8 @@ def main():
                "envs" if multi else next(iter(par_env)))
     if a.modes:
         nom_env += "_modes"
+    if a.mange:
+        nom_env += "_ate"
     out = a.out or os.path.join(a.source, "fig",
                                 f"box_{etiq}_{pas_txt}_{nom_env}.{a.fig_format}")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
