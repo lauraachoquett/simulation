@@ -11,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 SITES = ["grenoble", "lille", "luxembourg", "lyon", "nancy", "nantes",
          "rennes", "sophia", "strasbourg", "toulouse"]
-FIGURES = ["config.json", "exp.json", "resource_shuffles.jsonl", "*.png", "*.html"]
+FIGURES = ["config.json", "exp.json", "resource_shuffles.jsonl",
+           "*.png", "*.pdf", "*.html"]
 VIDEOS = ["*.mp4", "*.gif"]
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
        "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/rapatrie-%r@%h-%p",
