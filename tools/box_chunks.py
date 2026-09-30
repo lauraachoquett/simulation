@@ -51,6 +51,15 @@ def geometrie(env):
     return env.split("_", 1)[1] if "_" in env else env
 
 
+def taille_de_chunk(source):
+    """Pas par chunk, lu dans le config.json du run ou de son parent."""
+    ici = os.path.join(source, "config.json")
+    parent = os.path.join(os.path.dirname(os.path.abspath(source)), "config.json")
+    f_cfg = ici if os.path.exists(ici) else parent
+    return (int(json.load(open(f_cfg)).get("chunk_size", 1000))
+            if os.path.exists(f_cfg) else 1000)
+
+
 def nom_run(chemin):
     """Nom lisible d'une experience : <run> plutot que fusion/ ou replay/."""
     p = os.path.normpath(os.path.abspath(chemin))
@@ -155,14 +164,7 @@ def main():
     envs = envs_dispo(data_dir)
     env = a.env or [next((e for e in envs if e.startswith("alone")), envs[0])]
     print(f"environnement(s) : {', '.join(env)}   (dispo : {', '.join(envs)})")
-    taille = a.chunk_size
-    if taille is None:      # l'axe est en pas de simulation, pas en chunks
-        ici = os.path.join(a.source, "config.json")
-        parent = os.path.join(os.path.dirname(os.path.abspath(a.source)),
-                              "config.json")
-        f_cfg = ici if os.path.exists(ici) else parent
-        taille = (int(json.load(open(f_cfg)).get("chunk_size", 1000))
-                  if os.path.exists(f_cfg) else 1000)
+    taille = a.chunk_size or taille_de_chunk(a.source)
 
     demandees = [n for n in MESURES if getattr(a, n)]
     if a.mesures:
