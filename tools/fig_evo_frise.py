@@ -43,14 +43,17 @@ def series(dossiers, taille, quoi="evo"):
             if quoi == "prob":
                 if not {"n_seen", "n_eaten_seen"} <= set(z.files):
                     continue
-                vu = np.asarray(z["n_seen"], float)
-                mg = np.asarray(z["n_eaten_seen"], float)
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    r = np.where(vu > 0, mg / vu, np.nan)
+                # on garde les comptes : le rapport se calcule APRES avoir
+                # agrege, sinon un pas ou 3 agents voient pese autant qu'un pas
+                # ou 300 voient
+                r = np.stack([np.asarray(z["n_eaten_seen"], float),
+                              np.asarray(z["n_seen"], float)], axis=-1)
             else:
                 r = np.asarray(z.get("resources", np.zeros((len(p), 1))), float)
         if r.ndim == 1:
             r = r[:, None]
+        if r.ndim == 2:
+            r = r[:, :, None]
         pas.append((c - 1) * taille + np.arange(len(p)))
         pop.append(p), res.append(r[:len(p)])
     if not pas:
@@ -70,15 +73,25 @@ def epoques(ids0, bascules, debut, fin):
     return out
 
 
-def reduit(x, y, bloc):
-    """Moyennes par blocs : 2 millions de points ne tiennent pas dans un pdf."""
+def reduit(x, y, bloc, somme=False):
+    """Agrege par blocs : 2 millions de points ne tiennent pas dans un pdf.
+
+    `somme` sert aux comptes vus/manges, qu'on additionne avant de diviser.
+    """
     n = (len(x) // bloc) * bloc
     if bloc <= 1 or n == 0:
         return x, y
     xr = x[:n].reshape(-1, bloc).mean(axis=1)
-    with np.errstate(invalid="ignore"):       # P(manger) est NaN si rien n'est vu
-        yr = np.nanmean(y[:n].reshape(-1, bloc, *y.shape[1:]), axis=1)
+    bloques = y[:n].reshape(-1, bloc, *y.shape[1:])
+    with np.errstate(invalid="ignore"):
+        yr = bloques.sum(axis=1) if somme else np.nanmean(bloques, axis=1)
     return xr, yr
+
+
+def rapport(y):
+    """(manges, vus) -> P(manger | en vue), NaN quand rien n'a ete vu."""
+    mg, vu = y[..., 0], y[..., 1]
+    return np.divide(mg, vu, out=np.full(vu.shape, np.nan), where=vu > 0)
 
 
 def main():
@@ -98,7 +111,7 @@ def main():
     p.add_argument("--ylim-res", dest="ylim_res", type=float, nargs=2, default=None)
     # figure plus petite a police egale : une fois reduite dans une colonne,
     # c'est le RAPPORT police/largeur qui decide de la lisibilite
-    p.add_argument("--taille", type=float, nargs=2, default=(10., 5.4),
+    p.add_argument("--taille", type=float, nargs=2, default=(13.5, 6.4),
                    help="largeur et hauteur en pouces")
     p.add_argument("--no-chaine", dest="no_chaine", action="store_true")
     p.add_argument("--no-titre", dest="no_titre", action="store_true")
@@ -137,21 +150,23 @@ def main():
     if a.ylim_pop:
         h.set_ylim(*a.ylim_pop)
 
+    prob = a.haut == "prob"
     hr = h.twinx()
     debut, fin = int(pas[0]), int(pas[-1]) + 1
     for x0, x1, ordre in epoques(ids0, bascules, debut, fin):
         m = (pas >= x0) & (pas < x1)
         if not m.any():
             continue
-        xe, re = reduit(pas[m], res[m], a.bloc)
+        xe, re = reduit(pas[m], res[m], a.bloc, somme=prob)
+        ye = rapport(re) if prob else re[..., 0]
         for k, ident in enumerate(ordre[:res.shape[1]]):
-            hr.plot(xe, re[:, k], color=color_of(int(ident)), lw=1.5)
-    prob = a.haut == "prob"
+            hr.plot(xe, ye[:, k], color=color_of(int(ident)), lw=1.5)
     hr.set_ylabel("P(eat | in view)" if prob else "Resources amount",
                   color="#4A4A4A" if prob else "tab:green")
     hr.tick_params(axis="y", labelcolor="#4A4A4A" if prob else "tab:green")
     # P(manger) depasse rarement 0.2 : caler sur 1 ecraserait tout
-    haut_y = float(np.nanmax(res)) * 1.05
+    tout = rapport(res) if prob else res[..., 0]
+    haut_y = float(np.nanmax(tout)) * 1.05
     hr.set_ylim(*(a.ylim_res or (0, haut_y)))
     presents = sorted({int(i) for _, _, o in epoques(ids0, bascules, debut, fin)
                        for i in o})
