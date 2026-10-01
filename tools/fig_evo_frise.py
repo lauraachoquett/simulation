@@ -87,7 +87,7 @@ def main():
     p.add_argument("--haut", default="evo", choices=["evo", "prob"],
                    help="panneau du haut : quantite de ressource (evo) ou "
                         "P(manger | en vue) par identite (prob)")
-    p.add_argument("--police", type=float, default=17,
+    p.add_argument("--police", type=float, default=15,
                    help="taille de police de base (defaut %(default)s)")
     p.add_argument("--bloc", type=int, default=200,
                    help="moyenner par blocs de N pas pour le trace "
