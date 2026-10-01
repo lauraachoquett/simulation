@@ -22,7 +22,7 @@ from simulation.tools.fig_lab_envs import FOND, GRILLE, MUR, charge, panneau_mul
 AGENT, CHOISI = "#C1121F", "#6E0B12"
 
 
-def monde(ax, res, ids, agents, choisi, titre, sous_titre):
+def monde(ax, res, ids, agents, tires, titre, sous_titre):
     """Grille du monde : meme style que les env de lab, sans bande de depart."""
     L = res.shape[1]
     ax.set_facecolor(FOND)
@@ -42,7 +42,7 @@ def monde(ax, res, ids, agents, choisi, titre, sous_titre):
         ax.scatter(x, y, s=24, marker="s", color=color_of(i), edgecolor="white",
                    linewidth=.35, zorder=4)
     for k, (y, x) in enumerate(agents):
-        vise = k == choisi
+        vise = k in tires
         ax.scatter(x, y, s=120 if vise else 78,
                    color=CHOISI if vise else AGENT, edgecolor="white",
                    linewidth=1.3, zorder=7 if vise else 6)
@@ -84,6 +84,23 @@ def env_de_test(nom, dossier, n_types, rng):
     return res
 
 
+def agents_tires(agents, n, cote, rng):
+    """n agents preleves, choisis les plus eloignes les uns des autres.
+
+    Un tirage uniforme les regroupe souvent dans un coin ; on prend donc le
+    plus central puis, a chaque fois, celui qui maximise la distance aux deja
+    retenus.
+    """
+    n = max(1, min(n, len(agents)))
+    centre = np.array([cote / 2, cote / 2])
+    pris = [int(np.argmin(np.abs(agents - centre).sum(axis=1)))]
+    while len(pris) < n:
+        d = np.min([np.abs(agents - agents[k]).sum(axis=1) for k in pris], axis=0)
+        d[pris] = -1
+        pris.append(int(np.argmax(d)))
+    return set(pris)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--ressources", type=int, default=1, choices=[1, 2, 3])
@@ -93,6 +110,8 @@ def main():
     p.add_argument("--monde", type=int, default=60, help="cote du monde")
     p.add_argument("--n-res", dest="n_res", type=int, default=160)
     p.add_argument("--n-agents", dest="n_agents", type=int, default=14)
+    p.add_argument("--n-tires", dest="n_tires", type=int, default=1,
+                   help="agents preleves, entoures d'un halo (defaut %(default)s)")
     p.add_argument("--graine", type=int, default=3)
     p.add_argument("--vue", type=int, default=5, help="demi-fenetre de l'agent")
     p.add_argument("--no-titre", dest="no_titre", action="store_true")
@@ -103,16 +122,15 @@ def main():
     ids = list(range(a.ressources))
     res_m, agents = monde_synthetique(a.monde, a.n_res, a.n_agents,
                                       a.ressources, rng)
-    # l'agent preleve : au milieu du monde, pour que la fleche parte de la
-    centre = np.array([a.monde / 2, a.monde * .72])
-    choisi = int(np.argmin(np.abs(agents - centre).sum(axis=1)))
+    # les agents preleves : disperses dans le monde, pas groupes dans un coin
+    tires = agents_tires(agents, a.n_tires, a.monde, rng)
     res_t = env_de_test(a.env, a.dir, a.ressources, rng)
 
     fig, (g, d) = plt.subplots(1, 2, figsize=(14.5, 7.2),
                                gridspec_kw={"width_ratios": [1.3, 1]})
     fig.patch.set_facecolor("white")
     # pas de sous-titre : ce que montre chaque grille se dit dans la caption
-    monde(g, res_m, ids, agents, choisi, "Natural environment", "")
+    monde(g, res_m, ids, agents, tires, "Natural environment", "")
     panneau_multi(d, res_t, ids, "Test environment", "", vue=a.vue)
     for ax in (g, d):
         ax.set_title(ax.get_title(), fontsize=13, fontweight="semibold", pad=12)
@@ -145,7 +163,9 @@ def main():
         (x0, y), (x1, y), transform=fig.transFigure, mutation_scale=24,
         arrowstyle="-|>", color=CHOISI, lw=2.2, zorder=10,
         shrinkA=0, shrinkB=0))
-    fig.text((x0 + x1) / 2, y + .03, "one agent\nis drawn", ha="center",
+    texte = ("one agent\nis drawn" if a.n_tires == 1 else
+             f"{a.n_tires} agents are drawn,\neach evaluated alone")
+    fig.text((x0 + x1) / 2, y + .03, texte, ha="center",
              va="bottom", fontsize=10, color=CHOISI)
 
     if not a.no_titre:
