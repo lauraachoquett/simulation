@@ -111,10 +111,11 @@ def main():
     fig, (g, d) = plt.subplots(1, 2, figsize=(14.5, 7.2),
                                gridspec_kw={"width_ratios": [1.3, 1]})
     fig.patch.set_facecolor("white")
-    monde(g, res_m, ids, agents, choisi, "Natural environment",
-          f"{a.n_agents} agents, resources regrow, lives differ by birthplace")
-    panneau_multi(d, res_t, ids, "Test environment",
-                  "one newborn agent, memory and energy reset", vue=a.vue)
+    # pas de sous-titre : ce que montre chaque grille se dit dans la caption
+    monde(g, res_m, ids, agents, choisi, "Natural environment", "")
+    panneau_multi(d, res_t, ids, "Test environment", "", vue=a.vue)
+    for ax in (g, d):
+        ax.set_title(ax.get_title(), fontsize=13, fontweight="semibold", pad=12)
     # l'agent teste, au centre de la fenetre d'observation : meme rond rouge
     # que dans le schema des conditions sociales
     L = res_t.shape[1]
