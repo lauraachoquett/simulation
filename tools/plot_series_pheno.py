@@ -19,6 +19,7 @@ import numpy as np
 
 from simulation.tools.box_chunks import (MESURES, a_mange, charge, data_dir_de,
                                          envs_dispo, nom_court, taille_de_chunk)
+from simulation.tools.plot_corr_mouvement import chaine_de_reprise, permutations
 
 _NUM = re.compile(r"chunk_(\d+)_pheno_")
 COULEURS = ("#1D5C8F", "#C1121F", "#2A9131", "#9C27B0")
@@ -44,6 +45,8 @@ def main():
                    help="ne garder que les genomes ayant mange au moins une fois")
     p.add_argument("--police", type=float, default=13)
     p.add_argument("--taille", type=float, nargs=2, default=(11., 6.2))
+    p.add_argument("--no-permutations", dest="no_perm", action="store_true",
+                   help="ne pas marquer les permutations")
     p.add_argument("--no-titre", dest="no_titre", action="store_true")
     p.add_argument("--fig-format", dest="fig_format", default="png",
                    choices=["png", "pdf"])
@@ -92,8 +95,19 @@ def main():
     fig, axes = plt.subplots(len(a.mesures), 1, figsize=tuple(a.taille),
                              sharex=True, squeeze=False,
                              gridspec_kw={"hspace": .12})
+    # les permutations sont cherchees a la RACINE du run, pas dans replay/
+    racine = os.path.dirname(os.path.normpath(a.source))
+    bascules = []
+    if not a.no_perm:
+        for d in chaine_de_reprise(racine if os.path.exists(
+                os.path.join(racine, "config.json")) else a.source):
+            bascules += permutations(d)
     for ax, m, coul in zip(axes[:, 0], a.mesures, COULEURS * 3):
         s = np.array(stats[m], float)
+        for pas_p, _ in sorted(bascules):
+            if x[0] <= pas_p / 1e6 <= x[-1]:
+                ax.axvline(pas_p / 1e6, color="#8A8A8A", lw=.9,
+                           ls=(0, (4, 3)), zorder=0)
         ax.plot(x, s[:, 0], color=coul, lw=1.8)
         ax.fill_between(x, s[:, 1], s[:, 2], color=coul, alpha=.2, lw=0)
         ax.set_ylabel(titre_de(m))
