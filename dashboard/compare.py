@@ -175,6 +175,31 @@ def _dirs(run: dict) -> list[str]:
     return run.get("dirs", [run["dir"]])
 
 
+@st.cache_data(show_spinner=False)
+def _last_chunk(exp_dir: str) -> int:
+    """Chunk atteint par un run, pour sa duree REELLE.
+
+    config.json donne la duree demandee, pas celle tenue : une extinction
+    s'arrete avant. On lit donc les fichiers produits -- les data/chunk_*.npz,
+    et a defaut les numeros portes par les figures, seuls disponibles quand on
+    n'a rapatrie que celles-ci.
+    """
+    exp = Path(exp_dir)
+    chunks = [int(m.group(1))
+              for p in exp.glob("data/chunk_*.npz")
+              if (m := _CHUNK_NPZ.search(p.name))]
+    if not chunks:
+        chunks = [int(n) for p in exp.rglob("*.png")
+                  for n in re.findall(r"chunk[_-]?(\d+)", p.name, re.IGNORECASE)]
+    return max(chunks, default=0)
+
+
+def duree_chunks(run: dict) -> int:
+    """Duree d'une experience en chunks, reprises comprises."""
+    atteint = max((_last_chunk(d) for d in _dirs(run)), default=0)
+    return atteint or int(run["params"].get("num_chunks") or 0)
+
+
 def plots_of(run: dict) -> dict[str, list[str]]:
     merged: dict[str, list[str]] = {}
     for d in _dirs(run):
@@ -525,6 +550,22 @@ def main() -> None:
         )
         if picked_groups:
             runs = [r for r in runs if r["group"] in picked_groups]
+
+    # duree reelle, en chunks : ecarter les runs morts tot
+    durees = {r["id"]: duree_chunks(r) for r in runs}
+    if durees and max(durees.values()) > 0:
+        mini = st.sidebar.number_input(
+            "Minimum duration (chunks)", min_value=0,
+            max_value=int(max(durees.values())), value=0, step=100,
+            help="Chunk atteint par le run, reprises comprises -- lu dans les "
+                 "fichiers produits, pas dans num_chunks.")
+        if mini:
+            n_avant = len(runs)
+            runs = [r for r in runs if durees[r["id"]] >= mini]
+            st.sidebar.caption(f"{len(runs)} / {n_avant} run(s) ≥ {mini} chunks")
+        if not runs:
+            st.warning("Aucun run n'atteint cette duree.")
+            st.stop()
 
     n_res = st.sidebar.radio("Resources", ["all", "1", "several"], horizontal=True)
     if n_res != "all":
