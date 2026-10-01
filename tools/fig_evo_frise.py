@@ -165,8 +165,10 @@ def main():
                   color="#4A4A4A" if prob else "tab:green")
     hr.tick_params(axis="y", labelcolor="#4A4A4A" if prob else "tab:green")
     # P(manger) depasse rarement 0.2 : caler sur 1 ecraserait tout
+    # borne robuste : un unique pic de fin de run ecrasait toute la courbe
     tout = rapport(res) if prob else res[..., 0]
-    haut_y = float(np.nanmax(tout)) * 1.05
+    haut_y = float(np.nanpercentile(tout, 99.5)) * 1.15 if prob else \
+        float(np.nanmax(tout)) * 1.05
     hr.set_ylim(*(a.ylim_res or (0, haut_y)))
     presents = sorted({int(i) for _, _, o in epoques(ids0, bascules, debut, fin)
                        for i in o})
