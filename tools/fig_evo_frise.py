@@ -24,8 +24,12 @@ from simulation.tools.plot_corr_mouvement import (_NUM, chaine_de_reprise,
                                                   ordre_initial, permutations)
 
 
-def series(dossiers, taille):
-    """(pas, population, ressources) concatenes sur la chaine de reprise."""
+def series(dossiers, taille, quoi="evo"):
+    """(pas, serie_gauche, series_par_canal) sur la chaine de reprise.
+
+    quoi="evo"  : population et quantite de ressource par canal
+    quoi="prob" : population et P(manger | en vue) par canal
+    """
     par_chunk = {}
     for d in dossiers:
         for f in glob.glob(os.path.join(d, "data", "chunk_*.npz")):
@@ -36,7 +40,15 @@ def series(dossiers, taille):
             if "population" not in z.files:
                 continue
             p = np.asarray(z["population"], float)
-            r = np.asarray(z.get("resources", np.zeros((len(p), 1))), float)
+            if quoi == "prob":
+                if not {"n_seen", "n_eaten_seen"} <= set(z.files):
+                    continue
+                vu = np.asarray(z["n_seen"], float)
+                mg = np.asarray(z["n_eaten_seen"], float)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    r = np.where(vu > 0, mg / vu, np.nan)
+            else:
+                r = np.asarray(z.get("resources", np.zeros((len(p), 1))), float)
         if r.ndim == 1:
             r = r[:, None]
         pas.append((c - 1) * taille + np.arange(len(p)))
@@ -64,13 +76,19 @@ def reduit(x, y, bloc):
     if bloc <= 1 or n == 0:
         return x, y
     xr = x[:n].reshape(-1, bloc).mean(axis=1)
-    yr = y[:n].reshape(-1, bloc, *y.shape[1:]).mean(axis=1)
+    with np.errstate(invalid="ignore"):       # P(manger) est NaN si rien n'est vu
+        yr = np.nanmean(y[:n].reshape(-1, bloc, *y.shape[1:]), axis=1)
     return xr, yr
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("source")
+    p.add_argument("--haut", default="evo", choices=["evo", "prob"],
+                   help="panneau du haut : quantite de ressource (evo) ou "
+                        "P(manger | en vue) par identite (prob)")
+    p.add_argument("--police", type=float, default=13,
+                   help="taille de police de base (defaut %(default)s)")
     p.add_argument("--bloc", type=int, default=200,
                    help="moyenner par blocs de N pas pour le trace "
                         "(defaut %(default)s, 1 = tout garder)")
@@ -87,12 +105,16 @@ def main():
     p.add_argument("-o", "--out", default=None)
     a = p.parse_args()
 
+    plt.rcParams.update({
+        "font.size": a.police, "axes.titlesize": a.police + 2,
+        "axes.labelsize": a.police + 1, "xtick.labelsize": a.police,
+        "ytick.labelsize": a.police, "legend.fontsize": a.police})
     ids0, taille = ordre_initial(a.source)
     dossiers = [a.source] if a.no_chaine else chaine_de_reprise(a.source)
     bascules = []
     for d in dossiers:
         bascules += permutations(d)
-    s = series(dossiers, taille)
+    s = series(dossiers, taille, a.haut)
     if s is None:
         raise SystemExit(f"pas de data/chunk_*.npz exploitable sous {a.source}")
     pas, pop, res = s
@@ -122,9 +144,13 @@ def main():
         xe, re = reduit(pas[m], res[m], a.bloc)
         for k, ident in enumerate(ordre[:res.shape[1]]):
             hr.plot(xe, re[:, k], color=color_of(int(ident)), lw=1.5)
-    hr.set_ylabel("Resources amount", color="tab:green")
-    hr.tick_params(axis="y", labelcolor="tab:green")
-    hr.set_ylim(*(a.ylim_res or (0, res.max() * 1.05)))
+    prob = a.haut == "prob"
+    hr.set_ylabel("P(eat | in view)" if prob else "Resources amount",
+                  color="#4A4A4A" if prob else "tab:green")
+    hr.tick_params(axis="y", labelcolor="#4A4A4A" if prob else "tab:green")
+    # P(manger) depasse rarement 0.2 : caler sur 1 ecraserait tout
+    haut_y = float(np.nanmax(res)) * 1.05
+    hr.set_ylim(*(a.ylim_res or (0, haut_y)))
     presents = sorted({int(i) for _, _, o in epoques(ids0, bascules, debut, fin)
                        for i in o})
     hr.legend(handles=[Line2D([0], [0], color=color_of(i), lw=2, label=label_of(i))
@@ -138,7 +164,8 @@ def main():
                    color=color_of(int(ident)), edgecolor="white", linewidth=.6)
     b.set_ylim(-.5, n_can - .5)
     b.set_yticks(range(n_can))
-    b.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)], fontsize=8)
+    b.set_yticklabels([f"c{n_can - 1 - k}" for k in range(n_can)],
+                      fontsize=a.police - 2)
     b.set_xlim(debut, fin)
     b.set_xlabel("Simulation step")
     b.spines[["right", "top"]].set_visible(False)
@@ -146,8 +173,8 @@ def main():
 
     if not a.no_titre:
         h.set_title("Simulation dynamic")
-    out = a.out or os.path.join(a.source, "fig",
-                                f"plot_evo_frise.{a.fig_format}")
+    nom = "plot_evo_frise" if a.haut == "evo" else "prob_eat_frise"
+    out = a.out or os.path.join(a.source, "fig", f"{nom}.{a.fig_format}")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"{len(pas)} pas, {len(bascules)} permutation(s)")
