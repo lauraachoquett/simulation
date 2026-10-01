@@ -87,7 +87,7 @@ def main():
     p.add_argument("--haut", default="evo", choices=["evo", "prob"],
                    help="panneau du haut : quantite de ressource (evo) ou "
                         "P(manger | en vue) par identite (prob)")
-    p.add_argument("--police", type=float, default=13,
+    p.add_argument("--police", type=float, default=17,
                    help="taille de police de base (defaut %(default)s)")
     p.add_argument("--bloc", type=int, default=200,
                    help="moyenner par blocs de N pas pour le trace "
@@ -96,7 +96,9 @@ def main():
     p.add_argument("--jusqu", type=int, default=0)
     p.add_argument("--ylim-pop", dest="ylim_pop", type=float, nargs=2, default=None)
     p.add_argument("--ylim-res", dest="ylim_res", type=float, nargs=2, default=None)
-    p.add_argument("--taille", type=float, nargs=2, default=(12., 6.4),
+    # figure plus petite a police egale : une fois reduite dans une colonne,
+    # c'est le RAPPORT police/largeur qui decide de la lisibilite
+    p.add_argument("--taille", type=float, nargs=2, default=(10., 5.4),
                    help="largeur et hauteur en pouces")
     p.add_argument("--no-chaine", dest="no_chaine", action="store_true")
     p.add_argument("--no-titre", dest="no_titre", action="store_true")
