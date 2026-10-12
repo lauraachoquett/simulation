@@ -47,17 +47,21 @@ def dernier_chunk_fixe(exp_dir):
     return dernier
 
 
-def proba_poison(out, resources):
-    """P(manger du poison | poison en vue), par fenetres de GREED_WINDOW pas.
+def probas_conditionnelles(out, resources):
+    """{nom: P(manger X | X en vue)} par identite, plus `p_toutes`.
+
+    Meme definition que la greediness (fenetres de GREED_WINDOW pas), mais
+    conditionnee a UNE identite, et `p_toutes` a l'ensemble des ressources.
+    Le rapport p_X / p_toutes dit si l'ancetre trie vraiment ce qu'il mange :
+    1 = il mange X comme n'importe quoi, < 1 = il l'evite.
 
     Passe par ate_res et non par rewards > 0 : le poison rapporte un gain
     negatif, la greediness ne le verrait donc jamais.
     """
-    ch = [k for k, r in enumerate(resources) if label_of(r.id) == "poison"]
-    if not ch:
-        return None
-    n_channels = len(resources) + 2
-    G = np.full(out.alive.shape[0], np.nan)
+    n_types = len(resources)
+    n_channels = n_types + 2
+    noms = [f"p_{label_of(r.id)}" for r in resources] + ["p_toutes"]
+    G = {n: np.full(out.alive.shape[0], np.nan) for n in noms}
     for b in range(out.alive.shape[0]):
         single = jax.tree_util.tree_map(lambda x: x[b], out)
         alive = np.asarray(single.alive)
@@ -65,12 +69,17 @@ def proba_poison(out, resources):
         lignes = np.nonzero(alive[:, int(vivants[0]) + 1] == 1)[0] if vivants.size else []
         if not len(lignes):
             continue
-        slot = int(vivants[0]) + 1
-        saw = resource_in_view(single.obs, np.array(ch), n_channels)
-        ate = np.asarray(single.ate_res)[..., ch[0]] > 0
-        g, _, _ = _greediness(saw, ate, np.array([slot]), np.array([0]),
-                              np.array([int(lignes[-1])]))
-        G[b] = g[0]
+        slot = np.array([int(vivants[0]) + 1])
+        naissance, mort = np.array([0]), np.array([int(lignes[-1])])
+        ate = np.asarray(single.ate_res) > 0                      # (T, N, n_types)
+        vu = np.stack([resource_in_view(single.obs, np.array([k]), n_channels)
+                       for k in range(n_types)], axis=-1)         # (T, N, n_types)
+        for k, r in enumerate(resources):
+            g, _, _ = _greediness(vu[..., k], ate[..., k], slot, naissance, mort)
+            G[f"p_{label_of(r.id)}"][b] = g[0]
+        g, _, _ = _greediness(vu.any(axis=-1), ate.any(axis=-1), slot,
+                              naissance, mort)
+        G["p_toutes"][b] = g[0]
     return G
 
 
@@ -90,8 +99,9 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
     print(f"{len(groupes)} configuration(s) de canaux a compiler")
 
     regime = np.full((len(retenus), n_types), np.nan)
+    noms_p = [f"p_{label_of(r.id)}" for r in cfg.resources] + ["p_toutes"]
     mesures = {k: np.full(len(retenus), np.nan)
-               for k in ("age", "greediness", "mean_rew", "p_poison")}
+               for k in ("age", "greediness", "mean_rew", *noms_p)}
 
     cfg_m = cfg._replace(log_grid=False)
     for ordre, idx in sorted(groupes.items()):
@@ -113,9 +123,8 @@ def evalue(retenus, genomes, cfg, model, sd, key_env, cle, batch, exp_dir):
             par_genome = sd.data_lab_env_grouped(out, resources=cfg_g.resources)
             for cle_m in ("age", "greediness", "mean_rew"):
                 mesures[cle_m][lot] = par_genome[cle_m]
-            pp = proba_poison(out, cfg_g.resources)
-            if pp is not None:
-                mesures["p_poison"][lot] = pp
+            for nom, v in probas_conditionnelles(out, cfg_g.resources).items():
+                mesures[nom][lot] = v
     return regime, mesures
 
 

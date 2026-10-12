@@ -125,11 +125,16 @@ def fusionne(dossiers):
         blocs.append(e)
         print(f"  {os.path.basename(d)} : {len(garde)} ancetre(s)")
 
-    colonnes = ("slot", "born", "regime", "age", "greediness", "mean_rew",
-                "p_poison", "ordres", "experience")
+    # les p_<identite> et p_toutes s'ajoutent sans toucher a cette liste
+    colonnes = ["slot", "born", "regime", "age", "greediness", "mean_rew",
+                "ordres", "experience"]
+    colonnes += sorted({c for b in blocs for c in b
+                        if c.startswith("p_") and not c.endswith("_par_graine")})
     g = {c: np.concatenate([b[c] for b in blocs if c in b]) for c in colonnes
          if all(c in b for b in blocs)}
-    for c in ("age_par_graine", "p_poison_par_graine"):
+    for c in sorted({c for b in blocs for c in b if c.endswith("_par_graine")
+                     and c != "regime_par_graine"
+                     and c != "disponible_par_graine"}):
         S = max((b[c].shape[1] for b in blocs if c in b), default=0)
         if S:
             g[c] = np.concatenate([_largeur(b.get(c), len(b["born"]), S)
