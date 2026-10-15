@@ -345,6 +345,11 @@ def main():
                    help="ne rejouer qu'un checkpoint tous les N chunks")
     p.add_argument("--video-stride", type=int, default=1, metavar="S",
                    help="une frame sur S (defaut %(default)s)")
+    p.add_argument("--video-envs", dest="video_envs", nargs="+", default=None,
+                   metavar="ENV", choices=["low_res", "high_res", "clones",
+                                           "figurants"],
+                   help="ne filmer que ces env (defaut : tous ceux joues). "
+                        "Chaque env filme coute un rollout de plus")
     p.add_argument("--lab-seed", dest="lab_seed", type=int, default=None,
                    help="graine de l'env de lab (defaut : cfg.lab_seed, pour "
                         "que le rejeu tombe sur le MEME etalon que le run)")
@@ -504,7 +509,7 @@ def main():
                 pas la grille (2,7 Go a 3000 pas) et c'est elle que la video
                 dessine. Memes params et memes cles que la mesure, donc les N
                 premiers genomes y refont trait pour trait leur trajectoire."""
-                if not a.video:
+                if not a.video or (a.video_envs and nom_env not in a.video_envs):
                     return
                 k = min(a.video, len(params))
                 # argsort met les NaN en dernier : un genome sans age mesure ne
